@@ -1,0 +1,187 @@
+"""
+Git操作工具
+用于版本控制操作
+"""
+
+import subprocess
+from typing import Any, Dict
+
+
+class GitOperator:
+    """Git操作工具"""
+    
+    @staticmethod
+    def get_metadata() -> Dict[str, Any]:
+        """获取工具元数据"""
+        return {
+            "tool_id": "git_operator",
+            "name": "Git操作工具",
+            "description": "Git版本控制操作",
+            "category": "other",
+            "version": "1.0.0",
+            "capabilities": {
+                "instructions": [
+                    {
+                        "name": "git_init",
+                        "description": "初始化Git仓库",
+                        "parameters": {
+                            "path": "仓库路径"
+                        }
+                    },
+                    {
+                        "name": "git_add",
+                        "description": "添加文件到暂存区",
+                        "parameters": {
+                            "path": "仓库路径",
+                            "files": "文件列表或'.'表示全部"
+                        }
+                    },
+                    {
+                        "name": "git_commit",
+                        "description": "提交更改",
+                        "parameters": {
+                            "path": "仓库路径",
+                            "message": "提交信息"
+                        }
+                    },
+                    {
+                        "name": "git_clone",
+                        "description": "克隆仓库",
+                        "parameters": {
+                            "url": "仓库URL",
+                            "path": "目标路径（可选）"
+                        }
+                    }
+                ]
+            }
+        }
+    
+    @staticmethod
+    def git_init(path: str) -> Dict[str, Any]:
+        """初始化Git仓库"""
+        try:
+            result = subprocess.run(
+                ["git", "init"],
+                cwd=path,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            return {
+                "success": result.returncode == 0,
+                "message": "Git仓库初始化成功" if result.returncode == 0 else "初始化失败",
+                "output": result.stdout,
+                "error": result.stderr if result.returncode != 0 else None
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Git初始化失败: {str(e)}",
+                "error": str(e)
+            }
+    
+    @staticmethod
+    def git_add(path: str, files: str = ".") -> Dict[str, Any]:
+        """添加文件到暂存区"""
+        try:
+            result = subprocess.run(
+                ["git", "add", files],
+                cwd=path,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            return {
+                "success": result.returncode == 0,
+                "message": "文件添加成功" if result.returncode == 0 else "添加失败",
+                "output": result.stdout,
+                "error": result.stderr if result.returncode != 0 else None
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Git add失败: {str(e)}",
+                "error": str(e)
+            }
+    
+    @staticmethod
+    def git_commit(path: str, message: str) -> Dict[str, Any]:
+        """提交更改"""
+        try:
+            result = subprocess.run(
+                ["git", "commit", "-m", message],
+                cwd=path,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            return {
+                "success": result.returncode == 0,
+                "message": "提交成功" if result.returncode == 0 else "提交失败",
+                "output": result.stdout,
+                "error": result.stderr if result.returncode != 0 else None
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Git commit失败: {str(e)}",
+                "error": str(e)
+            }
+    
+    @staticmethod
+    def git_clone(url: str, path: str = None) -> Dict[str, Any]:
+        """克隆仓库"""
+        try:
+            cmd = ["git", "clone", url]
+            if path:
+                cmd.append(path)
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            
+            return {
+                "success": result.returncode == 0,
+                "message": "克隆成功" if result.returncode == 0 else "克隆失败",
+                "output": result.stdout,
+                "error": result.stderr if result.returncode != 0 else None
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Git clone失败: {str(e)}",
+                "error": str(e)
+            }
+    
+    @staticmethod
+    def execute(instruction: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """执行工具指令"""
+        if instruction == "git_init":
+            return GitOperator.git_init(path=inputs.get("path", "."))
+        elif instruction == "git_add":
+            return GitOperator.git_add(
+                path=inputs.get("path", "."),
+                files=inputs.get("files", ".")
+            )
+        elif instruction == "git_commit":
+            return GitOperator.git_commit(
+                path=inputs.get("path", "."),
+                message=inputs.get("message", "Initial commit")
+            )
+        elif instruction == "git_clone":
+            return GitOperator.git_clone(
+                url=inputs.get("url", ""),
+                path=inputs.get("path")
+            )
+        else:
+            return {
+                "success": False,
+                "message": f"未知指令: {instruction}",
+                "error": "Invalid instruction"
+            }

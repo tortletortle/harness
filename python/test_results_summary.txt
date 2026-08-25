@@ -1,0 +1,205 @@
+================================================================================
+EAS 2.0 系统 - 高强度测试总结报告
+测试日期: 2026-08-25
+测试方式: 仅测试，不修改代码
+================================================================================
+
+【执行的测试脚本】
+
+1. test_instruction_mismatch.py
+   - 功能: 验证 _infer_instruction() 的推断结果是否在工具声明指令中
+   - 测试用例: 6 个
+   - 结果: 6/6 不匹配（100%）
+   - 关键发现: 所有推断指令都不在工具声明中
+
+2. test_tool_support.py
+   - 功能: 直接调用工具 execute()，验证推断指令是否被支持
+   - 测试用例: 5 个
+   - 结果: 4 成功，1 失败
+   - 关键发现: web_fetcher:fetch 返回 "Invalid instruction"
+
+3. test_e2e_execution.py
+   - 功能: 模拟端到端步骤执行，观察推断指令在实际流程中的表现
+   - 测试步骤: 3 个
+   - 结果: 2 成功，1 失败
+   - 关键发现: web_fetcher 步骤失败，错误为 "Invalid instruction: fetch"
+
+4. test_db_consistency.py
+   - 功能: 检查数据库中的状态值合法性
+   - 检查范围: steps 表和 plans 表
+   - 结果: 发现 4 个不合法的旧状态值
+   - 关键发现: 存在 'COMPLETED'(应为'Success') 和 'FAILED'(应为'Failed')
+
+================================================================================
+【验证的三个核心 Bug】
+================================================================================
+
+[BUG #1] web_fetcher 推断指令 'fetch' 不存在
+状态: ✗ 验证失败（致命问题）
+位置: executor/__init__.py L180-181
+证据: 
+  - 测试 1: 推断结果 'fetch' ✗ 不在声明 ['download_file', 'fetch_content']
+  - 测试 2: tool.execute('fetch', {...}) ✗ 返回 "Invalid instruction: fetch"
+  - 测试 3: 端到端执行 ✗ web_fetcher 步骤失败
+
+[BUG #2] text_editor 推断指令 'write' 不在声明中
+状态: ⚠️ 验证部分失败（架构不一致）
+位置: executor/__init__.py L168-169
+证据:
+  - 测试 1: 推断结果 'write' ✗ 不在声明 ['read_file', 'append_to_file', 'replace_in_file', 'insert_at_line']
+  - 测试 2: tool.execute('write', {...}) ✓ 成功（工具有兼容处理）
+  - 测试 3: 端到端执行 ✓ 成功（工具兼容处理掩盖）
+
+[BUG #3] command_runner 推断指令 'run' 不在声明中
+状态: ⚠️ 验证部分失败（架构不一致）
+位置: executor/__init__.py L176-177
+证据:
+  - 测试 1: 推断结果 'run' ✗ 不在声明 ['run_command']
+  - 测试 2: tool.execute('run', {...}) ✓ 成功（工具有兼容处理）
+  - 测试 3: 端到端执行 ✓ 成功（工具兼容处理掩盖）
+
+[BUG #4] 数据库残留旧状态值
+状态: ✗ 验证失败（数据一致性问题）
+位置: harness/data/eas.db steps 表
+数据: 
+  - 'COMPLETED' 状态: 2 个步骤（应为 'Success'）
+  - 'FAILED' 状态: 2 个步骤（应为 'Failed'）
+  - 合计: 4 个不合法状态值
+影响: 这些步骤通过 get_plan() API 读取时会 Pydantic 验证失败
+
+================================================================================
+【测试数据详情】
+================================================================================
+
+测试 1: 指令推断矩阵
+  总测试数: 6
+  推断不匹配: 6 (100%)
+  
+  具体结果:
+  - text_editor + {path, content}     => 推断 'write'    ✗ 不在声明
+  - text_editor + {path, old_text}    => 推断 'write'    ✗ 不在声明
+  - text_editor + {path}              => 推断 'write'    ✗ 不在声明
+  - command_runner + {command}        => 推断 'run'      ✗ 不在声明
+  - web_fetcher + {url}               => 推断 'fetch'    ✗ 不在声明
+  - web_fetcher + {url, path}         => 推断 'fetch'    ✗ 不在声明
+
+测试 2: 推断指令工具支持验证
+  总测试数: 5
+  工具支持: 4
+  Invalid instruction: 1
+  
+  成功案例:
+  - [OK] text_editor:write          | 文件写入成功
+  - [OK] command_runner:run          | 命令执行完成
+  - [OK] command_runner:run_command  | 命令执行完成
+  - [OK] web_fetcher:fetch_content   | 内容获取成功
+  
+  失败案例:
+  - [INVALID] web_fetcher:fetch      | 未知指令: fetch
+
+测试 3: 端到端步骤执行
+  总步骤数: 3
+  成功: 2
+  失败: 1
+  
+  步骤 1 (text_editor 推断 'write'):
+    - 操作: 创建文本文件
+    - 输入: {path: /tmp/test_1.txt, content: hello}
+    - 结果: ✓ SUCCESS | 文件写入成功
+  
+  步骤 2 (command_runner 推断 'run'):
+    - 操作: 执行命令
+    - 输入: {command: echo test > /tmp/test_2.txt}
+    - 结果: ✓ SUCCESS | 命令执行完成
+  
+  步骤 3 (web_fetcher 推断 'fetch'):
+    - 操作: 获取网页内容
+    - 输入: {url: http://example.com}
+    - 结果: ✗ FAILED | 未知指令: fetch
+
+测试 4: 数据库状态一致性
+  steps 表状态值: ['Success', 'FAILED', 'COMPLETED', 'Pending']
+  
+  合法的状态值: ['Running', 'Pending', 'Success', 'Skipped', 'Failed']
+  
+  不合法的状态值: ['COMPLETED', 'FAILED']
+  
+  具体数据:
+  - COMPLETED 步骤: 2 个
+  - FAILED 步骤: 2 个
+  - 总计不合法: 4 个
+  
+  问题分析:
+  - 'COMPLETED' 应该是 'Success'（大小写不对，名称也不对）
+  - 'FAILED' 应该是 'Failed'（大小写不对）
+  - 这会导致 get_plan() 读取时 Pydantic 验证报错
+
+================================================================================
+【关键发现总结】
+================================================================================
+
+1. web_fetcher 的 bug 是致命的
+   - 推断指令 'fetch' 根本不存在
+   - 导致所有未明确指定 instruction 的 web_fetcher 步骤都会执行失败
+   - 错误信息：未知指令: fetch
+
+2. text_editor 和 command_runner 的 bug 是架构问题
+   - 推断指令与声明不一致，但工具的 execute() 中有兼容处理
+   - 导致系统能工作，但架构混乱，容易引发维护问题
+   - 存在被意外修改或移除的风险
+
+3. 数据库有 4 个脏数据需要清理
+   - 旧格式状态值未被迁移
+   - 会导致 API 因 Pydantic 验证失败返回 404
+
+4. 测试框架的假阳性问题
+   - 现有的 test_instruction_inference.py 没有从注册表动态获取合法指令
+   - 导致它断言的都是错误的指令名，仍然显示通过
+
+================================================================================
+【建议的优先级排序】
+================================================================================
+
+P1 (立即修复 - 影响生产):
+  - 修复 web_fetcher 推断指令
+    在 _infer_instruction() 中：
+    有 'path' 参数 => 'download_file'
+    否则 => 'fetch_content'
+
+P2 (短期修复 - 架构一致):
+  - 修复 text_editor 推断指令
+    有 search+replace => 'replace_in_file'
+    有 content => 'append_to_file'
+    只有 path => 'read_file'
+  
+  - 修复 command_runner 推断指令
+    直接返回 'run_command'
+
+P3 (数据清理):
+  - 运行数据库迁移脚本清理旧状态值
+    UPDATE steps SET status = 'Success' WHERE status = 'COMPLETED'
+    UPDATE steps SET status = 'Failed' WHERE status = 'FAILED'
+
+P4 (测试改进):
+  - 重写 test_instruction_inference.py
+    从注册表动态获取合法指令名做验证
+
+================================================================================
+【测试结论】
+================================================================================
+
+严重程度: 高 (HIGH)
+
+web_fetcher 的推断指令 bug 是一个致命问题，已通过多个测试维度验证：
+  ✗ 声明不包含推断指令
+  ✗ 工具明确拒绝该指令
+  ✗ 端到端执行失败
+
+text_editor 和 command_runner 的推断指令虽然能工作，但由于架构不一致，
+存在长期风险。
+
+数据库中的旧状态值导致历史数据无法正确访问，影响系统数据完整性。
+
+建议立即修复 P1 级 bug，短期内完成 P2 和 P3 的修复。
+
+================================================================================

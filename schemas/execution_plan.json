@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExecutionPlan",
+  "description": "执行计划Schema",
+  "type": "object",
+  "required": ["plan_id", "design_id", "created_at", "status", "segments", "implementation_list"],
+  "properties": {
+    "plan_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "design_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["Pending", "Running", "Paused", "Completed", "Failed"]
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["segment_id", "description", "steps"],
+        "properties": {
+          "segment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["step_id", "order", "description", "tool", "inputs", "check_criteria", "status"],
+              "properties": {
+                "step_id": { "type": "string", "format": "uuid" },
+                "order": { "type": "integer" },
+                "description": { "type": "string" },
+                "tool": { "type": "string" },
+                "inputs": { "type": "object" },
+                "check_criteria": { "type": "string" },
+                "outputs": { "type": ["object", "null"] },
+                "status": {
+                  "type": "string",
+                  "enum": ["Pending", "Running", "Success", "Failed", "Skipped"]
+                },
+                "executed_at": {
+                  "type": ["string", "null"],
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "implementation_list": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "dynamic_insertions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["after_step_id", "new_steps", "reason"],
+        "properties": {
+          "after_step_id": { "type": "string", "format": "uuid" },
+          "new_steps": { "type": "array" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

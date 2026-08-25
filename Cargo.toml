@@ -1,0 +1,63 @@
+[workspace]
+members = [
+    "rust/common",
+    "rust/dispatcher",
+    "rust/logger",
+    "rust/tool_manager",
+    "rust/server",
+    "rust/db",
+    "rust/gui",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["EAS Team"]
+license = "MIT"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+async-trait = "0.1"
+
+# Web framework
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "postgres", "chrono", "uuid"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# UUID
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json"] }
+
+# GUI
+eframe = "0.28"
+egui = "0.28"
+
+# Config
+config = "0.14"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
