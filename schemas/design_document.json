@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DesignDocument",
+  "description": "设计书Schema",
+  "type": "object",
+  "required": ["design_id", "user_request", "timestamp", "part1_design", "part2_tool_assessment"],
+  "properties": {
+    "design_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "user_request": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "part1_design": {
+      "type": "object",
+      "required": ["architecture", "difficulty"],
+      "properties": {
+        "architecture": {
+          "type": "object",
+          "required": ["components", "interactions"],
+          "properties": {
+            "components": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "interactions": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "difficulty": {
+          "type": "object",
+          "required": ["overall", "breakdown"],
+          "properties": {
+            "overall": { "type": "string" },
+            "breakdown": { "type": "object" }
+          }
+        }
+      }
+    },
+    "part2_tool_assessment": {
+      "type": "object",
+      "required": ["required_tools", "overall_tool_completeness", "risks"],
+      "properties": {
+        "required_tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["tool_id", "availability"],
+            "properties": {
+              "tool_id": { "type": "string" },
+              "availability": { "type": "string" },
+              "quality": { "type": "string" },
+              "limitations": { "type": "string" },
+              "impact": { "type": "string" }
+            }
+          }
+        },
+        "overall_tool_completeness": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "risks": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "user_approval": {
+      "type": ["boolean", "null"]
+    },
+    "user_comments": {
+      "type": ["string", "null"]
+    }
+  }
+}

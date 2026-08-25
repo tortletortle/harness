@@ -1,0 +1,43 @@
+# 服务器配置
+
+# Rust HTTP 服务器
+rust_server:
+  host: 0.0.0.0
+  port: 8090
+  workers: 4
+  
+# Python API 服务
+python_api:
+  host: 0.0.0.0
+  port: 9000
+  workers: 2
+  reload: false  # 开发环境设为 true
+  
+# 服务间通信
+service_urls:
+  python_api: http://localhost:9000
+  rust_server: http://localhost:8090
+
+# CORS 配置
+cors:
+  allow_origins:
+    - http://localhost:3000
+    - http://localhost:8090
+    - http://localhost:9000
+  allow_methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - OPTIONS
+  allow_headers:
+    - "*"
+
+# 日志配置
+logging:
+  level: info  # debug, info, warn, error
+  format: json  # json 或 text
+  output: both  # stdout, file, both
+  file_path: ./logs/server.log
+  max_size: 100MB
+  max_backups: 10

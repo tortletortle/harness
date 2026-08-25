@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ToolSchema",
+  "description": "工具Schema",
+  "type": "object",
+  "required": ["tool_id", "version", "name", "description", "capabilities", "file_location", "index", "license", "dependencies"],
+  "properties": {
+    "tool_id": { "type": "string" },
+    "version": { "type": "string" },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "capabilities": {
+      "type": "object",
+      "required": ["instructions", "input_format", "output_format", "quality_level", "performance", "limitations"],
+      "properties": {
+        "instructions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "description", "parameters"],
+            "properties": {
+              "name": { "type": "string" },
+              "description": { "type": "string" },
+              "parameters": { "type": "object" }
+            }
+          }
+        },
+        "input_format": { "type": "object" },
+        "output_format": { "type": "object" },
+        "quality_level": { "type": "string" },
+        "performance": {
+          "type": "object",
+          "required": ["avg_execution_time", "success_rate"],
+          "properties": {
+            "avg_execution_time": { "type": "string" },
+            "success_rate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "file_location": { "type": "string" },
+    "index": {
+      "type": "object",
+      "required": ["main"],
+      "properties": {
+        "main": { "type": "string" },
+        "config": { "type": ["string", "null"] },
+        "tests": { "type": ["string", "null"] },
+        "docs": { "type": ["string", "null"] }
+      }
+    },
+    "license": {
+      "type": "object",
+      "required": ["license_type", "max_instances", "copy_strategy"],
+      "properties": {
+        "license_type": { "type": "string" },
+        "max_instances": { "type": "integer" },
+        "copy_strategy": { "type": "string" }
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "test_results": {
+      "type": ["object", "null"],
+      "properties": {
+        "last_test_date": { "type": "string", "format": "date-time" },
+        "passed": { "type": "boolean" },
+        "test_cases": { "type": "integer" },
+        "passed_cases": { "type": "integer" }
+      }
+    }
+  }
+}
