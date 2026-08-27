@@ -77,6 +77,8 @@ class Step(BaseModel):
     outputs: Optional[Dict[str, Any]] = None
     status: StepStatus = StepStatus.PENDING
     executed_at: Optional[datetime] = None
+    retry_count: int = 0
+    max_retries: int = 2
 
 
 class PlanSegment(BaseModel):

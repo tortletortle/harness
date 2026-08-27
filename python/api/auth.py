@@ -17,6 +17,10 @@ from typing import Optional
 
 from fastapi import Header, HTTPException, status
 
+from logging_config import get_logger
+
+logger = get_logger(__name__)
+
 ENV_VAR = "EAS_API_TOKEN"
 TOKEN_FILENAME = "api_token"
 
@@ -59,7 +63,7 @@ def load_token() -> str:
     generated = secrets.token_urlsafe(32)
     path.write_text(generated, encoding="utf-8")
     _cached_token = generated
-    print(f"[AUTH] 已生成新的 API token 并写入 {path}")
+    logger.info("已生成新的 API token 并写入 {}", path)
     return _cached_token
 
 

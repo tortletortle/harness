@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import sys
 
+from contextlib import asynccontextmanager
+
 from fastapi import (
     Depends,
     FastAPI,
@@ -31,6 +33,9 @@ from executor import DefaultExecutor
 from tools import ToolRegistry
 from database import Database
 from api.auth import load_token, require_token, verify_token
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 # ===== 数据模型 =====
 
@@ -58,34 +63,6 @@ class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, str]] = []
 
-# ===== FastAPI App =====
-
-app = FastAPI(title="EAS 2.0 API", version="0.1.0")
-
-# CORS：仅放行本地前端来源。
-# 不使用 allow_origins=["*"]，它与 allow_credentials=True 组合违反 CORS 规范，
-# 且对非浏览器客户端毫无约束力（CORS 不是访问控制，鉴权由 require_token 负责）。
-ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-]
-
-_extra_origins = os.environ.get("EAS_ALLOWED_ORIGINS", "").strip()
-if _extra_origins:
-    ALLOWED_ORIGINS.extend(
-        origin.strip() for origin in _extra_origins.split(",") if origin.strip()
-    )
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-API-Token"],
-)
-
 # ===== 全局状态 =====
 
 class AppState:
@@ -102,16 +79,19 @@ class AppState:
         self.current_execution: Optional[str] = None  # 当前执行的 plan_id
         # 保护 current_execution 的 check-then-set，避免并发请求重复启动执行
         self.execution_lock: asyncio.Lock = asyncio.Lock()
-        
+        # 重试策略（阶段3.1）：从 config 顶层 retry 字段读取，lifespan 中赋值
+        self.retry_max_attempts: int = 3
+        self.retry_backoff_factor: float = 2
+
 state = AppState()
 
-# ===== 启动和关闭 =====
+# ===== 启动和关闭（lifespan） =====
 
-@app.on_event("startup")
-async def startup_event():
-    """服务启动时初始化"""
-    print("[启动] 正在启动 EAS 2.0 API 服务...")
-    
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """服务启动/关闭时的生命周期管理，替代已废弃的 @app.on_event"""
+    logger.info("正在启动 EAS 2.0 API 服务...")
+
     try:
         # 加载配置
         config_path = Path("config/models.yaml")
@@ -137,29 +117,32 @@ async def startup_event():
         from llm_client import OpenAICompatibleProvider
         api_keys = state.config.get("api_keys", {})
         base_urls = state.config.get("base_urls", {})
-        
-        print(f"\n===== 注册 LLM Providers =====")
-        print(f"API Keys: {list(api_keys.keys())}")
-        print(f"Base URLs: {list(base_urls.keys())}")
-        
+
+        logger.debug("===== 注册 LLM Providers =====")
+        logger.debug("API Keys: {}", list(api_keys.keys()))
+        logger.debug("Base URLs: {}", list(base_urls.keys()))
+
         for provider_name, api_key in api_keys.items():
-            if api_key and provider_name in base_urls:
+            if not api_key:
+                logger.warning("跳过 {}: 没有 API key", provider_name)
+                continue
+            if provider_name not in base_urls:
+                logger.warning("跳过 {}: 没有 base URL", provider_name)
+                continue
+            try:
                 provider = OpenAICompatibleProvider(
                     name=provider_name,
                     base_url=base_urls[provider_name],
-                    api_key=api_key
+                    api_key=api_key,
                 )
                 state.llm_client.register_provider(provider)
-                print(f"[OK] 已注册 provider: {provider_name}")
-            else:
-                if not api_key:
-                    print(f"[SKIP] 跳过 {provider_name}: 没有 API key")
-                elif provider_name not in base_urls:
-                    print(f"[SKIP] 跳过 {provider_name}: 没有 base URL")
-        
-        print(f"已注册的 providers: {list(state.llm_client.providers.keys())}")
-        print(f"==================\n")
-        
+                logger.info("已注册 provider: {}", provider_name)
+            except Exception as e:
+                logger.warning("注册 provider 失败 {}: {}", provider_name, e)
+
+        logger.info("已注册的 providers: {}", list(state.llm_client.providers.keys()))
+        logger.debug("==================")
+
         # 初始化 Tool Registry（带AI agent）
         from tools import init_registry_with_ai
         tool_config = state.config.get("models", {}).get("designer", {})
@@ -178,22 +161,68 @@ async def startup_event():
         state.executor = DefaultExecutor(
             llm_client=state.llm_client,
             model_config=executor_config,
-            tool_registry=state.tool_registry
+            tool_registry=state.tool_registry,
+            database=state.database
         )
-        
-        print("[SUCCESS] EAS 2.0 API 服务启动成功")
+
+        # 重试策略：读取顶层 retry 配置（不在 models: 下面）
+        retry_cfg = state.config.get("retry", {})
+        state.retry_max_attempts = retry_cfg.get("max_attempts", 3)
+        state.retry_backoff_factor = retry_cfg.get("backoff_factor", 2)
+
+        logger.info("EAS 2.0 API 服务启动成功")
+
+        # 孤儿任务恢复：单进程部署下，进程重启意味着之前标记为 Running 的执行必然已经中断。
+        # 若不处理，这些记录会永久卡在 Running，未来的暂停/恢复逻辑也无法感知。
+        recovered = state.database.recover_orphaned_executions()
+        if recovered:
+            logger.warning("检测到 {} 个重启前未完成的执行，已标记为 Failed", recovered)
 
         # 初始化认证 token（不存在时自动生成）
         token = load_token()
-        print("\n===== API 认证 =====")
-        print(f"所有 /api/* 端点需要 token：Authorization: Bearer <token>")
-        print(f"当前 token: {token}")
-        print(f"前端请在 frontend/.env.local 设置 VITE_API_TOKEN=<token>")
-        print("==================\n")
+        logger.debug("===== API 认证 =====")
+        logger.info("所有 /api/* 端点需要 token：Authorization: Bearer <token>")
+        logger.debug("当前 token: {}", token)
+        logger.info("前端请在 frontend/.env.local 设置 VITE_API_TOKEN=<token>")
+        logger.debug("==================")
         
     except Exception as e:
-        print(f"[ERROR] 启动失败: {e}")
+        logger.exception("启动失败: {}", e)
         raise
+
+    yield
+
+    # 关闭时清理（当前无需要释放的资源，占位以便未来扩展）
+    logger.info("EAS 2.0 API 服务已停止")
+
+
+# ===== FastAPI App =====
+
+app = FastAPI(title="EAS 2.0 API", version="0.1.0", lifespan=lifespan)
+
+# CORS：仅放行本地前端来源。
+# 不使用 allow_origins=["*"]，它与 allow_credentials=True 组合违反 CORS 规范，
+# 且对非浏览器客户端毫无约束力（CORS 不是访问控制，鉴权由 require_token 负责）。
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+_extra_origins = os.environ.get("EAS_ALLOWED_ORIGINS", "").strip()
+if _extra_origins:
+    ALLOWED_ORIGINS.extend(
+        origin.strip() for origin in _extra_origins.split(",") if origin.strip()
+    )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Token"],
+)
 
 # ===== WebSocket 日志广播 =====
 
@@ -561,10 +590,92 @@ async def execute_plan(plan_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/plan/{plan_id}/pause", dependencies=[Depends(require_token)])
+async def pause_plan(plan_id: str):
+    """暂停正在执行的计划。执行循环会在下一个步骤开始前检测到 Paused 状态并退出。"""
+    try:
+        plan = state.database.get_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="执行计划不存在")
+
+        current_status = state.database.get_plan_status(plan_id)
+        if current_status != "Running":
+            raise HTTPException(
+                status_code=409,
+                detail=f"只能暂停 Running 状态的计划，当前状态: {current_status}",
+            )
+
+        if not state.database.update_plan(plan_id, "Paused"):
+            raise HTTPException(status_code=500, detail="暂停失败")
+
+        await broadcast_log(f"计划 {plan_id} 已请求暂停", "info")
+        return {"success": True, "message": "暂停请求已发出，将在当前步骤完成后生效"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/plan/{plan_id}/resume", dependencies=[Depends(require_token)])
+async def resume_plan(plan_id: str):
+    """恢复已暂停的计划，从断点（第一个非 Success/Skipped 的步骤）重新开始执行。"""
+    try:
+        plan = state.database.get_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="执行计划不存在")
+
+        current_status = state.database.get_plan_status(plan_id)
+        if current_status != "Paused":
+            raise HTTPException(
+                status_code=409,
+                detail=f"只能恢复 Paused 状态的计划，当前状态: {current_status}",
+            )
+
+        async with state.execution_lock:
+            if state.current_execution:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"已有任务在执行中: {state.current_execution}",
+                )
+            state.current_execution = plan_id
+
+        asyncio.create_task(execute_plan_background(plan, resume=True))
+
+        return {"success": True, "message": "已从断点恢复执行"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/plan/{plan_id}/skip-step/{step_id}", dependencies=[Depends(require_token)])
+async def skip_step(plan_id: str, step_id: str):
+    """把指定步骤标记为 Skipped。正在进行中的执行循环会在避开该步骤时直接跳过不执行。"""
+    try:
+        plan = state.database.get_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="执行计划不存在")
+
+        steps = state.database.get_steps(plan_id)
+        if not any(s["step_id"] == step_id for s in steps):
+            raise HTTPException(status_code=404, detail="步骤不存在")
+
+        if not state.database.update_step(step_id=step_id, status="Skipped", executed_at=datetime.now()):
+            raise HTTPException(status_code=500, detail="跳过失败")
+
+        await broadcast_log(f"步骤 {step_id} 已被手动跳过", "info")
+        return {"success": True, "message": "步骤已标记为跳过"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def _persist_step_status(
     step_id: str,
     status: str,
     outputs: Optional[Dict[str, Any]] = None,
+    retry_count: Optional[int] = None,
 ) -> bool:
     """
     写入步骤状态，并返回是否命中了数据行。
@@ -577,31 +688,59 @@ def _persist_step_status(
         status=status,
         outputs=outputs,
         executed_at=datetime.now(),
+        retry_count=retry_count,
     )
     return bool(updated)
 
 
-async def execute_plan_background(plan):
-    """后台执行计划"""
-    log_file = Path("execution_debug.log")
+async def execute_plan_background(plan, resume: bool = False):
+    """后台执行计划
 
+    resume=True 时：从断点继续（跳过已经是 Success/Skipped 的步骤），用于 /resume 端点。
+    """
     def debug_log(msg):
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write(f"{datetime.now().isoformat()} - {msg}\n")
-            f.flush()
-        print(f"[DEBUG] {msg}", file=sys.stderr)
+        # 阶段4.1：不再手写 append 到 execution_debug.log（该文件会无限增长）。
+        # 统一走 logger，由 logging_config.py 里配置的按大小轮转 sink 处理。
+        logger.debug(msg)
 
     plan_failed = False
+    plan_paused = False
 
     try:
-        debug_log(f"execute_plan_background STARTED for plan {plan.plan_id}")
+        debug_log(f"execute_plan_background STARTED for plan {plan.plan_id} (resume={resume})")
         state.database.update_plan(str(plan.plan_id), "Running")
-        await broadcast_log(f"开始执行计划: {plan.plan_id}", "info")
+        await broadcast_log(f"{'恢复' if resume else '开始'}执行计划: {plan.plan_id}", "info")
 
         for segment in plan.segments:
             debug_log(f"Processing segment with {len(segment.steps)} steps")
             for step in segment.steps:
                 step_id = str(step.step_id)
+
+                # 恢复模式下跳过已完成/已跳过的步骤，从第一个未完成的步骤重新开始
+                step_status_value = step.status.value if hasattr(step.status, "value") else str(step.status)
+                if resume and step_status_value in ("Success", "Skipped"):
+                    debug_log(f"Step {step_id} already {step_status_value}, skip on resume")
+                    continue
+
+                # 手动跳过：步骤已被 /skip-step 标记为 Skipped，直接跳过不执行
+                current_steps = state.database.get_steps(str(plan.plan_id))
+                skipped_ids = {
+                    s["step_id"] for s in current_steps if s.get("status") == "Skipped"
+                }
+                if step_id in skipped_ids:
+                    debug_log(f"Step {step_id} marked Skipped, skipping execution")
+                    await broadcast_log(f"[SKIP] 步骤 {step_id} 已被跳过", "info")
+                    continue
+
+                # 暂停检测：每个步骤开始前重新从 DB 读一次计划状态，发现被暂停则退出循环，
+                # 保持 Paused 状态不变，等待 /resume 端点重新拉起。
+                current_plan_status = state.database.get_plan_status(str(plan.plan_id))
+                if current_plan_status == "Paused":
+                    debug_log(f"Plan {plan.plan_id} is Paused, stopping execution loop")
+                    await broadcast_log(f"计划 {plan.plan_id} 已暂停", "info")
+                    plan_paused = True
+                    break
+
                 debug_log(f"Step {step_id}: {step.description[:30]}...")
                 await broadcast_log(f"执行步骤 {step_id}: {step.description[:50]}...")
 
@@ -613,11 +752,39 @@ async def execute_plan_background(plan):
                     plan_failed = True
                     break
 
-                result = await state.executor.execute_step(step)
-                debug_log(
-                    f"Step {step_id} result: success={result.get('success')} "
-                    f"check={result.get('check_status')}"
-                )
+                # 重试循环：读取 config 的 retry.max_attempts / backoff_factor。
+                # 不可重试的失败（安全拦截 blocked、或结果校验不通过 check_status=="failed"）
+                # 是逻辑/安全层面的确定性错误，重试不会改变结果，立即判失败退出循环；
+                # 其余失败（网络超时、工具执行异常等）按指数退避重试。
+                max_attempts = getattr(state, "retry_max_attempts", 3)
+                backoff_factor = getattr(state, "retry_backoff_factor", 2)
+                attempt = 0
+                result = None
+                while True:
+                    result = await state.executor.execute_step(step)
+                    debug_log(
+                        f"Step {step_id} attempt {attempt} result: success={result.get('success')} "
+                        f"check={result.get('check_status')} blocked={result.get('blocked')}"
+                    )
+                    if result.get("success") and result.get("check_status") != "failed":
+                        break
+                    non_retryable = result.get("blocked") or result.get("check_status") == "failed"
+                    if non_retryable:
+                        debug_log(f"Step {step_id} 遇到不可重试错误，停止重试")
+                        break
+                    if attempt >= max_attempts - 1:
+                        break
+                    attempt += 1
+                    step.retry_count = attempt
+                    step.max_retries = max_attempts - 1
+                    delay = backoff_factor ** attempt
+                    await broadcast_log(
+                        f"[RETRY] 步骤 {step_id} 失败，第 {attempt}/{max_attempts - 1} 次重试（{delay:.1f}秒后）",
+                        "warning",
+                    )
+                    debug_log(f"Step {step_id} retrying, attempt {attempt}/{max_attempts - 1}, delay={delay}")
+                    _persist_step_status(step_id, "Running", retry_count=attempt)
+                    await asyncio.sleep(delay)
 
                 outputs = result.get("output")
                 check_status = result.get("check_status")
@@ -633,7 +800,7 @@ async def execute_plan_background(plan):
                     payload = dict(outputs) if isinstance(outputs, dict) else {"result": outputs}
                     payload["check_status"] = check_status
 
-                    if not _persist_step_status(step_id, "Success", payload):
+                    if not _persist_step_status(step_id, "Success", payload, retry_count=step.retry_count):
                         debug_log(f"WARNING: 步骤 {step_id} 成功状态写入失败")
                         await broadcast_log(
                             f"[WARN] 步骤 {step_id} 状态写入失败", "warning"
@@ -642,31 +809,37 @@ async def execute_plan_background(plan):
                         debug_log(f"Step {step_id} marked as Success")
                 else:
                     error = result.get("error", "未知错误")
-                    await broadcast_log(f"[ERROR] 步骤 {step_id} 失败: {error}", "error")
+                    await broadcast_log(
+                        f"[ERROR] 步骤 {step_id} 失败（已重试 {step.retry_count} 次）: {error}", "error"
+                    )
 
                     payload = {"error": error, "check_status": check_status}
                     if isinstance(outputs, dict):
                         payload["tool_output"] = outputs
 
-                    if not _persist_step_status(step_id, "Failed", payload):
+                    if not _persist_step_status(step_id, "Failed", payload, retry_count=step.retry_count):
                         debug_log(f"WARNING: 步骤 {step_id} 失败状态写入失败")
 
                     debug_log(f"Step {step_id} marked as Failed: {error}")
                     plan_failed = True
                     break
 
-            if plan_failed:
+            if plan_failed or plan_paused:
                 break
 
-        final_status = "Failed" if plan_failed else "Completed"
-        state.database.update_plan(str(plan.plan_id), final_status)
-
-        if plan_failed:
-            await broadcast_log(f"计划执行失败: {plan.plan_id}", "error")
-            debug_log(f"Plan {plan.plan_id} execution FAILED")
+        if plan_paused:
+            # 保持 Paused 状态，不覆盖为 Completed/Failed，等待 /resume 重新拉起
+            debug_log(f"Plan {plan.plan_id} execution PAUSED")
         else:
-            await broadcast_log(f"计划执行完成: {plan.plan_id}", "success")
-            debug_log(f"Plan {plan.plan_id} execution COMPLETED")
+            final_status = "Failed" if plan_failed else "Completed"
+            state.database.update_plan(str(plan.plan_id), final_status)
+
+            if plan_failed:
+                await broadcast_log(f"计划执行失败: {plan.plan_id}", "error")
+                debug_log(f"Plan {plan.plan_id} execution FAILED")
+            else:
+                await broadcast_log(f"计划执行完成: {plan.plan_id}", "success")
+                debug_log(f"Plan {plan.plan_id} execution COMPLETED")
 
     except Exception as e:
         debug_log(f"EXCEPTION in execute_plan_background: {e}")
@@ -681,6 +854,19 @@ async def execute_plan_background(plan):
         async with state.execution_lock:
             state.current_execution = None
         debug_log(f"execute_plan_background FINISHED for plan {plan.plan_id}")
+
+
+@app.get("/api/audit-logs", dependencies=[Depends(require_token)])
+async def get_audit_logs(limit: int = 100, plan_id: Optional[str] = None):
+    """查询审计日志（工具调用记录，包括被安全拦截的调用）"""
+    try:
+        logs = state.database.list_audit_logs(limit=limit, plan_id=plan_id)
+        return {
+            "success": True,
+            "logs": logs
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/tools", dependencies=[Depends(require_token)])
