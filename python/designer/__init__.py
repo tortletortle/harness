@@ -621,7 +621,12 @@ class DefaultDesigner(Designer):
         {
           "description": "创建项目目录",
           "tool": "file_creator",
-          "inputs": {"instruction": "create_directory", "path": "./project"}
+          "inputs": {"path": "./project", "content": ""}
+        },
+        {
+          "description": "创建主程序",
+          "tool": "file_creator",
+          "inputs": {"path": "./project/main.py", "content": "print('hello')"}
         }
       ]
     }
@@ -633,11 +638,8 @@ class DefaultDesigner(Designer):
 [OK] JSON 规则：
 1. 所有字符串用双引号 ""
 2. 最后一个元素后不要有逗号
-3. inputs 必须是对象 {}
+3. inputs 必须使用键 `path` 和 `content`，不要用 `file_path` / `file_content`
 4. 确保所有括号都正确闭合
-
-🔧 可用工具：
-- file_creator: 创建文件和目录
 
 ⚠️ 约束：只使用 file_creator，不要执行任何 shell 命令，不要使用 command_runner / package_installer / git_operator / text_editor / web_fetcher。
 
