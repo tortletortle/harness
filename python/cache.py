@@ -9,6 +9,10 @@ import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 
+from logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 class DesignCache:
     """设计书缓存"""
@@ -42,7 +46,7 @@ class DesignCache:
             with open(self.cache_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
-            print(f"加载缓存失败: {e}")
+            logger.error("加载缓存失败: {}", e)
             return {}
     
     def _save_cache(self):
@@ -52,7 +56,7 @@ class DesignCache:
             with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(self.cache, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"保存缓存失败: {e}")
+            logger.error("保存缓存失败: {}", e)
     
     def _clean_expired(self):
         """清理过期缓存"""
@@ -65,7 +69,7 @@ class DesignCache:
         
         for key in expired_keys:
             del self.cache[key]
-            print(f"清理过期缓存: {key}")
+            logger.debug("清理过期缓存: {}", key)
         
         if expired_keys:
             self._save_cache()
@@ -80,7 +84,7 @@ class DesignCache:
             )[0]
             
             del self.cache[least_used_key]
-            print(f"缓存已满，驱逐: {least_used_key}")
+            logger.debug("缓存已满，驱逐: {}", least_used_key)
             self._save_cache()
     
     def get(self, user_request: str) -> Optional[Dict[str, Any]]:
@@ -141,7 +145,7 @@ class DesignCache:
         """清空所有缓存"""
         self.cache = {}
         self._save_cache()
-        print("已清空所有缓存")
+        logger.info("已清空所有缓存")
     
     def stats(self) -> Dict[str, Any]:
         """获取缓存统计信息"""

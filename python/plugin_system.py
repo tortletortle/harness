@@ -8,6 +8,10 @@ import inspect
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 class Plugin:
     """插件基类"""
@@ -73,13 +77,13 @@ class PluginManager:
             path = Path(plugin_path)
             
             if not path.exists():
-                print(f"插件文件不存在: {plugin_path}")
+                logger.warning("插件文件不存在: {}", plugin_path)
                 return None
             
             # 动态导入模块
             spec = importlib.util.spec_from_file_location(path.stem, path)
             if spec is None or spec.loader is None:
-                print(f"无法加载插件: {plugin_path}")
+                logger.error("无法加载插件: {}", plugin_path)
                 return None
             
             module = importlib.util.module_from_spec(spec)
@@ -93,7 +97,7 @@ class PluginManager:
                     break
             
             if plugin_class is None:
-                print(f"插件中未找到Plugin子类: {plugin_path}")
+                logger.error("插件中未找到Plugin子类: {}", plugin_path)
                 return None
             
             # 实例化插件
@@ -101,7 +105,7 @@ class PluginManager:
             
             # 初始化插件
             if not plugin.initialize():
-                print(f"插件初始化失败: {plugin.name}")
+                logger.error("插件初始化失败: {}", plugin.name)
                 return None
             
             # 注册插件
@@ -114,13 +118,11 @@ class PluginManager:
                 "type": self._get_plugin_type(plugin)
             }
             
-            print(f"[OK] 插件加载成功: {plugin.name} v{plugin.version}")
+            logger.info("插件加载成功: {} v{}", plugin.name, plugin.version)
             return plugin
             
         except Exception as e:
-            print(f"加载插件失败 {plugin_path}: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("加载插件失败 {}: {}", plugin_path, e)
             return None
     
     def load_plugins_from_directory(self, directory: str = None) -> int:
@@ -131,7 +133,7 @@ class PluginManager:
             directory = Path(directory)
         
         if not directory.exists():
-            print(f"插件目录不存在: {directory}")
+            logger.warning("插件目录不存在: {}", directory)
             return 0
         
         count = 0
@@ -158,7 +160,7 @@ class PluginManager:
         del self.plugins[plugin_name]
         del self.plugin_metadata[plugin_name]
         
-        print(f"插件已卸载: {plugin_name}")
+        logger.info("插件已卸载: {}", plugin_name)
         return True
     
     def get_plugin(self, plugin_name: str) -> Optional[Plugin]:

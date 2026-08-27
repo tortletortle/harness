@@ -16,6 +16,9 @@ from models import Step, StepStatus
 from utils.interfaces import ExecutorAI
 from llm_client import LLMClient, Message
 from tools import get_registry
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class DefaultExecutor(ExecutorAI):
@@ -28,23 +31,33 @@ class DefaultExecutor(ExecutorAI):
     CHECK_FAILED = "failed"
     CHECK_UNVERIFIED = "unverified"
 
-    def __init__(self, llm_client: LLMClient, model_config: Dict[str, Any], tool_registry=None) -> None:
+    # 步骤级超时炙断的默认阈值（秒）。覆盖了各工具自身超时（command_runner 60s /
+    # web_fetcher 30s 等）再留一些余量，兑底那些没有自身超时保护的工具
+    # （file_creator / text_editor / manual_tool）或自身超时机制失效的情况。
+    DEFAULT_STEP_TIMEOUT = 120
+
+    def __init__(self, llm_client: LLMClient, model_config: Dict[str, Any], tool_registry=None, database=None) -> None:
         self.llm_client = llm_client
         self.model_config = model_config
         self.tool_registry = tool_registry if tool_registry else get_registry()
-    
+        # 可选：有则写入审计日志（谁/何时/哪个工具指令/结果），
+        # 未传入时静静跳过，不影响现有调用方不传参的兼容性。
+        self.database = database
+        # 支持通过 model_config 覆盖默认超时，未配置则用类默认值。
+        self.step_timeout = model_config.get("step_timeout", self.DEFAULT_STEP_TIMEOUT) if model_config else self.DEFAULT_STEP_TIMEOUT
+
     @property
     def name(self) -> str:
         return "executor"
-    
+
     @property
     def version(self) -> str:
         return "0.1.0"
-    
+
     async def process(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """统一处理入口"""
         action = request.get("action")
-        
+
         if action == "execute_step":
             result = await self.execute_step(Step(**request["step"]))
             return result
@@ -56,17 +69,35 @@ class DefaultExecutor(ExecutorAI):
             return {"passed": passed}
         else:
             raise ValueError(f"Unknown action: {action}")
-    
+
     async def health_check(self) -> bool:
         return True
-    
+
+    def _audit(self, tool_id: str, instruction: str, inputs: Dict[str, Any], success, blocked: bool, block_reason: str = None, step: Step = None):
+        """写入审计日志，失败不影响主流程"""
+        if not self.database:
+            return
+        try:
+            self.database.save_audit_log(
+                tool_id=tool_id,
+                instruction=instruction,
+                inputs=inputs,
+                step_id=str(step.step_id) if step else None,
+                success=success,
+                blocked=blocked,
+                block_reason=block_reason,
+                actor="executor",
+            )
+        except Exception as e:
+            logger.warning("审计日志写入失败: {}", e)
+
     async def execute_step(self, step: Step) -> Dict[str, Any]:
         """执行单个步骤"""
-        
-        print(f"  执行步骤 {step.order}: {step.description}")
-        print(f"    工具: {step.tool}")
-        print(f"    输入: {step.inputs}")
-        
+
+        logger.info("执行步骤 {}: {}", step.order, step.description)
+        logger.debug("工具: {}", step.tool)
+        logger.debug("输入: {}", step.inputs)
+
         try:
             # 解析工具ID和指令
             tool_parts = step.tool.split(":")
@@ -77,28 +108,74 @@ class DefaultExecutor(ExecutorAI):
                 # 如果没有指定指令，尝试从 inputs 中获取
                 tool_id = step.tool
                 instruction = step.inputs.get("instruction")
-                
+
                 # 如果没有 instruction，尝试 action 键（常见的别名）
                 if not instruction:
                     instruction = step.inputs.get("action")
-                
+
                 # 如果还是没有，根据工具类型推断默认指令
                 if not instruction:
                     instruction = self._infer_instruction(tool_id, step.inputs)
-                
+
                 # 最后使用默认值
                 if not instruction:
                     instruction = "execute"
-            
+
             # 执行工具
             # execute_tool 是同步的，内部会跑 subprocess（command_runner 默认超时 60s）。
             # 直接调用会堵住整个事件循环，期间 API 和 WebSocket 全部无响应（前端表现为假死）。
-            result = await asyncio.to_thread(
-                self.tool_registry.execute_tool, tool_id, instruction, step.inputs
+            # 外层再包一层 wait_for 作为统一熔断：即便某个工具自身的超时机制失效或
+            # 卡在系统调用上，也不会无限期挂住整个执行循环。
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.tool_registry.execute_tool, tool_id, instruction, step.inputs
+                    ),
+                    timeout=self.step_timeout,
+                )
+            except asyncio.TimeoutError:
+                logger.error("步骤执行超时（{}秒）", self.step_timeout)
+                self._audit(
+                    tool_id=tool_id,
+                    instruction=instruction,
+                    inputs=step.inputs,
+                    success=False,
+                    blocked=False,
+                    block_reason="Step execution timeout",
+                    step=step,
+                )
+                return {
+                    "success": False,
+                    "output": None,
+                    "check_status": self.CHECK_UNVERIFIED,
+                    "check_passed": False,
+                    "error": "Step execution timeout",
+                    "blocked": False,
+                }
+
+            # 审计：记录本次工具调用及其结果（包括安全拦截：Dangerous command blocked /
+            # Invalid package name / Invalid or blocked URL / Workdir not allowed）。
+            error_code = None
+            if not result.get("success"):
+                error_code = result.get("error")
+            blocked = error_code in (
+                "Dangerous command blocked",
+                "Invalid package name",
+                "Invalid or blocked URL",
+                "Workdir not allowed",
             )
-            
+            self._audit(
+                tool_id=tool_id,
+                instruction=instruction,
+                inputs=step.inputs,
+                success=result.get("success"),
+                blocked=blocked,
+                block_reason=error_code if blocked else None,
+                step=step,
+            )
+
             if result.get("success"):
-                print(f"    [OK] 工具执行成功: {result.get('message')}")
+                logger.info("工具执行成功: {}", result.get("message"))
 
                 # 检查结果是否符合预期
                 check_status = await self.check_result(step, result)
@@ -106,17 +183,19 @@ class DefaultExecutor(ExecutorAI):
                 # 校验明确失败 -> 步骤失败。
                 # 工具跑完不等于做对了事（例如写入了错的内容、下载到 404 页面）。
                 if check_status == self.CHECK_FAILED:
-                    print(f"    [FAIL] 结果校验未通过: {step.check_criteria}")
+                    logger.warning("结果校验未通过: {}", step.check_criteria)
                     return {
                         "success": False,
                         "output": result,
                         "check_status": check_status,
                         "check_passed": False,
                         "error": f"结果校验未通过（标准：{step.check_criteria}）",
+                        # 校验失败是逻辑错误，不是网络抖动之类的瞬时故障，重试没有意义。
+                        "blocked": True,
                     }
 
                 if check_status == self.CHECK_UNVERIFIED:
-                    print(f"    [WARN] 结果未能校验，步骤标记为需人工复核")
+                    logger.warning("结果未能校验，步骤标记为需人工复核")
 
                 return {
                     "success": True,
@@ -124,35 +203,40 @@ class DefaultExecutor(ExecutorAI):
                     "check_status": check_status,
                     "check_passed": check_status == self.CHECK_PASSED,
                     "error": None,
+                    "blocked": False,
                 }
             else:
-                print(f"    [FAIL] 失败: {result.get('message')}")
+                logger.error("失败: {}", result.get("message"))
                 return {
                     "success": False,
                     "output": result,
                     "check_status": self.CHECK_UNVERIFIED,
                     "check_passed": False,
                     "error": result.get("error", "Unknown error"),
+                    # 安全拦截（危险命令/非法包名/非法URL/工作目录越界）重试无意义，
+                    # 无论重试多少次结果都不会变。
+                    "blocked": blocked,
                 }
 
         except Exception as e:
-            print(f"    [FAIL] 异常: {str(e)}")
+            logger.exception("异常: {}", e)
             return {
                 "success": False,
                 "output": None,
                 "check_status": self.CHECK_UNVERIFIED,
                 "check_passed": False,
                 "error": str(e),
+                "blocked": False,
             }
-    
+
     def _infer_instruction(self, tool_id: str, inputs: Dict[str, Any]) -> str:
         """
         根据工具类型和输入推断默认指令
-        
+
         Args:
             tool_id: 工具ID
             inputs: 输入参数
-            
+
         Returns:
             推断的指令名
         """
@@ -209,7 +293,7 @@ class DefaultExecutor(ExecutorAI):
         # command_runner 的映射
         elif tool_id == "command_runner":
             return "run_command"
-        
+
         # web_fetcher 的映射
         elif tool_id == "web_fetcher":
             if "path" in inputs or "output" in inputs or "save_to" in inputs:
@@ -219,7 +303,7 @@ class DefaultExecutor(ExecutorAI):
 
         # 默认返回 None，让调用者处理
         return None
-    
+
 
     async def check_result(self, step: Step, output: Dict[str, Any]) -> str:
         """
@@ -242,7 +326,7 @@ class DefaultExecutor(ExecutorAI):
             provider = self.model_config["primary"]["provider"]
             model = self.model_config["primary"]["model"]
         except (KeyError, TypeError) as e:
-            print(f"    [WARN] 校验配置缺失（model_config 缺 {e}），本步骤标记为未校验")
+            logger.warning("校验配置缺失（model_config 缺 {}），本步骤标记为未校验", e)
             return self.CHECK_UNVERIFIED
 
         try:
@@ -275,9 +359,9 @@ class DefaultExecutor(ExecutorAI):
                 return self.CHECK_FAILED
 
             # 回复无法解析，不猜
-            print(f"    [WARN] 校验回复无法解析: {verdict!r}，标记为未校验")
+            logger.warning("校验回复无法解析: {!r}，标记为未校验", verdict)
             return self.CHECK_UNVERIFIED
 
         except Exception as e:
-            print(f"    [WARN] 校验调用失败，标记为未校验: {e}")
+            logger.warning("校验调用失败，标记为未校验: {}", e)
             return self.CHECK_UNVERIFIED

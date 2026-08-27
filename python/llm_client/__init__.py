@@ -232,7 +232,7 @@ class OpenAICompatibleProvider(LLMProvider):
         self._name = name
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
-        self.client = httpx.AsyncClient(timeout=60.0)
+        self.client = httpx.AsyncClient(timeout=60.0, proxy=None)
     
     @property
     def name(self) -> str:

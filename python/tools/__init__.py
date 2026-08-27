@@ -13,6 +13,10 @@ from .git_operator import GitOperator
 from .text_editor import TextEditor
 from .web_fetcher import WebFetcher
 
+from logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 class ToolRegistryAgent:
     """
@@ -143,7 +147,7 @@ class ToolRegistryAgent:
                     break
                 
                 iteration += 1
-                print(f"🔍 工具库AI正在搜索 (第{iteration}次)")
+                logger.debug("工具库AI正在搜索 (第{}次)", iteration)
                 
                 for tool_call in response.tool_calls:
                     func_name = tool_call['function']['name']
@@ -152,7 +156,7 @@ class ToolRegistryAgent:
                         try:
                             args = json.loads(tool_call['function']['arguments'])
                             url = args.get('url', '')
-                            print(f"  访问: {url}")
+                            logger.debug("访问: {}", url)
                             
                             # 调用web_fetcher
                             from .web_fetcher import WebFetcher
@@ -166,7 +170,7 @@ class ToolRegistryAgent:
                                 tool_call_id=tool_call.get('id')
                             ))
                         except Exception as e:
-                            print(f"  ❌ 搜索失败: {e}")
+                            logger.warning("搜索失败: {}", e)
                             messages.append(Message(
                                 role="tool",
                                 content=json.dumps({"error": str(e)}, ensure_ascii=False),

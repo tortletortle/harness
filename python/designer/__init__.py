@@ -23,6 +23,9 @@ from models import (
 )
 from utils.interfaces import Designer
 from llm_client import LLMClient, Message
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class DefaultDesigner(Designer):
@@ -89,7 +92,7 @@ class DefaultDesigner(Designer):
         # 检查缓存
         cached_design = self.design_cache.get(user_request)
         if cached_design:
-            print("[OK] 使用缓存的设计书")
+            logger.info("使用缓存的设计书")
             return DesignDocument(**cached_design)
         
         # 通过dispatcher获取工具信息
@@ -103,7 +106,7 @@ class DefaultDesigner(Designer):
                     tools_info_lines.append(f"  - {tool['tool_id']} [{category}]: {tool.get('description', '无描述')}")
                 tools_info = "\n".join(tools_info_lines)
             except Exception as e:
-                print(f"[WARN]  获取工具信息失败: {e}")
+                logger.warning("获取工具信息失败: {}", e)
                 tools_info = "（工具信息不可用）"
         else:
             tools_info = "（未配置dispatcher）"
@@ -219,12 +222,12 @@ class DefaultDesigner(Designer):
             max_iterations = 5  # 防止无限循环
             iteration = 0
             
-            print(f"\n===== 检查工具调用 =====")
-            print(f"response 类型: {type(response)}")
-            print(f"hasattr tool_calls: {hasattr(response, 'tool_calls')}")
+            logger.debug("===== 检查工具调用 =====")
+            logger.debug("response 类型: {}", type(response))
+            logger.debug("hasattr tool_calls: {}", hasattr(response, "tool_calls"))
             if hasattr(response, 'tool_calls'):
-                print(f"tool_calls 值: {response.tool_calls}")
-            print(f"==================\n")
+                logger.debug("tool_calls 值: {}", response.tool_calls)
+            logger.debug("==================")
             
             while iteration < max_iterations and self.dispatcher:
                 # 检查是否有tool calls
@@ -232,7 +235,7 @@ class DefaultDesigner(Designer):
                     break
                 
                 iteration += 1
-                print(f"🔍 设计器请求搜索信息 (第{iteration}次)")
+                logger.info("设计器请求搜索信息（第{}次）", iteration)
                 
                 # 处理每个tool call
                 for tool_call in response.tool_calls:
@@ -243,7 +246,7 @@ class DefaultDesigner(Designer):
                             # 解析参数
                             args = json.loads(tool_call['function']['arguments'])
                             query = args.get('query', '')
-                            print(f"  搜索: {query}")
+                            logger.debug("搜索: {}", query)
                             
                             # 通过dispatcher请求搜索
                             result = await self.dispatcher.request_search(query)
@@ -257,7 +260,7 @@ class DefaultDesigner(Designer):
                             ))
                             
                         except Exception as e:
-                            print(f"  [FAIL] 搜索失败: {e}")
+                            logger.error("搜索失败: {}", e)
                             messages.append(Message(
                                 role="tool",
                                 content=json.dumps({"error": str(e)}, ensure_ascii=False),
@@ -265,7 +268,7 @@ class DefaultDesigner(Designer):
                             ))
                     else:
                         # 不允许的工具调用
-                        print(f"  [WARN]  拒绝调用工具: {func_name}（设计阶段只允许搜索）")
+                        logger.warning("拒绝调用工具: {}（设计阶段只允许搜索）", func_name)
                         messages.append(Message(
                             role="tool",
                             content=json.dumps({"error": "设计阶段只允许使用web_search"}, ensure_ascii=False),
@@ -284,7 +287,7 @@ class DefaultDesigner(Designer):
             
             # 如果进行了工具调用，需要明确要求返回JSON
             if iteration > 0:
-                print(f"\n🔄 工具调用完成，请求生成最终设计书...")
+                logger.info("工具调用完成，请求生成最终设计书...")
                 messages.append(Message(
                     role="user",
                     content="现在你已经获得了足够的信息。请基于这些信息生成完整的设计书JSON。记住：只返回JSON格式的设计书，不要其他解释或总结。"
@@ -303,17 +306,17 @@ class DefaultDesigner(Designer):
             response_text = response.content.strip()
             
             # 调试日志
-            print(f"\n===== LLM响应 =====")
-            print(f"响应长度: {len(response_text)}")
-            print(f"前200字符: {response_text[:200]}")
-            print(f"==================\n")
+            logger.debug("===== LLM响应 =====")
+            logger.debug("响应长度: {}", len(response_text))
+            logger.debug("前200字符: {}", response_text[:200])
+            logger.debug("==================")
             
             # 检查是否为JSON格式
             is_json_response = response_text.strip().startswith(('{', '[')) or '```json' in response_text or '```' in response_text
             
             # 如果不是JSON，可能是搜索结果或其他内容，需要再次请求
             if not is_json_response:
-                print(f"[WARN]  LLM返回的不是JSON格式，再次请求生成设计书...")
+                logger.warning("LLM返回的不是JSON格式，再次请求生成设计书...")
                 messages.append(Message(
                     role="assistant",
                     content=response_text
@@ -331,10 +334,10 @@ class DefaultDesigner(Designer):
                     tools=None,  # 不再提供工具
                 )
                 response_text = response.content.strip()
-                print(f"\n===== 第二次响应 =====")
-                print(f"响应长度: {len(response_text)}")
-                print(f"前200字符: {response_text[:200]}")
-                print(f"==================\n")
+                logger.debug("===== 第二次响应 =====")
+                logger.debug("响应长度: {}", len(response_text))
+                logger.debug("前200字符: {}", response_text[:200])
+                logger.debug("==================")
             
             # 尝试提取JSON（可能被markdown包裹）
             if "```json" in response_text:
@@ -342,8 +345,8 @@ class DefaultDesigner(Designer):
             elif "```" in response_text:
                 response_text = response_text.split("```")[1].split("```")[0].strip()
             
-            print(f"提取后的JSON长度: {len(response_text)}")
-            print(f"提取后的JSON前200字符: {response_text[:200]}")
+            logger.debug("提取后的JSON长度: {}", len(response_text))
+            logger.debug("提取后的JSON前200字符: {}", response_text[:200])
             
             design_data = json.loads(response_text)
             
@@ -381,8 +384,8 @@ class DefaultDesigner(Designer):
             
         except Exception as e:
             # 如果解析失败，返回一个基础版本
-            print(f"设计书生成失败: {e}")
-            print(f"错误类型: {type(e).__name__}")
+            logger.error("设计书生成失败: {}", e)
+            logger.error("错误类型: {}", type(e).__name__)
             import traceback
             traceback.print_exc()
             
@@ -421,7 +424,7 @@ class DefaultDesigner(Designer):
         Returns:
             修订后的设计书
         """
-        print(f"[NOTE] 根据反馈修订设计书: {feedback}")
+        logger.info("根据反馈修订设计书: {}", feedback)
         
         # 获取工具信息
         tools_info = ""
@@ -434,7 +437,7 @@ class DefaultDesigner(Designer):
                     tools_info_lines.append(f"  - {tool['tool_id']} [{category}]: {tool.get('description', '无描述')}")
                 tools_info = "\n".join(tools_info_lines)
             except Exception as e:
-                print(f"[WARN]  获取工具信息失败: {e}")
+                logger.warning("获取工具信息失败: {}", e)
                 tools_info = "（工具信息不可用）"
         else:
             tools_info = "（未配置dispatcher）"
@@ -583,11 +586,11 @@ class DefaultDesigner(Designer):
                 ),
             )
             
-            print("[OK] 设计书修订完成")
+            logger.info("设计书修订完成")
             return revised_design
             
         except Exception as e:
-            print(f"[FAIL] 设计书修订失败: {e}")
+            logger.error("设计书修订失败: {}", e)
             import traceback
             traceback.print_exc()
             # 失败时返回原设计书
@@ -600,7 +603,7 @@ class DefaultDesigner(Designer):
         cache_key = str(design.design_id)
         cached_plan = self.plan_cache.get(cache_key)
         if cached_plan:
-            print("[OK] 使用缓存的执行计划")
+            logger.info("使用缓存的执行计划")
             return ExecutionPlan(**cached_plan)
         
         system_prompt = """你是一个执行计划专家。根据设计书生成详细的、可执行的步骤计划。
@@ -635,11 +638,8 @@ class DefaultDesigner(Designer):
 
 🔧 可用工具：
 - file_creator: 创建文件和目录
-- command_runner: 执行 shell 命令
-- package_installer: 安装依赖包
-- git_operator: Git 操作
-- text_editor: 编辑文本文件
-- web_fetcher: 下载网络资源
+
+⚠️ 约束：只使用 file_creator，不要执行任何 shell 命令，不要使用 command_runner / package_installer / git_operator / text_editor / web_fetcher。
 
 🎯 注意事项（重要）：
 - description 要简洁（10-20字），不要冗余
@@ -730,14 +730,14 @@ class DefaultDesigner(Designer):
                 api_type = config["type"]
                 
                 if attempt > 0:
-                    print(f"重试生成执行计划... (尝试 {attempt + 1}/{max_retries}, 使用 {api_type}: {provider}/{model})")
+                    logger.warning("重试生成执行计划...（尝试 {}/{}，使用 {}: {}/{}）", attempt + 1, max_retries, api_type, provider, model)
                     # 添加延迟，避免触发速率限制
                     import asyncio
                     wait_time = 2 * attempt  # 2秒, 4秒, 6秒
-                    print(f"等待 {wait_time} 秒后重试...")
+                    logger.info("等待 {} 秒后重试...", wait_time)
                     await asyncio.sleep(wait_time)
                 else:
-                    print(f"使用 {api_type}: {provider}/{model}")
+                    logger.debug("使用 {}: {}/{}", api_type, provider, model)
                 
                 response = await self.llm_client.chat(
                     provider_name=provider,
@@ -756,10 +756,10 @@ class DefaultDesigner(Designer):
                 response_text = response.content.strip()
                 
                 # 打印响应长度，便于调试
-                print(f"   API 响应长度: {len(response_text)} 字符")
+                logger.debug("API 响应长度: {} 字符", len(response_text))
                 if len(response_text) == 0:
                     last_error = "API 返回空响应"
-                    print(f"[FAIL] {last_error}")
+                    logger.error("{}", last_error)
                     continue  # 重试
                 
                 # 尝试修复并验证 JSON
@@ -767,10 +767,10 @@ class DefaultDesigner(Designer):
                 
                 if plan_data is None:
                     last_error = error
-                    print(f"JSON 解析/修复失败: {error}")
+                    logger.error("JSON 解析/修复失败: {}", error)
                     # 如果响应很短，打印出来帮助调试
                     if len(response_text) < 200:
-                        print(f"   API 返回内容: {response_text}")
+                        logger.debug("API 返回内容: {}", response_text)
                     continue  # 重试
                 
                 # 成功解析，构建 ExecutionPlan
@@ -811,7 +811,7 @@ class DefaultDesigner(Designer):
                         steps=steps,
                     ))
                 
-                print(f"[OK] 执行计划生成成功（尝试 {attempt + 1}）")
+                logger.info("执行计划生成成功（尝试 {}）", attempt + 1)
                 
                 plan = ExecutionPlan(
                     plan_id=uuid4(),
@@ -830,15 +830,15 @@ class DefaultDesigner(Designer):
                 
             except Exception as e:
                 last_error = str(e)
-                print(f"生成执行计划时出错: {e}")
+                logger.error("生成执行计划时出错: {}", e)
                 # 打印详细的异常类型
-                print(f"   异常类型: {type(e).__name__}")
+                logger.error("异常类型: {}", type(e).__name__)
                 if attempt < max_retries - 1:
                     continue  # 重试
         
         # 所有重试都失败，返回错误计划
-        print(f"[FAIL] 执行计划生成失败，已重试 {max_retries} 次")
-        print(f"最后错误: {last_error}")
+        logger.error("执行计划生成失败，已重试 {} 次", max_retries)
+        logger.error("最后错误: {}", last_error)
         
         from uuid import uuid4
         from datetime import datetime

@@ -3,8 +3,23 @@
 用于安装依赖包
 """
 
+import re
+import shutil
 import subprocess
 from typing import Any, Dict, List
+
+# 只允许合法的包名/版本约束字符，防止命令注入
+# 允许: 字母数字 . _ - + [ ] , 空格(用于extras) 以及版本操作符 = < > ! ~ *
+_SAFE_PACKAGE_RE = re.compile(r"^[A-Za-z0-9._+\-\[\],<>=!~* ]+$")
+
+
+def _validate_packages(packages: List[str]) -> None:
+    """校验包名合法性，拒绝包含shell元字符的输入"""
+    for pkg in packages:
+        if not isinstance(pkg, str) or not pkg.strip():
+            raise ValueError(f"非法包名: {pkg!r}")
+        if not _SAFE_PACKAGE_RE.match(pkg):
+            raise ValueError(f"包名包含非法字符，拒绝执行: {pkg!r}")
 
 
 class PackageInstaller:
@@ -47,20 +62,33 @@ class PackageInstaller:
         """安装Python包"""
         try:
             if requirements_file:
-                command = f"pip install -r {requirements_file}"
+                if not isinstance(requirements_file, str) or not requirements_file.strip():
+                    return {
+                        "success": False,
+                        "message": "requirements_file 非法",
+                        "error": "Invalid parameter"
+                    }
+                command = ["pip", "install", "-r", requirements_file]
             elif packages:
-                packages_str = " ".join(packages)
-                command = f"pip install {packages_str}"
+                try:
+                    _validate_packages(packages)
+                except ValueError as e:
+                    return {
+                        "success": False,
+                        "message": str(e),
+                        "error": "Invalid package name"
+                    }
+                command = ["pip", "install", *packages]
             else:
                 return {
                     "success": False,
                     "message": "必须指定packages或requirements_file",
                     "error": "Missing parameters"
                 }
-            
+
             result = subprocess.run(
                 command,
-                shell=True,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=300
@@ -84,23 +112,32 @@ class PackageInstaller:
     def install_npm(packages: List[str] = None, package_json: bool = False, cwd: str = None, dev: bool = False) -> Dict[str, Any]:
         """安装Node.js包"""
         try:
+            npm_exe = shutil.which("npm") or "npm"
             if package_json:
-                command = "npm install"
+                command = [npm_exe, "install"]
             elif packages:
-                packages_str = " ".join(packages) if isinstance(packages, list) else packages
-                # 如果是 dev 依赖，添加 --save-dev
-                dev_flag = " --save-dev" if dev else ""
-                command = f"npm install {packages_str}{dev_flag}"
+                pkg_list = packages if isinstance(packages, list) else [packages]
+                try:
+                    _validate_packages(pkg_list)
+                except ValueError as e:
+                    return {
+                        "success": False,
+                        "message": str(e),
+                        "error": "Invalid package name"
+                    }
+                command = [npm_exe, "install", *pkg_list]
+                if dev:
+                    command.append("--save-dev")
             else:
                 return {
                     "success": False,
                     "message": "必须指定packages或package_json",
                     "error": "Missing parameters"
                 }
-            
+
             result = subprocess.run(
                 command,
-                shell=True,
+                shell=False,
                 cwd=cwd,
                 capture_output=True,
                 text=True,

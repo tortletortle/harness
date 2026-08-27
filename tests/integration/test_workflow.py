@@ -1,9 +1,21 @@
 """
 集成测试 - 完整流程
+
+注意：本文件针对早期架构（独立 Rust server 监听 8090，
+以及 /api/v1/* 路由）。当前实际服务是 python/api/server.py，
+路由为 /api/plan/* 等，且需要 Bearer token 认证。
+本文件与当前架构不匹配，标记为 integration 且默认 skip，
+避免假阳性失败干扰真实回归。若未来重建该集成测试，
+应改为直接命中 python/api/server.py 实际路由并带上认证头。
 """
 
 import pytest
 import httpx
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skip(reason="靶对旧架构路由(/api/v1/*, 独立Rust server:8090)，与当前 api/server.py 不匹配"),
+]
 
 
 BASE_URL_PYTHON = "http://localhost:9000"

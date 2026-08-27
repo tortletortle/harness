@@ -3,8 +3,56 @@
 用于执行shell命令
 """
 
+import os
+import re
+from pathlib import Path
+from typing import Any, Dict, Optional
 import subprocess
-from typing import Any, Dict
+
+_DANGEROUS_PATTERNS = [
+    r"rm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\s+/(\s|$)",
+    r"rm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\s+/\*",
+    r"rm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\s+~",
+    r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:",
+    r"\bmkfs\b",
+    r"\bdd\s+if=.*of=/dev/",
+    r">\s*/dev/sd[a-z]",
+    r"\bshutdown\b",
+    r"\breboot\b",
+    r"\bformat\s+[a-z]:",
+    r"\bdel\s+/[a-z]*s[a-z]*\s+/[a-z]*q[a-z]*\s+[a-z]:\\\\?\s*$",
+    r"\brd\s+/[a-z]*s[a-z]*\s+/[a-z]*q[a-z]*\s+[a-z]:\\\\?\s*$",
+    r"\breg\s+delete\b",
+    r"\bdiskpart\b",
+]
+_DANGEROUS_RE = re.compile("|".join(_DANGEROUS_PATTERNS), re.IGNORECASE)
+
+
+def _is_dangerous_command(command: str):
+    match = _DANGEROUS_RE.search(command)
+    if match:
+        return match.group(0)
+    return None
+
+
+def _resolve_workspace_root() -> Path:
+    root = os.environ.get("EAS_WORKSPACE_ROOT")
+    if root:
+        return Path(root).resolve()
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def _is_cwd_allowed(cwd: str) -> bool:
+    try:
+        target = Path(cwd).resolve()
+    except Exception:
+        return False
+    root = _resolve_workspace_root()
+    try:
+        target.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 class CommandRunner:
@@ -44,6 +92,28 @@ class CommandRunner:
     ) -> Dict[str, Any]:
         """执行命令"""
         try:
+            if not command or not command.strip():
+                return {
+                    "success": False,
+                    "message": "command 不能为空",
+                    "error": "Missing parameter"
+                }
+
+            dangerous_match = _is_dangerous_command(command)
+            if dangerous_match:
+                return {
+                    "success": False,
+                    "message": f"命令被拒绝：命中危险命令模式 ({dangerous_match!r})",
+                    "error": "Dangerous command blocked"
+                }
+
+            if cwd and not _is_cwd_allowed(cwd):
+                return {
+                    "success": False,
+                    "message": f"工作目录不在允许范围内，拒绝执行: {cwd!r}",
+                    "error": "Workdir not allowed"
+                }
+
             result = subprocess.run(
                 command,
                 shell=shell,
