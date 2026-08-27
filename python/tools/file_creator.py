@@ -122,16 +122,20 @@ class FileCreator:
     def execute(instruction: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """执行工具指令"""
         timeout = inputs.get("timeout", DEFAULT_TIMEOUT)
+        # 兼容 Designer 可能输出的两种键名，优先用标准键名
+        path = inputs.get("path") or inputs.get("file_path", "")
+        content = inputs.get("content") or inputs.get("file_content", "")
+        encoding = inputs.get("encoding", "utf-8")
         if instruction == "create_file":
             return FileCreator.create_file(
-                path=inputs.get("path", ""),
-                content=inputs.get("content", ""),
-                encoding=inputs.get("encoding", "utf-8"),
+                path=path,
+                content=content,
+                encoding=encoding,
                 timeout=timeout
             )
         elif instruction == "create_directory":
             return FileCreator.create_directory(
-                path=inputs.get("path", ""),
+                path=inputs.get("path") or inputs.get("file_path", ""),
                 parents=inputs.get("parents", True),
                 timeout=timeout
             )
