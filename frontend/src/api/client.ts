@@ -52,6 +52,11 @@ async function throwResponseError(response: Response, fallback: string): Promise
 export class ApiClient {
   private ws: WebSocket | null = null;
   private logCallbacks: ((log: LogMessage) => void)[] = [];
+  // 区分"程序性关闭"（替换连接/主动断开）与"意外断开"：
+  // 前者绝不能触发自动重连，否则重连本身会再次关闭连接，形成每 5 秒的
+  // 无限重连循环（StrictMode 双挂载加剧此问题，见 E2E 观察到的连接风暴）。
+  private intentionalClose = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * 生成设计书
@@ -389,8 +394,15 @@ export class ApiClient {
    * 连接 WebSocket 实时日志
    */
   connectLogs(onLog: (log: LogMessage) => void): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
+      // 替换现有连接：标记有意关闭，避免旧 socket 的 onclose 触发重连
+      this.intentionalClose = true;
       this.ws.close();
+      this.ws = null;
     }
 
     this.logCallbacks = [onLog];
@@ -414,13 +426,19 @@ export class ApiClient {
 
     this.ws.onclose = (event) => {
       console.log('WebSocket 连接关闭');
+      // 程序性关闭（替换/主动断开）不重连
+      if (this.intentionalClose) {
+        this.intentionalClose = false;
+        return;
+      }
       // 1008 = 服务端拒绝（token 无效），重连只会无限失败
       if (event.code === 1008) {
         console.error('WebSocket 认证失败，请检查 VITE_API_TOKEN，不再重试');
         return;
       }
-      // 5 秒后尝试重连
-      setTimeout(() => {
+      // 5 秒后尝试重连（持有定时器句柄，connectLogs/disconnectLogs 会先清掉）
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
         if (this.logCallbacks.length > 0) {
           this.connectLogs(this.logCallbacks[0]);
         }
@@ -432,7 +450,12 @@ export class ApiClient {
    * 断开 WebSocket
    */
   disconnectLogs(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
+      this.intentionalClose = true;
       this.ws.close();
       this.ws = null;
     }
