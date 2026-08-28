@@ -15,6 +15,7 @@ import { PlanView } from './components/PlanView';
 import { ToolsView } from './components/ToolsView';
 import { HistoryView } from './components/HistoryView';
 import { ConfigView } from './components/ConfigView';
+import { ToastHub } from './components/ToastHub';
 
 function App() {
   const { currentView, addLog, sidebarCollapsed, logPanelCollapsed, aiPanelCollapsed } = useAppStore();
@@ -110,6 +111,9 @@ function App() {
           </>
         )}
       </PanelGroup>
+
+      {/* 全局 Toast 通知（覆盖在面板之上） */}
+      <ToastHub />
     </div>
   );
 }

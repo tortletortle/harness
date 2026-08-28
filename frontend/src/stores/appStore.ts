@@ -3,7 +3,12 @@
  */
 
 import { create } from 'zustand';
-import type { Design, ExecutionPlan, Tool, LogMessage } from '../types';
+import type { Design, ExecutionPlan, Tool, LogMessage, Toast } from '../types';
+
+// Toast 自增 ID 计数器（模块级，保证唯一）
+let toastIdCounter = 0;
+// Toast 最多保留条数
+const TOAST_MAX = 5;
 
 interface AppState {
   // 当前视图
@@ -43,6 +48,10 @@ interface AppState {
   addLog: (log: LogMessage) => void;
   clearLogs: () => void;
 
+  // Toast 通知（error/warning 日志自动浮出）
+  toasts: Toast[];
+  dismissToast: (id: number) => void;
+
   // 执行状态
   isExecuting: boolean;
   setIsExecuting: (executing: boolean) => void;
@@ -65,6 +74,7 @@ export const useAppStore = create<AppState>((set) => ({
   currentPlan: null,
   tools: [],
   logs: [],
+  toasts: [],
   isExecuting: false,
   config: null,
 
@@ -85,10 +95,32 @@ export const useAppStore = create<AppState>((set) => ({
 
   setTools: (tools) => set({ tools }),
 
-  addLog: (log) => set((state) => ({
-    logs: [...state.logs, { ...log, timestamp: new Date().toISOString() }]
-  })),
+  addLog: (log) => set((state) => {
+    const logs = [...state.logs, { ...log, timestamp: new Date().toISOString() }];
+
+    // error/warning 日志同时浮出 Toast
+    let toasts = state.toasts;
+    if (log.level === 'error' || log.level === 'warning') {
+      const newest = toasts[toasts.length - 1];
+      if (newest && newest.message === log.message) {
+        // 短时间重复的相同消息：刷新最新一条，避免连发刷屏
+        const timestamp = new Date().toISOString();
+        toasts = toasts.map((t, i) => (i === toasts.length - 1 ? { ...t, timestamp } : t));
+      } else {
+        toasts = [
+          ...toasts,
+          { id: ++toastIdCounter, level: log.level, message: log.message, timestamp: new Date().toISOString() },
+        ].slice(-TOAST_MAX); // 只保留最近 5 条
+      }
+    }
+
+    return { logs, toasts };
+  }),
   clearLogs: () => set({ logs: [] }),
+
+  dismissToast: (id) => set((state) => ({
+    toasts: state.toasts.filter((t) => t.id !== id),
+  })),
 
   setIsExecuting: (executing) => set({ isExecuting: executing }),
 
