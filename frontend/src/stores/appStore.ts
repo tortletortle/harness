@@ -94,3 +94,8 @@ export const useAppStore = create<AppState>((set) => ({
 
   setConfig: (config) => set({ config }),
 }));
+
+// 调试用：浏览器控制台/自动化可通过 window.__useAppStore 读取实时状态
+if (typeof window !== 'undefined') {
+  (window as unknown as Record<string, unknown>).__useAppStore = useAppStore;
+}
