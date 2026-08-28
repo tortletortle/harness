@@ -39,9 +39,31 @@ export interface ToolRequirement {
   quality?: string;
 }
 
+/** 计划状态（与后端 PlanStatus 枚举对应） */
+export type PlanStatus =
+  | 'Draft'
+  | 'Pending'
+  | 'Approved'
+  | 'Running'
+  | 'Paused'
+  | 'Completed'
+  | 'Failed'
+  | 'RolledBack';
+
+/** 步骤状态（与后端 StepStatus 枚举对应） */
+export type StepStatus =
+  | 'Pending'
+  | 'Running'
+  | 'Success'
+  | 'Failed'
+  | 'Retry'
+  | 'Skipped'
+  | 'RolledBack';
+
 export interface ExecutionPlan {
   plan_id: string;
   design_id: string;
+  status?: PlanStatus;
   segments: PlanSegment[];
   created_at?: string;
 }
@@ -58,6 +80,9 @@ export interface Step {
   tool: string;
   inputs: Record<string, any>;
   expected_outputs: string[];
+  status?: StepStatus;
+  outputs?: Record<string, any> | null;
+  executed_at?: string | null;
 }
 
 export interface Tool {
