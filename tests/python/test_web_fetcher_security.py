@@ -5,9 +5,12 @@
 import inspect
 import os
 import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from tools import web_fetcher
 from tools.web_fetcher import (
     WebFetcher,
     _validate_url,
@@ -91,8 +94,60 @@ def test_size_and_timeout_limits_defined():
     assert _DEFAULT_TIMEOUT > 0
 
 
-@pytest.mark.integration
-def test_fetch_content_real_public_url():
-    """Requires real network access; marked integration so it's skipped by default."""
-    result = WebFetcher.fetch_content(url="http://example.com/", timeout=10)
+_FETCH_TEST_MARKER = "EAS-FETCH-TEST-MARKER-7f3a"
+
+
+class _LocalTestHandler(BaseHTTPRequestHandler):
+    """固定页面处理器：`/` 返回含唯一标记的 HTML，其余路径返回 404。"""
+
+    def do_GET(self):
+        if self.path == "/":
+            body = f"<html><body>{_FETCH_TEST_MARKER}</body></html>".encode("utf-8")
+            status = 200
+        else:
+            body = b"<html><body>not found</body></html>"
+            status = 404
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):  # noqa: A002 - 与标准库签名一致
+        pass  # 静默请求日志，保持测试输出干净
+
+
+@pytest.fixture()
+def local_http_server_url(monkeypatch):
+    """在 127.0.0.1 临时端口起一个本地 HTTP 服务器（后台线程），返回其 base URL。
+
+    fetch_content 的 SSRF 防护会拒绝本机地址，因此仅在访问本地服务器的
+    测试中临时放行内网 IP 判定；其他用例仍直接验证真实的拦截逻辑。
+    """
+    monkeypatch.setattr(
+        web_fetcher, "_is_private_or_internal_ip", lambda ip: False
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _LocalTestHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+def test_fetch_content_local_http_server(local_http_server_url):
+    """确定性获取：本地服务器 200 页面应成功并包含标记内容（不依赖外网）。"""
+    result = WebFetcher.fetch_content(url=f"{local_http_server_url}/", timeout=10)
     assert result.get("success") is True
+    assert _FETCH_TEST_MARKER in result.get("content", "")
+
+
+def test_fetch_content_local_http_server_404(local_http_server_url):
+    """确定性失败：本地服务器 404 路由应返回 success=False。"""
+    result = WebFetcher.fetch_content(
+        url=f"{local_http_server_url}/definitely-missing", timeout=10
+    )
+    assert result.get("success") is False
