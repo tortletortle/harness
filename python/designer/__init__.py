@@ -28,6 +28,14 @@ from logging_config import get_logger
 logger = get_logger(__name__)
 
 
+class GenerationError(Exception):
+    """LLM 生成失败异常：设计书/执行计划无法生成或解析。
+
+    生成失败必须显式抛出，不得用占位符设计书（components=["待定"]）、
+    原样返回旧设计或伪造的 Failed 占位计划来掩盖故障。
+    """
+
+
 class DefaultDesigner(Designer):
     """默认Designer实现"""
     
@@ -383,35 +391,11 @@ class DefaultDesigner(Designer):
             return design
             
         except Exception as e:
-            # 如果解析失败，返回一个基础版本
+            # 生成失败必须显式暴露：绝不再返回 components=["待定"] 的占位设计书
+            # 让下游把残次品当正常设计继续审批、执行。
             logger.error("设计书生成失败: {}", e)
             logger.error("错误类型: {}", type(e).__name__)
-            import traceback
-            traceback.print_exc()
-            
-            from uuid import uuid4
-            from datetime import datetime
-            
-            return DesignDocument(
-                design_id=uuid4(),
-                user_request=user_request,
-                timestamp=datetime.utcnow(),
-                part1_design=DesignPart1(
-                    architecture=Architecture(
-                        components=["待定"],
-                        interactions=["待定"],
-                    ),
-                    difficulty=Difficulty(
-                        overall="unknown",
-                        breakdown={"error": str(e), "error_type": type(e).__name__},
-                    ),
-                ),
-                part2_tool_assessment=ToolAssessment(
-                    required_tools=[],
-                    overall_tool_completeness=0.0,
-                    risks=[f"生成失败: {str(e)}"],
-                ),
-            )
+            raise GenerationError(f"设计书生成失败: {e}") from e
     
     async def revise_design(self, original_design: DesignDocument, feedback: str) -> DesignDocument:
         """
@@ -591,10 +575,8 @@ class DefaultDesigner(Designer):
             
         except Exception as e:
             logger.error("设计书修订失败: {}", e)
-            import traceback
-            traceback.print_exc()
-            # 失败时返回原设计书
-            return original_design
+            # 修订失败必须显式暴露：静默返回原设计书会让用户以为反馈已生效。
+            raise GenerationError(f"设计书修订失败: {e}") from e
     
     async def generate_plan(self, design: DesignDocument) -> ExecutionPlan:
         """生成执行计划（带重试机制）"""
@@ -838,36 +820,12 @@ class DefaultDesigner(Designer):
                 if attempt < max_retries - 1:
                     continue  # 重试
         
-        # 所有重试都失败，返回错误计划
+        # 所有重试都失败：显式失败，绝不返回伪造的 Failed 占位计划
         logger.error("执行计划生成失败，已重试 {} 次", max_retries)
         logger.error("最后错误: {}", last_error)
-        
-        from uuid import uuid4
-        from datetime import datetime
-        
-        return ExecutionPlan(
-            plan_id=uuid4(),
-            design_id=design.design_id,
-            created_at=datetime.utcnow(),
-            status="Pending",
-            segments=[
-                PlanSegment(
-                    segment_id=uuid4(),
-                    description="错误：计划生成失败",
-                    steps=[
-                        Step(
-                            step_id=uuid4(),
-                            order=1,
-                            description=f"生成失败: {last_error}",
-                            tool="manual",
-                            inputs={"error": str(last_error)},
-                            check_criteria="手动检查",
-                            status="Failed",
-                        )
-                    ],
-                )
-            ],
-            implementation_list=[],
+
+        raise GenerationError(
+            f"执行计划生成失败（已重试 {max_retries} 次）: {last_error}"
         )
     
     async def assess_severity(self, issue: str, context: Dict[str, Any]) -> int:

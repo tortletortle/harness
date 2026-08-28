@@ -17,6 +17,10 @@ from logging_config import get_logger
 logger = get_logger(__name__)
 
 
+class DatabaseError(RuntimeError):
+    """数据库操作异常：SQL 失败、连接损坏等意外错误。False/None 仅表示未命中，不代表故障。"""
+
+
 class Database:
     """数据库管理类"""
     
@@ -203,8 +207,8 @@ class Database:
                 conn.commit()
             return True
         except Exception as e:
-            logger.error("保存设计书失败: {}", e)
-            return False
+            logger.exception("保存设计书失败: {}", e)
+            raise DatabaseError(f"保存设计书失败: {e}") from e
     
     def get_design(self, design_id: str) -> Optional[DesignDocument]:
         """获取设计书"""
@@ -231,8 +235,8 @@ class Database:
                     )
                 return None
         except Exception as e:
-            logger.error("获取设计书失败: {}", e)
-            return None
+            logger.exception("查询设计书失败: {}", e)
+            raise DatabaseError(f"查询设计书失败: {e}") from e
     
     def save_plan(self, plan: ExecutionPlan) -> bool:
         """保存执行计划。"""
@@ -336,7 +340,7 @@ class Database:
             return True
         except Exception as e:
             logger.exception("保存执行计划失败: {}", e)
-            return False
+            raise DatabaseError(f"保存执行计划失败: {e}") from e
     
     def get_plan_status(self, plan_id: str) -> Optional[str]:
         """轻量级查询计划当前状态，不解析 segments JSON。用于执行循环中频繁检测是否被请求暂停。"""
@@ -347,8 +351,8 @@ class Database:
                 row = cursor.fetchone()
                 return row["status"] if row else None
         except Exception as e:
-            logger.error("查询计划状态失败: {}", e)
-            return None
+            logger.exception("查询计划状态失败: {}", e)
+            raise DatabaseError(f"查询计划状态失败: {e}") from e
 
     def get_plan(self, plan_id: str) -> Optional[ExecutionPlan]:
         """获取执行计划"""
@@ -439,7 +443,7 @@ class Database:
                 return None
         except Exception as e:
             logger.exception("获取执行计划失败: {}", e)
-            return None
+            raise DatabaseError(f"获取执行计划失败: {e}") from e
     
     def list_designs(self, limit: int = 10) -> List[Dict[str, Any]]:
         """列出最近的设计书"""
@@ -457,8 +461,8 @@ class Database:
                 rows = cursor.fetchall()
                 return [dict(row) for row in rows]
         except Exception as e:
-            logger.error("列出设计书失败: {}", e)
-            return []
+            logger.exception("列出设计书失败: {}", e)
+            raise DatabaseError(f"列出设计书失败: {e}") from e
     
     def list_plans(self, design_id: str = None, limit: int = 10) -> List[Dict[str, Any]]:
         """列出执行计划"""
@@ -485,8 +489,8 @@ class Database:
                 rows = cursor.fetchall()
                 return [dict(row) for row in rows]
         except Exception as e:
-            logger.error("列出执行计划失败: {}", e)
-            return []
+            logger.exception("列出执行计划失败: {}", e)
+            raise DatabaseError(f"列出执行计划失败: {e}") from e
     
     def get_steps(self, plan_id: str) -> List[Dict[str, Any]]:
         """获取计划的所有步骤"""
@@ -503,8 +507,8 @@ class Database:
                 rows = cursor.fetchall()
                 return [dict(row) for row in rows]
         except Exception as e:
-            logger.error("获取步骤列表失败: {}", e)
-            return []
+            logger.exception("获取步骤列表失败: {}", e)
+            raise DatabaseError(f"获取步骤列表失败: {e}") from e
     
     def mark_step_tree_skipped(self, plan_id: str, step_id: str, executed_at: datetime = None) -> bool:
         """
@@ -541,8 +545,8 @@ class Database:
                     frontier = [r["step_id"] for r in cursor.fetchall()]
                 return True
         except Exception as e:
-            logger.error("标记跳过失败: {}", e)
-            return False
+            logger.exception("标记跳过失败: {}", e)
+            raise DatabaseError(f"标记跳过失败: {e}") from e
 
     def update_step(self, step_id: str, status: str, outputs: Dict[str, Any] = None, executed_at: datetime = None, retry_count: Optional[int] = None) -> bool:
         """
@@ -550,8 +554,9 @@ class Database:
 
         Returns:
             True  — 命中并更新了数据行
-            False — step_id 不存在、状态值非法或写入异常
+            False — step_id 不存在或状态值非法（未命中，非故障）
 
+        数据库异常（SQL 失败、连接损坏等）抛出 DatabaseError，不再静默吞掉。
         调用方必须检查返回值。忽略它会导致「日志显示成功、DB 状态未变」的静默失败。
         """
         # 校验状态值，避免写入脏数据
@@ -590,8 +595,8 @@ class Database:
 
                 return cursor.rowcount > 0
         except Exception as e:
-            logger.error("更新步骤状态失败: {}", e)
-            return False
+            logger.exception("更新步骤状态失败: {}", e)
+            raise DatabaseError(f"更新步骤状态失败: {e}") from e
 
     def update_step_state_machine(
         self,
@@ -641,8 +646,8 @@ class Database:
                 ))
                 return cursor.rowcount > 0
         except Exception as e:
-            logger.error("更新步骤状态机状态失败: {}", e)
-            return False
+            logger.exception("更新步骤状态机状态失败: {}", e)
+            raise DatabaseError(f"更新步骤状态机状态失败: {e}") from e
 
     def add_step_event(self, step_id: str, plan_id: str, event_type: str, event_data: Dict[str, Any] = None, branch_version: int = 1) -> bool:
         """
@@ -664,8 +669,8 @@ class Database:
                 ))
                 return True
         except Exception as e:
-            logger.error("写入 step_event 失败: {}", e)
-            return False
+            logger.exception("写入 step_event 失败: {}", e)
+            raise DatabaseError(f"写入 step_event 失败: {e}") from e
 
     def get_step_events(self, plan_id: str, step_id: str = None, branch_version: int = None) -> List[Dict[str, Any]]:
         """获取计划/步骤的事件流，用于回溯与可视化。"""
@@ -684,8 +689,8 @@ class Database:
                 cursor.execute(query, params)
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
-            logger.error("查询 step_events 失败: {}", e)
-            return []
+            logger.exception("查询 step_events 失败: {}", e)
+            raise DatabaseError(f"查询 step_events 失败: {e}") from e
 
     def get_next_runnable_step(self, plan_id: str, branch_version: int = 1, resume_from_step_id: str = None):
         """
@@ -712,8 +717,8 @@ class Database:
                 row = cursor.fetchone()
                 return dict(row) if row else None
         except Exception as e:
-            logger.error("获取下一个可运行步骤失败: {}", e)
-            return None
+            logger.exception("获取下一个可运行步骤失败: {}", e)
+            raise DatabaseError(f"获取下一个可运行步骤失败: {e}") from e
 
     def mark_steps_obsolete(self, plan_id: str, after_step_id: str, branch_version: int) -> int:
         """
@@ -734,8 +739,8 @@ class Database:
                 """, (plan_id, branch_version, plan_id, after_step_id))
                 return cursor.rowcount
         except Exception as e:
-            logger.error("标记 obsolete 失败: {}", e)
-            return 0
+            logger.exception("标记 obsolete 失败: {}", e)
+            raise DatabaseError(f"标记 obsolete 失败: {e}") from e
 
     def clone_steps_from(self, plan_id: str, after_step_id: str, new_branch_version: int) -> bool:
         """
@@ -797,8 +802,8 @@ class Database:
                     ))
                 return True
         except Exception as e:
-            logger.error("克隆步骤失败: {}", e)
-            return False
+            logger.exception("克隆步骤失败: {}", e)
+            raise DatabaseError(f"克隆步骤失败: {e}") from e
 
     def update_plan(self, plan_id: str, status: str) -> bool:
         """
@@ -831,8 +836,8 @@ class Database:
                 ))
                 return cursor.rowcount > 0
         except Exception as e:
-            logger.error("更新计划状态机状态失败: {}", e)
-            return False
+            logger.exception("更新计划状态机状态失败: {}", e)
+            raise DatabaseError(f"更新计划状态机状态失败: {e}") from e
 
     def recover_orphaned_executions(self) -> int:
         """
@@ -870,8 +875,8 @@ class Database:
 
                 return len(orphaned_plan_ids)
         except Exception as e:
-            logger.error("孤儿任务恢复失败: {}", e)
-            return 0
+            logger.exception("孤儿任务恢复失败: {}", e)
+            raise DatabaseError(f"孤儿任务恢复失败: {e}") from e
     
     def log(self, level: str, message: str, context: Dict[str, Any] = None, service: str = None):
         """记录日志"""
@@ -892,6 +897,8 @@ class Database:
 
                 conn.commit()
         except Exception as e:
+            # 观察性写入，刻意保持静默：日志表写入失败不应中断业务流程，
+            # 且本方法可能在异常处理路径中被调用，抛错会造成连锁失败。
             logger.error("记录日志失败: {}", e)
 
     def save_audit_log(
@@ -954,8 +961,8 @@ class Database:
                 rows = cursor.fetchall()
                 return [dict(row) for row in rows]
         except Exception as e:
-            logger.error("查询审计日志失败: {}", e)
-            return []
+            logger.exception("查询审计日志失败: {}", e)
+            raise DatabaseError(f"查询审计日志失败: {e}") from e
 
 
 # 全局数据库实例

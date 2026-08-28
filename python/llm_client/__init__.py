@@ -55,6 +55,33 @@ class LLMProvider(ABC):
         pass
 
 
+class DeterministicProvider(LLMProvider):
+    """离线测试用 provider，返回固定响应且不访问网络。"""
+
+    def __init__(self, response: str, provider_name: str = "deterministic") -> None:
+        self.response = response
+        self._name = provider_name
+        self.calls: list[list[Message]] = []
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def chat(
+        self,
+        messages: List[Message],
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int = 4000,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        self.calls.append(messages)
+        return LLMResponse(content=self.response, model=model, finish_reason="stop")
+
+    async def health_check(self) -> bool:
+        return True
+
+
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude Provider"""
     

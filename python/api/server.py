@@ -22,6 +22,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import yaml
 
@@ -29,10 +30,10 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm_client import LLMClient, Message
-from designer import DefaultDesigner
+from designer import DefaultDesigner, GenerationError
 from executor import DefaultExecutor
 from tools import ToolRegistry
-from database import Database
+from database import Database, DatabaseError
 from models import DesignDocument, ExecutionPlan, PlanSegment, Step, StepStatus, PlanStatus
 from api.auth import load_token, require_token, verify_token
 print("[SERVER MODULE LOADED]", __file__)
@@ -226,6 +227,21 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-API-Token"],
 )
+
+# ===== 全局异常处理 =====
+# DatabaseError / GenerationError 统一转换为带 code 的 JSON 响应：
+# - 数据库故障 → 500 database_error
+# - LLM 生成失败（上游依赖故障）→ 502 generation_failed
+# 端点内的 HTTPException(404/409/500) 分支不受影响，仍然原样抛出。
+
+@app.exception_handler(DatabaseError)
+async def _database_error_handler(request, exc):
+    return JSONResponse(status_code=500, content={"detail": str(exc), "code": "database_error"})
+
+
+@app.exception_handler(GenerationError)
+async def _generation_error_handler(request, exc):
+    return JSONResponse(status_code=502, content={"detail": str(exc), "code": "generation_failed"})
 
 # ===== WebSocket 日志广播 =====
 
@@ -423,6 +439,7 @@ async def create_design(request: DesignRequest):
         }
         
     except Exception as e:
+        logger.exception("生成设计书端点失败: {}", e)
         await broadcast_log(f"设计书生成失败: {str(e)}", "error")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -453,6 +470,7 @@ async def get_designs(limit: int = 10):
             "designs": designs
         }
     except Exception as e:
+        logger.exception("查询设计书列表失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/design/{design_id}", dependencies=[Depends(require_token)])
@@ -470,6 +488,7 @@ async def get_design(design_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("查询设计书失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/design/{design_id}/approve", dependencies=[Depends(require_token)])
@@ -523,6 +542,7 @@ async def approve_design(design_id: str, request: ApprovalRequest):
                 }
             
     except Exception as e:
+        logger.exception("审批设计书端点失败: {}", e)
         await broadcast_log(f"审批失败: {str(e)}", "error")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -544,6 +564,7 @@ async def get_plans(limit: int = 10):
             "plans": plans
         }
     except Exception as e:
+        logger.exception("查询执行计划列表失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/plan/{plan_id}", dependencies=[Depends(require_token)])
@@ -561,6 +582,7 @@ async def get_plan(plan_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("查询执行计划失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/plan/{plan_id}/execute", dependencies=[Depends(require_token)])
@@ -604,6 +626,7 @@ async def execute_plan(plan_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("启动计划执行失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -630,6 +653,7 @@ async def pause_plan(plan_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("暂停计划失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -662,6 +686,7 @@ async def resume_plan(plan_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("恢复计划失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -686,7 +711,14 @@ async def skip_step(plan_id: str, step_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("跳过步骤失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _require_write(ok: bool, what: str) -> None:
+    """状态写入必须成功；False（未命中/非法状态）与异常同样致命，向上抛给外层统一清理。"""
+    if not ok:
+        raise RuntimeError(f"状态写入失败: {what}")
 
 
 def _persist_step_status(
@@ -837,7 +869,10 @@ async def execute_plan_background(plan, resume: bool = False):
     print(f"[BG] STARTED plan={plan.plan_id} resume={resume}", flush=True)
     try:
         debug_log(f"execute_plan_background STARTED for plan {plan.plan_id} (resume={resume})")
-        state.database.update_plan_state_machine(str(plan.plan_id), "Running")
+        _require_write(
+            state.database.update_plan_state_machine(str(plan.plan_id), "Running"),
+            f"计划 {plan.plan_id} 状态 → Running",
+        )
         print(f"[BG] plan={plan.plan_id} status=Running", flush=True)
         await broadcast_log(f"{'恢复' if resume else '开始'}执行计划: {plan.plan_id}", "info")
 
@@ -849,7 +884,10 @@ async def execute_plan_background(plan, resume: bool = False):
             if current_status == "Paused":
                 debug_log(f"Plan {plan.plan_id} is Paused, stopping execution loop")
                 await broadcast_log(f"计划 {plan.plan_id} 已暂停", "info")
-                state.database.update_plan_state_machine(str(plan.plan_id), "Paused")
+                _require_write(
+                    state.database.update_plan_state_machine(str(plan.plan_id), "Paused"),
+                    f"计划 {plan.plan_id} 状态 → Paused",
+                )
                 break
 
             step = state.database.get_next_runnable_step(
@@ -858,7 +896,10 @@ async def execute_plan_background(plan, resume: bool = False):
                 resume_from_step_id=resume_from_step_id,
             )
             if not step:
-                state.database.update_plan_state_machine(str(plan.plan_id), "Completed")
+                _require_write(
+                    state.database.update_plan_state_machine(str(plan.plan_id), "Completed"),
+                    f"计划 {plan.plan_id} 状态 → Completed",
+                )
                 await broadcast_log(f"计划执行完成: {plan.plan_id}", "success")
                 debug_log(f"Plan {plan.plan_id} execution COMPLETED")
                 break
@@ -891,7 +932,10 @@ async def execute_plan_background(plan, resume: bool = False):
                 msg = f"步骤 {step_id} 状态写入失败（DB 中无此步骤），中止执行"
                 debug_log(f"ABORT: {msg}")
                 await broadcast_log(f"[ERROR] {msg}", "error")
-                state.database.update_plan_state_machine(str(plan.plan_id), "Failed")
+                _require_write(
+                    state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
+                    f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 未命中）",
+                )
                 break
 
             max_attempts = getattr(state, "retry_max_attempts", 3)
@@ -925,7 +969,10 @@ async def execute_plan_background(plan, resume: bool = False):
                     )
                     if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": True, "duration_ms": result.get("duration_ms")}):
                         logger.warning("step_event failed 写入失败: {}", step_id)
-                    state.database.update_plan_state_machine(str(plan.plan_id), "Failed")
+                    _require_write(
+                        state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
+                        f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 被拦截）",
+                    )
                     break
 
                 if result.get("check_status") == "failed":
@@ -942,7 +989,10 @@ async def execute_plan_background(plan, resume: bool = False):
                     )
                     if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms")}):
                         logger.warning("step_event failed 写入失败: {}", step_id)
-                    state.database.update_plan_state_machine(str(plan.plan_id), "Failed")
+                    _require_write(
+                        state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
+                        f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 校验失败）",
+                    )
                     break
 
                 if result.get("success"):
@@ -965,7 +1015,10 @@ async def execute_plan_background(plan, resume: bool = False):
                         )
                         if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms"), "attempt": attempt}):
                             logger.warning("step_event failed 写入失败: {}", step_id)
-                        state.database.update_plan_state_machine(str(plan.plan_id), "Failed")
+                        _require_write(
+                            state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
+                            f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 重试耗尽）",
+                        )
                         break
                     # success=False 且 check_status=unverified: 仍视为完成，继续后续步骤
                     result["terminal_success"] = True
@@ -973,10 +1026,10 @@ async def execute_plan_background(plan, resume: bool = False):
                         step_id=step_id,
                         status="Success",
                         outputs={"check_status": check_status, "message": error},
-                        duration_ms=duration_ms,
+                        duration_ms=result.get("duration_ms"),
                         state_snapshot=result,
                     )
-                    if not state.database.add_step_event(step_id, plan_id, "success", {"duration_ms": duration_ms, "note": "unverified treated as success"}):
+                    if not state.database.add_step_event(step_id, plan_id, "success", {"duration_ms": result.get("duration_ms"), "note": "unverified treated as success"}):
                         logger.warning("step_event success 写入失败: {}", step_id)
                     break
 
@@ -989,7 +1042,13 @@ async def execute_plan_background(plan, resume: bool = False):
                 debug_log(f"Step {step_id} retrying, attempt {attempt}/{max_attempts - 1}, delay={delay}")
                 print(f"[RETRY] step={step_id} attempt={attempt} delay={delay}", flush=True)
                 state.database.update_step_state_machine(step_id=step_id, status="Retry", retry_count=attempt)
-                state.database.add_step_event(step_id, str(plan.plan_id), "retry", {"attempt": attempt, "delay": delay}, branch_version=branch_version)
+                _require_write(
+                    state.database.add_step_event(
+                        step_id, str(plan.plan_id), "retry",
+                        {"attempt": attempt, "delay": delay}, branch_version=branch_version,
+                    ),
+                    f"步骤 {step_id} retry 事件写入",
+                )
                 await asyncio.sleep(delay)
 
             print(f"[AFTER_LOOP] step={step_id} success={result.get('success')} check={result.get('check_status')} attempt={attempt}", flush=True)
@@ -1066,6 +1125,7 @@ async def rollback_plan(plan_id: str, request: Optional[Dict[str, Any]] = None):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("回滚计划失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/audit-logs", dependencies=[Depends(require_token)])
@@ -1078,6 +1138,7 @@ async def get_audit_logs(limit: int = 100, plan_id: Optional[str] = None):
             "logs": logs
         }
     except Exception as e:
+        logger.exception("查询审计日志失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1108,6 +1169,7 @@ async def get_tools():
             "tools": formatted_tools
         }
     except Exception as e:
+        logger.exception("查询工具列表失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/config", dependencies=[Depends(require_token)])
@@ -1127,6 +1189,7 @@ async def get_config():
             "config": safe_config
         }
     except Exception as e:
+        logger.exception("查询配置失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/config", dependencies=[Depends(require_token)])
@@ -1151,8 +1214,9 @@ async def update_config(request: ConfigUpdateRequest):
             "success": True,
             "message": "配置已保存，重启服务后生效"
         }
-        
+
     except Exception as e:
+        logger.exception("更新配置失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat", dependencies=[Depends(require_token)])
@@ -1183,8 +1247,9 @@ async def chat(request: ChatRequest):
             "success": True,
             "response": response.content
         }
-        
+
     except Exception as e:
+        logger.exception("AI 助手对话失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/restart", dependencies=[Depends(require_token)])
