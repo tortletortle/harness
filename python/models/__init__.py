@@ -13,11 +13,14 @@ from pydantic import BaseModel, Field
 
 
 class PlanStatus(str, Enum):
+    DRAFT = "Draft"
     PENDING = "Pending"
+    APPROVED = "Approved"
     RUNNING = "Running"
     PAUSED = "Paused"
     COMPLETED = "Completed"
     FAILED = "Failed"
+    ROLLED_BACK = "RolledBack"
 
 
 class StepStatus(str, Enum):
@@ -25,7 +28,9 @@ class StepStatus(str, Enum):
     RUNNING = "Running"
     SUCCESS = "Success"
     FAILED = "Failed"
+    RETRY = "Retry"
     SKIPPED = "Skipped"
+    ROLLED_BACK = "RolledBack"
 
 
 class Architecture(BaseModel):
@@ -79,6 +84,14 @@ class Step(BaseModel):
     executed_at: Optional[datetime] = None
     retry_count: int = 0
     max_retries: int = 2
+    # 状态机扩展字段
+    parent_step_id: Optional[UUID] = None
+    branch_version: int = 1
+    state_snapshot: Optional[Dict[str, Any]] = None
+    compressed_context: Optional[str] = None
+    duration_ms: Optional[int] = None
+    failure_reason: Optional[str] = None
+    is_obsolete: bool = False
 
 
 class PlanSegment(BaseModel):
@@ -101,6 +114,10 @@ class ExecutionPlan(BaseModel):
     segments: List[PlanSegment]
     implementation_list: List[str]
     dynamic_insertions: List[DynamicInsertion] = []
+    # 状态机扩展字段
+    current_branch: int = 1
+    resume_from_step_id: Optional[UUID] = None
+    paused_at_step_id: Optional[UUID] = None
 
 
 class Instruction(BaseModel):

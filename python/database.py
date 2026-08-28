@@ -98,7 +98,46 @@ class Database:
                 cursor.execute(
                     "ALTER TABLE steps ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0"
                 )
-            
+            # 状态机扩展字段迁移
+            for column, ddl in [
+                ("parent_step_id", "ALTER TABLE steps ADD COLUMN parent_step_id TEXT"),
+                ("branch_version", "ALTER TABLE steps ADD COLUMN branch_version INTEGER NOT NULL DEFAULT 1"),
+                ("state_snapshot", "ALTER TABLE steps ADD COLUMN state_snapshot TEXT"),
+                ("compressed_context", "ALTER TABLE steps ADD COLUMN compressed_context TEXT"),
+                ("duration_ms", "ALTER TABLE steps ADD COLUMN duration_ms INTEGER"),
+                ("failure_reason", "ALTER TABLE steps ADD COLUMN failure_reason TEXT"),
+                ("is_obsolete", "ALTER TABLE steps ADD COLUMN is_obsolete INTEGER NOT NULL DEFAULT 0"),
+                ("max_retries", "ALTER TABLE steps ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 2"),
+            ]:
+                if column not in existing_columns:
+                    cursor.execute(ddl)
+
+            # 执行计划表状态机扩展字段迁移
+            cursor.execute("PRAGMA table_info(plans)")
+            plan_columns = {row[1] for row in cursor.fetchall()}
+            for column, ddl in [
+                ("current_branch", "ALTER TABLE plans ADD COLUMN current_branch INTEGER NOT NULL DEFAULT 1"),
+                ("resume_from_step_id", "ALTER TABLE plans ADD COLUMN resume_from_step_id TEXT"),
+                ("paused_at_step_id", "ALTER TABLE plans ADD COLUMN paused_at_step_id TEXT"),
+            ]:
+                if column not in plan_columns:
+                    cursor.execute(ddl)
+
+            # 步骤事件表：用于状态机回放、时间旅行、审计回溯
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS step_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    step_id TEXT NOT NULL,
+                    plan_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    event_data TEXT,
+                    branch_version INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (step_id) REFERENCES steps(step_id),
+                    FOREIGN KEY (plan_id) REFERENCES plans(plan_id)
+                )
+            """)
+
             # 日志表
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS logs (
@@ -216,17 +255,22 @@ class Database:
             with closing(self._get_connection()) as conn, conn:
                 cursor = conn.cursor()
                 logger.debug(f"Saving plan to database...")
+                # 保存计划状态机字段
                 cursor.execute("""
                     INSERT INTO plans (
                         plan_id, design_id, created_at, status,
-                        segments, implementation_list, dynamic_insertions
+                        segments, implementation_list, dynamic_insertions,
+                        current_branch, resume_from_step_id, paused_at_step_id
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(plan_id) DO UPDATE SET
                         status = excluded.status,
                         segments = excluded.segments,
                         implementation_list = excluded.implementation_list,
-                        dynamic_insertions = excluded.dynamic_insertions
+                        dynamic_insertions = excluded.dynamic_insertions,
+                        current_branch = excluded.current_branch,
+                        resume_from_step_id = excluded.resume_from_step_id,
+                        paused_at_step_id = excluded.paused_at_step_id
                 """, (
                     str(plan.plan_id),
                     str(plan.design_id),
@@ -235,6 +279,9 @@ class Database:
                     segments_json,
                     implementation_json,
                     insertions_json,
+                    getattr(plan, 'current_branch', 1),
+                    str(getattr(plan, 'resume_from_step_id', None)) if getattr(plan, 'resume_from_step_id', None) else None,
+                    str(getattr(plan, 'paused_at_step_id', None)) if getattr(plan, 'paused_at_step_id', None) else None,
                 ))
 
                 # Delete existing steps for this plan (for updates)
@@ -255,9 +302,11 @@ class Database:
                             INSERT INTO steps (
                                 step_id, plan_id, segment_id, step_order,
                                 description, tool, inputs, check_criteria,
-                                outputs, status, executed_at, retry_count
+                                outputs, status, executed_at, retry_count,
+                                parent_step_id, branch_version, state_snapshot,
+                                compressed_context, duration_ms, failure_reason, is_obsolete
                             )
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (
                             str(step.step_id),
                             str(plan.plan_id),
@@ -271,6 +320,13 @@ class Database:
                             step_status,
                             step.executed_at.isoformat() if step.executed_at else None,
                             step.retry_count,
+                            str(step.parent_step_id) if getattr(step, 'parent_step_id', None) else None,
+                            getattr(step, 'branch_version', 1),
+                            json.dumps(getattr(step, 'state_snapshot', None), ensure_ascii=False) if getattr(step, 'state_snapshot', None) else None,
+                            getattr(step, 'compressed_context', None),
+                            getattr(step, 'duration_ms', None),
+                            getattr(step, 'failure_reason', None),
+                            1 if getattr(step, 'is_obsolete', False) else 0,
                         ))
                         step_count += 1
 
@@ -313,7 +369,7 @@ class Database:
                     
                     # 从 steps 表读取步骤状态和输出（覆盖 JSON 中的旧数据）
                     cursor.execute("""
-                        SELECT step_id, status, outputs, executed_at, retry_count
+                        SELECT step_id, status, outputs, executed_at, retry_count, max_retries
                         FROM steps
                         WHERE plan_id = ?
                     """, (plan_id,))
@@ -325,6 +381,7 @@ class Database:
                             'outputs': json.loads(row['outputs']) if row['outputs'] else None,
                             'executed_at': row['executed_at'],
                             'retry_count': row['retry_count'],
+                            'max_retries': row['max_retries'],
                         }
                         for row in steps_rows
                     }
@@ -334,10 +391,7 @@ class Database:
                         for step in segment.get('steps', []):
                             step_id = step.get('step_id')
                             if step_id in steps_updates:
-                                step['status'] = steps_updates[step_id]['status']
-                                step['outputs'] = steps_updates[step_id]['outputs']
-                                step['executed_at'] = steps_updates[step_id]['executed_at']
-                                step['retry_count'] = steps_updates[step_id]['retry_count']
+                                step.update(steps_updates[step_id])
                     
                     return ExecutionPlan(
                         plan_id=UUID(row['plan_id']),
@@ -428,7 +482,7 @@ class Database:
 
         调用方必须检查返回值。忽略它会导致「日志显示成功、DB 状态未变」的静默失败。
         """
-        # 校验状态值，避免写入 COMPLETED/FAILED 这类不属于 StepStatus 的脏数据
+        # 校验状态值，避免写入脏数据
         valid = {s.value for s in StepStatus}
         if status not in valid:
             logger.warning("拒绝非法步骤状态 {!r}，合法值: {}", status, sorted(valid))
@@ -467,31 +521,233 @@ class Database:
             logger.error("更新步骤状态失败: {}", e)
             return False
 
-    def update_plan(self, plan_id: str, status: str) -> bool:
+    def update_step_state_machine(
+        self,
+        step_id: str,
+        status: str,
+        outputs: Dict[str, Any] = None,
+        executed_at: datetime = None,
+        retry_count: Optional[int] = None,
+        duration_ms: Optional[int] = None,
+        failure_reason: Optional[str] = None,
+        compressed_context: Optional[str] = None,
+        state_snapshot: Optional[Dict[str, Any]] = None,
+    ) -> bool:
         """
-        更新计划状态。
-
-        之前计划状态只在 save_plan() 创建时写入一次，执行完成/失败从不回写，
-        导致前端看到的 plans.status 永远是初始值。
-
-        Returns:
-            True — 命中并更新了数据行
+        状态机专用更新：除了基础字段，还写 duration_ms / failure_reason /
+        compressed_context / state_snapshot。
         """
-        valid = {s.value for s in PlanStatus}
+        valid = {s.value for s in StepStatus}
         if status not in valid:
-            logger.warning("拒绝非法计划状态 {!r}，合法值: {}", status, sorted(valid))
+            logger.warning("拒绝非法步骤状态 {!r}，合法值: {}", status, sorted(valid))
             return False
 
         try:
             with closing(self._get_connection()) as conn, conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE plans SET status = ? WHERE plan_id = ?",
-                    (status, plan_id),
-                )
+                cursor.execute("""
+                    UPDATE steps
+                    SET status = ?,
+                        outputs = ?,
+                        executed_at = ?,
+                        retry_count = COALESCE(?, retry_count),
+                        duration_ms = ?,
+                        failure_reason = ?,
+                        compressed_context = ?,
+                        state_snapshot = ?
+                    WHERE step_id = ?
+                """, (
+                    status,
+                    json.dumps(outputs, ensure_ascii=False) if outputs is not None else None,
+                    executed_at.isoformat() if executed_at else None,
+                    retry_count,
+                    duration_ms,
+                    failure_reason,
+                    compressed_context,
+                    json.dumps(state_snapshot, ensure_ascii=False) if state_snapshot is not None else None,
+                    step_id,
+                ))
                 return cursor.rowcount > 0
         except Exception as e:
-            logger.error("更新计划状态失败: {}", e)
+            logger.error("更新步骤状态机状态失败: {}", e)
+            return False
+
+    def add_step_event(self, step_id: str, plan_id: str, event_type: str, event_data: Dict[str, Any] = None, branch_version: int = 1) -> bool:
+        """
+        记录步骤事件，用于状态机回放与时间旅行。
+        """
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO step_events (step_id, plan_id, event_type, event_data, branch_version, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    str(step_id),
+                    str(plan_id),
+                    event_type,
+                    json.dumps(event_data, ensure_ascii=False) if event_data is not None else None,
+                    branch_version,
+                    datetime.utcnow().isoformat(),
+                ))
+                return True
+        except Exception as e:
+            logger.error("写入 step_event 失败: {}", e)
+            return False
+
+    def get_step_events(self, plan_id: str, step_id: str = None, branch_version: int = None) -> List[Dict[str, Any]]:
+        """获取计划/步骤的事件流，用于回溯与可视化。"""
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                query = "SELECT * FROM step_events WHERE plan_id = ?"
+                params = [plan_id]
+                if step_id:
+                    query += " AND step_id = ?"
+                    params.append(str(step_id))
+                if branch_version is not None:
+                    query += " AND branch_version = ?"
+                    params.append(branch_version)
+                query += " ORDER BY event_id ASC"
+                cursor.execute(query, params)
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error("查询 step_events 失败: {}", e)
+            return []
+
+    def get_next_runnable_step(self, plan_id: str, branch_version: int = 1, resume_from_step_id: str = None):
+        """
+        获取当前计划下一个可运行的 step。
+        优先返回指定 resume_from_step_id，否则返回最早 pending 且非 obsolete 的 step。
+        """
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                if resume_from_step_id:
+                    cursor.execute("""
+                        SELECT * FROM steps
+                        WHERE plan_id = ? AND step_id = ? AND is_obsolete = 0
+                        ORDER BY step_order ASC
+                        LIMIT 1
+                    """, (plan_id, resume_from_step_id))
+                else:
+                    cursor.execute("""
+                        SELECT * FROM steps
+                        WHERE plan_id = ? AND status = ? AND is_obsolete = 0 AND branch_version = ?
+                        ORDER BY step_order ASC
+                        LIMIT 1
+                    """, (plan_id, StepStatus.PENDING.value, branch_version))
+                row = cursor.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error("获取下一个可运行步骤失败: {}", e)
+            return None
+
+    def mark_steps_obsolete(self, plan_id: str, after_step_id: str, branch_version: int) -> int:
+        """
+        将目标 step 之后的同 branch 步骤标记为 obsolete。
+        返回被标记的数量。
+        """
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE steps
+                    SET is_obsolete = 1
+                    WHERE plan_id = ?
+                      AND branch_version = ?
+                      AND step_order > (
+                          SELECT step_order FROM steps WHERE plan_id = ? AND step_id = ?
+                      )
+                """, (plan_id, branch_version, plan_id, after_step_id))
+                return cursor.rowcount
+        except Exception as e:
+            logger.error("标记 obsolete 失败: {}", e)
+            return 0
+
+    def clone_steps_from(self, plan_id: str, after_step_id: str, new_branch_version: int) -> bool:
+        """
+        从指定 step 之后克隆后续步骤到新 branch，保留原 branch 用于对比。
+        """
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM steps
+                    WHERE plan_id = ? AND step_order > (
+                        SELECT step_order FROM steps WHERE plan_id = ? AND step_id = ?
+                    )
+                    ORDER BY step_order ASC
+                """, (plan_id, plan_id, after_step_id))
+                rows = cursor.fetchall()
+                for row in rows:
+                    cursor.execute("""
+                        INSERT INTO steps (
+                            step_id, plan_id, segment_id, step_order,
+                            description, tool, inputs, check_criteria,
+                            outputs, status, executed_at, retry_count,
+                            parent_step_id, branch_version, state_snapshot,
+                            compressed_context, duration_ms, failure_reason, is_obsolete
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        str(row["step_id"]),
+                        str(row["plan_id"]),
+                        str(row["segment_id"]),
+                        row["step_order"],
+                        row["description"],
+                        row["tool"],
+                        row["inputs"],
+                        row["check_criteria"],
+                        row["outputs"],
+                        StepStatus.PENDING.value,
+                        None,
+                        row["retry_count"],
+                        row["step_id"],
+                        new_branch_version,
+                        None,
+                        None,
+                        None,
+                        None,
+                        0,
+                    ))
+                return True
+        except Exception as e:
+            logger.error("克隆步骤失败: {}", e)
+            return False
+
+    def update_plan(self, plan_id: str, status: str) -> bool:
+        """
+        更新计划状态。向后兼容旧调用方；新状态机逻辑请使用 update_plan_state_machine。
+        """
+        return self.update_plan_state_machine(plan_id, status)
+
+    def update_plan_state_machine(self, plan_id: str, status: str, resume_from_step_id: str = None, paused_at_step_id: str = None, current_branch: int = None) -> bool:
+        """更新计划状态及状态机字段。"""
+        valid = {s.value for s in PlanStatus}
+        if status not in valid:
+            logger.warning("拒绝非法计划状态 {!r}，合法值: {}", status, sorted(valid))
+            return False
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE plans
+                    SET status = ?,
+                        resume_from_step_id = COALESCE(?, resume_from_step_id),
+                        paused_at_step_id = COALESCE(?, paused_at_step_id),
+                        current_branch = COALESCE(?, current_branch)
+                    WHERE plan_id = ?
+                """, (
+                    status,
+                    resume_from_step_id,
+                    paused_at_step_id,
+                    current_branch,
+                    plan_id,
+                ))
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error("更新计划状态机状态失败: {}", e)
             return False
 
     def recover_orphaned_executions(self) -> int:
