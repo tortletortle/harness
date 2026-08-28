@@ -106,3 +106,14 @@ export interface ApiResponse<T = any> {
   data?: T;
   error?: string;
 }
+
+/** Toast 通知级别 */
+export type ToastLevel = 'error' | 'warning';
+
+/** Toast 通知（右下角浮出，自动消失） */
+export interface Toast {
+  id: number;
+  level: ToastLevel;
+  message: string;
+  timestamp: string;
+}

@@ -14,7 +14,7 @@ export function HistoryView() {
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'designs' | 'plans'>('designs');
   const [searchQuery, setSearchQuery] = useState('');
-  const { setCurrentDesign, setCurrentPlan, setCurrentView } = useAppStore();
+  const { setCurrentDesign, setCurrentPlan, setCurrentView, addLog } = useAppStore();
 
   useEffect(() => {
     loadHistory();
@@ -30,7 +30,7 @@ export function HistoryView() {
       setDesigns(designsList);
       setPlans(plansList);
     } catch (error) {
-      console.error('加载历史失败:', error);
+      addLog({ type: 'log', level: 'error', message: `加载历史记录失败: ${error}` });
     } finally {
       setIsLoading(false);
     }

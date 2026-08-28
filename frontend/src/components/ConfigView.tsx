@@ -81,7 +81,7 @@ export function ConfigView() {
       }
       setModelAssignments(assignments);
     } catch (error) {
-      console.error('加载配置失败:', error);
+      addLog({ type: 'log', level: 'error', message: `加载配置失败: ${error}` });
     } finally {
       setIsLoading(false);
     }

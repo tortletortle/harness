@@ -9,7 +9,7 @@ import { useAppStore } from '../stores/appStore';
 import type { Tool } from '../types';
 
 export function ToolsView() {
-  const { tools, setTools } = useAppStore();
+  const { tools, setTools, addLog } = useAppStore();
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -24,7 +24,7 @@ export function ToolsView() {
       const toolsList = await apiClient.getTools();
       setTools(toolsList);
     } catch (error) {
-      console.error('加载工具失败:', error);
+      addLog({ type: 'log', level: 'error', message: `加载工具列表失败: ${error}` });
     } finally {
       setIsLoading(false);
     }
