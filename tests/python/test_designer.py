@@ -3,17 +3,14 @@
 """
 
 import pytest
-from uuid import uuid4
-from datetime import datetime
 
-from designer import DefaultDesigner
+from designer import DefaultDesigner, GenerationError
 from llm_client import LLMClient
-from models import DesignDocument
 
 
 @pytest.fixture
 def designer():
-    """创建Designer实例"""
+    """创建Designer实例（未注册任何 LLM provider）"""
     llm_client = LLMClient()
     config = {
         "primary": {
@@ -32,19 +29,18 @@ async def test_health_check(designer):
     assert result is True
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio
-async def test_process_generate_design(designer):
-    """测试生成设计书（需要真实LLM调用，标记为integration，默认跑pytest -m "not integration"时会跳过）"""
+async def test_process_generate_design_fails_loud_without_llm(designer):
+    """LLM 不可用时 process(generate_design) 必须显式抛 GenerationError。
+
+    旧契约回归：generate_design 曾在 LLM 失败（此处为 Provider 未注册）时
+    静默返回 components=["待定"] 的占位设计书，本测试当时断言占位设计书的
+    user_request 也能通过。新契约下失败必须显式暴露，故改为断言 GenerationError。
+    """
     request = {
         "action": "generate_design",
         "user_request": "创建一个简单的Web应用",
     }
 
-    result = await designer.process(request)
-
-    assert "design" in result
-    assert result["design"]["user_request"] == "创建一个简单的Web应用"
-
-
-# 更多测试...
+    with pytest.raises(GenerationError, match="设计书生成失败"):
+        await designer.process(request)
