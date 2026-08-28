@@ -509,7 +509,60 @@ class Database:
         except Exception as e:
             logger.exception("获取步骤列表失败: {}", e)
             raise DatabaseError(f"获取步骤列表失败: {e}") from e
-    
+
+    def get_active_steps_snapshot(self, plan_id: str, branch_version: int) -> List[Dict[str, Any]]:
+        """
+        获取指定分支上未废弃的活动步骤快照，按 step_order 升序。
+
+        专用于暂停检查点计算：SQL 里直接过滤 branch_version / is_obsolete，
+        避免把历史分支与废弃行全量拉到调用方再客户端过滤（get_steps 是全表行）。
+        空列表表示该分支没有活动步骤（未命中，非故障）；SQL 失败抛 DatabaseError。
+        """
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM steps
+                    WHERE plan_id = ? AND branch_version = ? AND is_obsolete = 0
+                    ORDER BY step_order ASC
+                """, (plan_id, branch_version))
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.exception("查询活动步骤快照失败: {}", e)
+            raise DatabaseError(f"查询活动步骤快照失败: {e}") from e
+
+    def get_effective_step_status(self, plan_id: str, step_id: str, branch_version: int) -> Optional[str]:
+        """
+        查询步骤在指定分支上的「生效状态」。
+
+        回滚克隆拥有新 step_id 且 parent_step_id 指向原步骤，活动行是克隆行；
+        因此优先取该分支上 parent_step_id == step_id 的未废弃克隆行状态，
+        没有克隆时回落到原行本身的状态。找不到任何行返回 None（未命中，非故障）；
+        SQL 失败抛 DatabaseError。
+        """
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT status FROM steps
+                    WHERE plan_id = ? AND parent_step_id = ?
+                      AND is_obsolete = 0 AND branch_version = ?
+                    ORDER BY step_order ASC
+                    LIMIT 1
+                """, (plan_id, step_id, branch_version))
+                row = cursor.fetchone()
+                if row:
+                    return row["status"]
+                cursor.execute(
+                    "SELECT status FROM steps WHERE plan_id = ? AND step_id = ?",
+                    (plan_id, step_id),
+                )
+                row = cursor.fetchone()
+                return row["status"] if row else None
+        except Exception as e:
+            logger.exception("查询步骤生效状态失败: {}", e)
+            raise DatabaseError(f"查询步骤生效状态失败: {e}") from e
+
     def mark_step_tree_skipped(self, plan_id: str, step_id: str, executed_at: datetime = None) -> bool:
         """
         把指定步骤及其所有未废弃后代（回滚克隆沿 parent_step_id 链）标记为 Skipped。
@@ -838,6 +891,69 @@ class Database:
         except Exception as e:
             logger.exception("更新计划状态机状态失败: {}", e)
             raise DatabaseError(f"更新计划状态机状态失败: {e}") from e
+
+    def claim_plan_status(self, plan_id: str, to_status: str, from_statuses: tuple) -> bool:
+        """
+        原子认领计划状态：UPDATE plans SET status=? WHERE plan_id=? AND status IN (...)。
+
+        把「读当前状态 → 判断 → 写新状态」的 check-then-set 竞态收敛为单条 UPDATE，
+        用于消除 暂停/执行(恢复) 并发时互相覆盖状态的竞态：
+        只有两个操作都以条件 UPDATE 抢占，才能保证同一个计划只被一个操作认领。
+
+        Returns:
+            True  — 认领成功（计划当前状态属于 from_statuses，已被置为 to_status）
+            False — 未命中：plan_id 不存在、当前状态不属于 from_statuses、
+                    to_status 非法（与 update_plan_state_machine 一致，告警返回）、
+                    from_statuses 为空
+
+        SQL 失败（连接损坏等）抛 DatabaseError。
+        """
+        valid = {s.value for s in PlanStatus}
+        if to_status not in valid:
+            logger.warning("拒绝非法计划状态 {!r}，合法值: {}", to_status, sorted(valid))
+            return False
+        if not from_statuses:
+            logger.warning("claim_plan_status 未提供来源状态集合，无法认领: plan_id={}", plan_id)
+            return False
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                placeholders = ",".join("?" * len(from_statuses))
+                cursor.execute(
+                    f"UPDATE plans SET status = ? "
+                    f"WHERE plan_id = ? AND status IN ({placeholders})",
+                    [to_status, plan_id, *from_statuses],
+                )
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.exception("认领计划状态失败: {}", e)
+            raise DatabaseError(f"认领计划状态失败: {e}") from e
+
+    def clear_plan_checkpoint(self, plan_id: str) -> bool:
+        """
+        清除计划的恢复断点（resume_from_step_id / paused_at_step_id 置 NULL）。
+
+        恢复执行认领 Running 成功后调用：断点此刻已被本次恢复消费
+        （plan.resume_from_step_id 已带入执行循环），留在库中只会成为过期数据。
+
+        Returns:
+            True  — 命中并清除
+            False — plan_id 不存在（未命中，非故障）
+
+        SQL 失败抛 DatabaseError。
+        """
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE plans SET resume_from_step_id = NULL, paused_at_step_id = NULL "
+                    "WHERE plan_id = ?",
+                    (plan_id,),
+                )
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.exception("清除计划断点失败: {}", e)
+            raise DatabaseError(f"清除计划断点失败: {e}") from e
 
     def recover_orphaned_executions(self) -> int:
         """

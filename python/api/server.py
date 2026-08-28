@@ -257,9 +257,10 @@ async def broadcast_log(message: str, level: str = "info"):
     for client in state.websocket_clients:
         try:
             await client.send_json(log_data)
-        except:
+        except Exception:
+            # 连接已断开等发送失败；不能用裸 except——那会连取消信号一起吞掉
             disconnected.append(client)
-    
+
     # 移除断开的客户端
     for client in disconnected:
         state.websocket_clients.remove(client)
@@ -632,7 +633,12 @@ async def execute_plan(plan_id: str):
 
 @app.post("/api/plan/{plan_id}/pause", dependencies=[Depends(require_token)])
 async def pause_plan(plan_id: str):
-    """暂停正在执行的计划。执行循环会在下一个步骤开始前检测到 Paused 状态并退出。"""
+    """暂停正在执行的计划。执行循环会在下一个步骤开始前检测到 Paused 状态并退出。
+
+    暂停时一次性写入恢复检查点（resume_from_step_id / paused_at_step_id）：
+    状态与断点在同一条 UPDATE 里落库，保证原子性——不会出现「状态已 Paused
+    但断点缺失」的中间态，恢复端点因此总能拿到一致的断点。
+    """
     try:
         plan = state.database.get_plan(plan_id)
         if not plan:
@@ -645,8 +651,29 @@ async def pause_plan(plan_id: str):
                 detail=f"只能暂停 Running/Pending 状态的计划，当前状态: {current_status}",
             )
 
-        if not state.database.update_plan(plan_id, "Paused"):
-            raise HTTPException(status_code=500, detail="暂停失败")
+        branch_version = getattr(plan, 'current_branch', 1) or 1
+        paused_at_step_id, resume_from_step_id = _compute_pause_checkpoint(plan_id, branch_version)
+
+        if paused_at_step_id is None and resume_from_step_id is None:
+            # 当前分支上没有 Running/Pending/Retry 步骤（例如全部已完成）：
+            # update_plan_state_machine 的 COALESCE 语义下不传字段即保留旧断点，
+            # 避免把可能有用的历史断点误清成 NULL。
+            _require_write(
+                state.database.update_plan_state_machine(plan_id, "Paused"),
+                f"计划 {plan_id} 状态 → Paused",
+            )
+        else:
+            # 单条 UPDATE 同时写状态与断点（原子）。个别字段为 None 时
+            # COALESCE 保留旧值（例如存在 Running 步骤但没有 Pending/Retry 步骤）。
+            _require_write(
+                state.database.update_plan_state_machine(
+                    plan_id,
+                    "Paused",
+                    resume_from_step_id=resume_from_step_id,
+                    paused_at_step_id=paused_at_step_id,
+                ),
+                f"计划 {plan_id} 状态 → Paused（含恢复断点）",
+            )
 
         await broadcast_log(f"计划 {plan_id} 已请求暂停", "info")
         return {"success": True, "message": "暂停请求已发出，将在当前步骤完成后生效"}
@@ -655,6 +682,30 @@ async def pause_plan(plan_id: str):
     except Exception as e:
         logger.exception("暂停计划失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _compute_pause_checkpoint(plan_id: str, branch_version: int):
+    """
+    计算暂停检查点，返回 (paused_at_step_id, resume_from_step_id)。
+
+    - paused_at_step_id: 当前分支上第一个 status == Running 的活动步骤（暂停发生地）
+    - resume_from_step_id: 当前分支上第一个 status ∈ (Pending, Retry) 的活动步骤
+      （按 step_order 排序）；没有运行中步骤时它就是第一个未完成步骤。
+
+    找不到返回 None，由调用方决定保留旧断点（COALESCE）。数据库故障沿
+    DatabaseError 向上抛给端点的统一异常处理。
+    """
+    rows = state.database.get_active_steps_snapshot(plan_id, branch_version)
+    paused_at = next(
+        (str(r["step_id"]) for r in rows if r["status"] == StepStatus.RUNNING.value),
+        None,
+    )
+    resume_from = next(
+        (str(r["step_id"]) for r in rows
+         if r["status"] in (StepStatus.PENDING.value, StepStatus.RETRY.value)),
+        None,
+    )
+    return paused_at, resume_from
 
 
 @app.post("/api/plan/{plan_id}/resume", dependencies=[Depends(require_token)])
@@ -692,15 +743,36 @@ async def resume_plan(plan_id: str):
 
 @app.post("/api/plan/{plan_id}/skip-step/{step_id}", dependencies=[Depends(require_token)])
 async def skip_step(plan_id: str, step_id: str):
-    """把指定步骤标记为 Skipped。正在进行中的执行循环会在避开该步骤时直接跳过不执行。"""
+    """把指定步骤标记为 Skipped。正在进行中的执行循环会在避开该步骤时直接跳过不执行。
+
+    守卫：
+    - 计划已进入终态（Completed/Failed/RolledBack）时拒绝跳过；
+    - 按步骤的「生效状态」判断——回滚后活动行是克隆行（parent_step_id 指向原 id），
+      生效状态取活动克隆行，无克隆才回落到原行；生效状态非 Pending/Retry 拒绝跳过。
+    """
     try:
         plan = state.database.get_plan(plan_id)
         if not plan:
             raise HTTPException(status_code=404, detail="执行计划不存在")
 
+        current_status = state.database.get_plan_status(plan_id)
+        if current_status in ("Completed", "Failed", "RolledBack"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"计划已结束（当前状态: {current_status}），无法跳过步骤",
+            )
+
         steps = state.database.get_steps(plan_id)
         if not any(s["step_id"] == step_id for s in steps):
             raise HTTPException(status_code=404, detail="步骤不存在")
+
+        branch_version = getattr(plan, 'current_branch', 1) or 1
+        effective_status = state.database.get_effective_step_status(plan_id, step_id, branch_version)
+        if effective_status is None:
+            # 存在性检查已通过，这里兜底（理论上不可达）
+            raise HTTPException(status_code=404, detail="步骤不存在")
+        if effective_status not in ("Pending", "Retry"):
+            raise HTTPException(status_code=409, detail="步骤已在执行或已完成，无法跳过")
 
         # 跳过需沿克隆血缘传播：活动分支上的克隆行若保持 Pending，执行时会照常运行
         if not state.database.mark_step_tree_skipped(plan_id, step_id, executed_at=datetime.now()):
@@ -869,10 +941,50 @@ async def execute_plan_background(plan, resume: bool = False):
     print(f"[BG] STARTED plan={plan.plan_id} resume={resume}", flush=True)
     try:
         debug_log(f"execute_plan_background STARTED for plan {plan.plan_id} (resume={resume})")
-        _require_write(
-            state.database.update_plan_state_machine(str(plan.plan_id), "Running"),
-            f"计划 {plan.plan_id} 状态 → Running",
-        )
+        # 原子认领：把「读状态→判断→写 Running」收敛为单条条件 UPDATE，
+        # 消除 /pause 与 /execute(或 /resume) 并发时的状态覆盖竞态。
+        # - execute：从除 Paused 外的全部可执行状态认领——计划若在任务排队期间被暂停，
+        #   认领必然失败，执行绝不会把 Paused 翻成 Running（暂停被无声吞掉的竞态）。
+        #   Completed/RolledBack 在列以保持「重跑已完成计划」「回滚后重跑」可用。
+        # - resume：只从 Paused 认领。
+        if resume:
+            claim_from = (PlanStatus.PAUSED.value,)
+        else:
+            claim_from = (
+                PlanStatus.PENDING.value,
+                PlanStatus.APPROVED.value,
+                PlanStatus.FAILED.value,
+                PlanStatus.COMPLETED.value,
+                PlanStatus.ROLLED_BACK.value,
+            )
+        claimed = state.database.claim_plan_status(str(plan.plan_id), "Running", claim_from)
+        if not claimed:
+            # 认领失败 = 状态已被并发操作改变（被暂停 / 已被另一个任务认领 Running /
+            # 状态在排队期间变化）。此时绝不标记 Failed：Paused 归暂停逻辑所有，
+            # 已是 Running 说明另一个任务合法拥有执行权，把计划打成 Failed 会
+            # 覆盖别人的合法状态。优雅退出即可，finally 会释放 current_execution。
+            current_status = state.database.get_plan_status(str(plan.plan_id))
+            debug_log(f"Plan {plan.plan_id} claim Running failed (resume={resume}, current={current_status}), exiting gracefully")
+            if current_status == PlanStatus.PAUSED.value:
+                await broadcast_log("计划已暂停，跳过执行", "info")
+            else:
+                await broadcast_log(
+                    f"计划状态已变化（当前: {current_status}），跳过执行", "info"
+                )
+            return
+
+        if resume:
+            # 断点已随认领成功被本次恢复消费（plan.resume_from_step_id 已带入执行循环），
+            # 此刻清除库中检查点。顺序必须是先认领后清除：认领失败时断点仍在，
+            # 下次恢复仍可使用。清除失败不使恢复失败——残留的过期断点是良性的：
+            # 它只影响下次 resume 的起点，且显式 resume 路径取到的步骤若已
+            # Success/Skipped 会被执行循环跳过；静默吞掉异常仅记日志。
+            try:
+                if not state.database.clear_plan_checkpoint(str(plan.plan_id)):
+                    logger.warning("清除恢复断点未命中（计划可能已不存在），已忽略: {}", plan.plan_id)
+            except Exception as clear_exc:
+                logger.exception("清除恢复断点失败（忽略，不影响本次恢复）: {}", clear_exc)
+
         print(f"[BG] plan={plan.plan_id} status=Running", flush=True)
         await broadcast_log(f"{'恢复' if resume else '开始'}执行计划: {plan.plan_id}", "info")
 
