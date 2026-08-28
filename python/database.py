@@ -5,6 +5,7 @@
 
 import sqlite3
 import json
+import uuid
 from contextlib import closing
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -367,11 +368,15 @@ class Database:
                     # 从 JSON 加载 segments
                     segments_data = json.loads(row['segments'])
                     
-                    # 从 steps 表读取步骤状态和输出（覆盖 JSON 中的旧数据）
+                    # 从 steps 表读取步骤状态和输出（覆盖 JSON 中的旧数据）。
+                    # 回滚克隆会沿用原 step_id 产生多行（旧分支 obsolete + 新分支活动），
+                    # dict 覆盖顺序必须让「活动分支、未废弃」的行排在最后生效，
+                    # 否则 get_plan 会随机返回旧分支的过期状态。
                     cursor.execute("""
-                        SELECT step_id, status, outputs, executed_at, retry_count, max_retries
+                        SELECT *
                         FROM steps
                         WHERE plan_id = ?
+                        ORDER BY is_obsolete DESC, branch_version ASC
                     """, (plan_id,))
 
                     steps_rows = cursor.fetchall()
@@ -382,8 +387,32 @@ class Database:
                             'executed_at': row['executed_at'],
                             'retry_count': row['retry_count'],
                             'max_retries': row['max_retries'],
+                            'duration_ms': row['duration_ms'],
+                            'failure_reason': row['failure_reason'],
+                            'compressed_context': row['compressed_context'],
+                            'state_snapshot': json.loads(row['state_snapshot']) if row['state_snapshot'] else None,
+                            'is_obsolete': row['is_obsolete'],
+                            'step_order': row['step_order'],
+                            'branch_version': row['branch_version'],
                         }
                         for row in steps_rows
+                    }
+
+                    # 回滚克隆拥有新 step_id（原 id 是主键，无法重复插入），
+                    # 但 segments JSON 里只有原步骤。把活动分支克隆行的状态
+                    # 通过 parent_step_id 映射回原步骤，展示层才能反映当前分支。
+                    current_branch = row['current_branch'] or 1
+                    clone_updates = {
+                        r['parent_step_id']: {
+                            'status': r['status'],
+                            'outputs': json.loads(r['outputs']) if r['outputs'] else None,
+                            'executed_at': r['executed_at'],
+                            'retry_count': r['retry_count'],
+                            'is_obsolete': r['is_obsolete'],
+                            'branch_version': r['branch_version'],
+                        }
+                        for r in steps_rows
+                        if r['parent_step_id'] and r['branch_version'] == current_branch
                     }
 
                     # 更新 segments 中的步骤状态
@@ -392,6 +421,8 @@ class Database:
                             step_id = step.get('step_id')
                             if step_id in steps_updates:
                                 step.update(steps_updates[step_id])
+                            if step_id in clone_updates:
+                                step.update(clone_updates[step_id])
                     
                     return ExecutionPlan(
                         plan_id=UUID(row['plan_id']),
@@ -401,6 +432,9 @@ class Database:
                         segments=segments_data,
                         implementation_list=json.loads(row['implementation_list']),
                         dynamic_insertions=json.loads(row['dynamic_insertions']),
+                        current_branch=row['current_branch'] or 1,
+                        resume_from_step_id=UUID(row['resume_from_step_id']) if row['resume_from_step_id'] else None,
+                        paused_at_step_id=UUID(row['paused_at_step_id']) if row['paused_at_step_id'] else None,
                     )
                 return None
         except Exception as e:
@@ -472,6 +506,44 @@ class Database:
             logger.error("获取步骤列表失败: {}", e)
             return []
     
+    def mark_step_tree_skipped(self, plan_id: str, step_id: str, executed_at: datetime = None) -> bool:
+        """
+        把指定步骤及其所有未废弃后代（回滚克隆沿 parent_step_id 链）标记为 Skipped。
+
+        跳过的语义是「这个步骤不再执行」：克隆行与原步骤共用执行语义但 id 不同，
+        只改原 id 会让活动分支上的克隆照常执行，跳过形同虚设。
+        """
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE steps SET status = ?, executed_at = COALESCE(?, executed_at) "
+                    "WHERE plan_id = ? AND step_id = ?",
+                    (StepStatus.SKIPPED.value, executed_at.isoformat() if executed_at else None,
+                     plan_id, step_id),
+                )
+                frontier = [step_id]
+                while frontier:
+                    placeholders = ",".join("?" * len(frontier))
+                    cursor.execute(
+                        f"UPDATE steps SET status = ?, executed_at = COALESCE(?, executed_at) "
+                        f"WHERE plan_id = ? AND parent_step_id IN ({placeholders}) AND is_obsolete = 0",
+                        [StepStatus.SKIPPED.value,
+                         executed_at.isoformat() if executed_at else None, plan_id] + frontier,
+                    )
+                    if cursor.rowcount == 0:
+                        break
+                    cursor.execute(
+                        f"SELECT step_id FROM steps WHERE plan_id = ? "
+                        f"AND parent_step_id IN ({placeholders}) AND is_obsolete = 0",
+                        [plan_id] + frontier,
+                    )
+                    frontier = [r["step_id"] for r in cursor.fetchall()]
+                return True
+        except Exception as e:
+            logger.error("标记跳过失败: {}", e)
+            return False
+
     def update_step(self, step_id: str, status: str, outputs: Dict[str, Any] = None, executed_at: datetime = None, retry_count: Optional[int] = None) -> bool:
         """
         更新步骤状态。
@@ -668,19 +740,31 @@ class Database:
     def clone_steps_from(self, plan_id: str, after_step_id: str, new_branch_version: int) -> bool:
         """
         从指定 step 之后克隆后续步骤到新 branch，保留原 branch 用于对比。
+        只克隆「当前活动分支」上未废弃的步骤——否则多分支计划每次回滚
+        都会把历史分支的同序号步骤再克隆一遍，产生重复步骤。
         """
         try:
             with closing(self._get_connection()) as conn, conn:
                 cursor = conn.cursor()
                 cursor.execute("""
+                    SELECT current_branch FROM plans WHERE plan_id = ?
+                """, (plan_id,))
+                plan_row = cursor.fetchone()
+                source_branch = plan_row["current_branch"] if plan_row and plan_row["current_branch"] else 1
+                cursor.execute("""
                     SELECT * FROM steps
-                    WHERE plan_id = ? AND step_order > (
-                        SELECT step_order FROM steps WHERE plan_id = ? AND step_id = ?
-                    )
+                    WHERE plan_id = ?
+                      AND branch_version = ?
+                      AND is_obsolete = 0
+                      AND step_order > (
+                          SELECT step_order FROM steps WHERE plan_id = ? AND step_id = ?
+                      )
                     ORDER BY step_order ASC
-                """, (plan_id, plan_id, after_step_id))
+                """, (plan_id, source_branch, plan_id, after_step_id))
                 rows = cursor.fetchall()
                 for row in rows:
+                    # step_id 是主键，克隆必须生成新 id；
+                    # parent_step_id 保留原步骤 id 以维持血缘（get_plan 展示层据此映射）。
                     cursor.execute("""
                         INSERT INTO steps (
                             step_id, plan_id, segment_id, step_order,
@@ -691,7 +775,7 @@ class Database:
                         )
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        str(row["step_id"]),
+                        str(uuid.uuid4()),
                         str(row["plan_id"]),
                         str(row["segment_id"]),
                         row["step_order"],

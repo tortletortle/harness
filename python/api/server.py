@@ -355,6 +355,8 @@ def format_plan_for_frontend(plan) -> dict:
     return {
         "plan_id": str(plan_data.get('plan_id', '')),
         "design_id": str(plan_data.get('design_id', '')),
+        # 计划级权威状态，前端轮询据此驱动暂停/恢复/进度，而非解析日志文本
+        "status": plan_data.get('status') or 'Pending',
         "segments": segments,
         "steps": all_steps,  # Flattened list for easy access
         "created_at": str(plan_data.get('created_at', '')),
@@ -528,7 +530,7 @@ async def approve_design(design_id: str, request: ApprovalRequest):
 async def get_plans(limit: int = 10):
     """获取执行计划列表"""
     try:
-        plans_raw = state.database.list_plans(limit)
+        plans_raw = state.database.list_plans(limit=limit)
         plans = []
         for p in plans_raw:
             plans.append({
@@ -675,7 +677,8 @@ async def skip_step(plan_id: str, step_id: str):
         if not any(s["step_id"] == step_id for s in steps):
             raise HTTPException(status_code=404, detail="步骤不存在")
 
-        if not state.database.update_step(step_id=step_id, status="Skipped", executed_at=datetime.now()):
+        # 跳过需沿克隆血缘传播：活动分支上的克隆行若保持 Pending，执行时会照常运行
+        if not state.database.mark_step_tree_skipped(plan_id, step_id, executed_at=datetime.now()):
             raise HTTPException(status_code=500, detail="跳过失败")
 
         await broadcast_log(f"步骤 {step_id} 已被手动跳过", "info")
@@ -811,12 +814,14 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
         )
         if not state.database.add_step_event(step_id, plan_id, "success", {"duration_ms": duration_ms}):
             logger.warning("step_event success 写入失败: {}", step_id)
+        result["duration_ms"] = duration_ms
         return result
 
     # 仅记录 failed 事件，不写入 Failed 状态，留给调用方在重试耗尽后统一写入
     failure_reason = error or check_status or "unknown"
     if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": blocked, "duration_ms": duration_ms}):
         logger.warning("step_event failed 写入失败: {}", step_id)
+    result["duration_ms"] = duration_ms
     return result
 
 
@@ -914,11 +919,11 @@ async def execute_plan_background(plan, resume: bool = False):
                         step_id=step_id,
                         status=StepStatus.FAILED.value,
                         outputs={"error": error, "check_status": result.get("check_status")},
-                        duration_ms=duration_ms,
+                        duration_ms=result.get("duration_ms"),
                         failure_reason=failure_reason,
                         state_snapshot=result,
                     )
-                    if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": True, "duration_ms": duration_ms}):
+                    if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": True, "duration_ms": result.get("duration_ms")}):
                         logger.warning("step_event failed 写入失败: {}", step_id)
                     state.database.update_plan_state_machine(str(plan.plan_id), "Failed")
                     break
@@ -931,11 +936,11 @@ async def execute_plan_background(plan, resume: bool = False):
                         step_id=step_id,
                         status=StepStatus.FAILED.value,
                         outputs={"error": error, "check_status": "failed"},
-                        duration_ms=duration_ms,
+                        duration_ms=result.get("duration_ms"),
                         failure_reason=failure_reason,
                         state_snapshot=result,
                     )
-                    if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": False, "duration_ms": duration_ms}):
+                    if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms")}):
                         logger.warning("step_event failed 写入失败: {}", step_id)
                     state.database.update_plan_state_machine(str(plan.plan_id), "Failed")
                     break
@@ -953,16 +958,17 @@ async def execute_plan_background(plan, resume: bool = False):
                             step_id=step_id,
                             status=StepStatus.FAILED.value,
                             outputs={"error": error, "check_status": check_status},
-                            duration_ms=duration_ms,
+                            duration_ms=result.get("duration_ms"),
                             failure_reason=failure_reason,
                             retry_count=attempt,
                             state_snapshot=result,
                         )
-                        if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": False, "duration_ms": duration_ms, "attempt": attempt}):
+                        if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms"), "attempt": attempt}):
                             logger.warning("step_event failed 写入失败: {}", step_id)
                         state.database.update_plan_state_machine(str(plan.plan_id), "Failed")
                         break
                     # success=False 且 check_status=unverified: 仍视为完成，继续后续步骤
+                    result["terminal_success"] = True
                     state.database.update_step_state_machine(
                         step_id=step_id,
                         status="Success",
@@ -990,7 +996,7 @@ async def execute_plan_background(plan, resume: bool = False):
             # 明确失败才终止循环继续执行。
             # success=False 是执行失败；check_status="failed" 是校验明确不通过。
             # "unverified" 只表示无法自动校验，不应阻断计划继续。
-            if not result.get("success") or result.get("check_status") == "failed":
+            if (not result.get("success") and not result.get("terminal_success")) or result.get("check_status") == "failed":
                 await broadcast_log(f"[ERROR] 步骤 {step_id} 失败（已重试 {attempt} 次）: {result.get('error')}", "error")
                 break
 
@@ -1031,8 +1037,11 @@ async def rollback_plan(plan_id: str, request: Optional[Dict[str, Any]] = None):
         current_branch = getattr(plan, 'current_branch', 1) or 1
         new_branch = current_branch + 1
 
+        # 先克隆到新分支并校验结果，再废弃旧分支步骤——
+        # 任何一步失败都不得留下「步骤已废弃但没有克隆」的破损状态。
+        if not state.database.clone_steps_from(plan_id, target_step_id, new_branch):
+            raise HTTPException(status_code=500, detail="克隆步骤到新分支失败，回滚未执行")
         marked = state.database.mark_steps_obsolete(plan_id, target_step_id, current_branch)
-        state.database.clone_steps_from(plan_id, target_step_id, new_branch)
         state.database.update_plan_state_machine(
             plan_id,
             PlanStatus.PENDING.value,
