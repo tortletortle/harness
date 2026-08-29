@@ -14,7 +14,9 @@ import { useEffect, useRef } from 'react';
 import { apiClient } from '../api/client';
 import { useAppStore } from '../stores/appStore';
 
-const POLL_INTERVAL_MS = 2000;
+const POLL_INTERVAL_MS = 30000;
+/** plan_update 推送到达后的去抖窗口：合并同一次状态变更引发的事件突发 */
+const EVENT_DEBOUNCE_MS = 300;
 
 /** 终态集合：轮询到这些状态即停止 */
 const TERMINAL_STATUSES = ['Completed', 'Failed', 'Paused', 'RolledBack'];
@@ -23,7 +25,10 @@ export function usePlanPolling(): void {
   const planId = useAppStore((s) => s.currentPlan?.plan_id ?? null);
   const planStatus = useAppStore((s) => s.currentPlan?.status);
   const isExecuting = useAppStore((s) => s.isExecuting);
+  const planEvent = useAppStore((s) => s.planEventTick);
   const initialLoadedRef = useRef<string | null>(null);
+  // 事件触发的立即刷新复用主 effect 里的 tick（保持单一状态应用路径）
+  const tickRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     if (!planId) return;
@@ -84,6 +89,8 @@ export function usePlanPolling(): void {
         void tick();
       }, POLL_INTERVAL_MS);
     };
+    // 供 plan_update 事件触发的立即刷新使用
+    tickRef.current = tick;
 
     const shouldPoll = planStatus === 'Running' || planStatus === 'Pending' || isExecuting;
 
@@ -128,4 +135,12 @@ export function usePlanPolling(): void {
       }
     };
   }, [planId, planStatus, isExecuting]);
+
+  // plan_update 推送到达（后端每个状态转换后广播）→ 去抖后立即全量刷新。
+  // 30s 兜底轮询之外的真实时路径；事件不匹配当前计划时忽略。
+  useEffect(() => {
+    if (!planId || planEvent.planId !== planId) return;
+    const timer = setTimeout(() => tickRef.current(), EVENT_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [planEvent, planId]);
 }

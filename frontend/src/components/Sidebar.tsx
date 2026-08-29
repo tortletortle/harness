@@ -2,17 +2,19 @@
  * 侧边栏导航
  */
 
-import { 
-  FileText, 
-  Play, 
-  Wrench, 
-  Clock, 
+import {
+  FileText,
+  Play,
+  Wrench,
+  Clock,
   Settings,
   PenSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Terminal,
   Bot,
+  Activity,
+  ScrollText,
 } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 
@@ -28,8 +30,10 @@ export function Sidebar() {
     { id: 'input' as const, label: '新建任务', icon: PenSquare },
     { id: 'design' as const, label: '设计书', icon: FileText },
     { id: 'plan' as const, label: '执行计划', icon: Play },
+    { id: 'execution' as const, label: '执行', icon: Activity },
     { id: 'tools' as const, label: '工具', icon: Wrench },
     { id: 'history' as const, label: '历史记录', icon: Clock },
+    { id: 'audit' as const, label: '审计日志', icon: ScrollText },
     { id: 'config' as const, label: '配置', icon: Settings },
   ];
 

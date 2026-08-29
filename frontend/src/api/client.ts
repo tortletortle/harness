@@ -3,7 +3,7 @@
  * 与后端 FastAPI 服务通信
  */
 
-import type { Design, ExecutionPlan, Tool, LogMessage } from '../types';
+import type { Design, ExecutionPlan, Tool, LogMessage, PlanUpdateEvent, AuditLogEntry } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 const API_TOKEN = import.meta.env.VITE_API_TOKEN || '';
@@ -52,6 +52,7 @@ async function throwResponseError(response: Response, fallback: string): Promise
 export class ApiClient {
   private ws: WebSocket | null = null;
   private logCallbacks: ((log: LogMessage) => void)[] = [];
+  private planUpdateCallbacks: ((ev: PlanUpdateEvent) => void)[] = [];
   // 区分"程序性关闭"（替换连接/主动断开）与"意外断开"：
   // 前者绝不能触发自动重连，否则重连本身会再次关闭连接，形成每 5 秒的
   // 无限重连循环（StrictMode 双挂载加剧此问题，见 E2E 观察到的连接风暴）。
@@ -278,6 +279,23 @@ export class ApiClient {
   }
 
   /**
+   * 获取审计日志（工具调用记录，含被安全拦截的调用）
+   */
+  async getAuditLogs(limit = 100, planId?: string): Promise<AuditLogEntry[]> {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (planId) query.set('plan_id', planId);
+    const response = await authFetch(`${API_BASE}/api/audit-logs?${query.toString()}`);
+    if (!response.ok) {
+      await throwResponseError(response, '获取审计日志失败');
+    }
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.detail || data.error || '获取审计日志失败');
+    }
+    return data.logs as AuditLogEntry[];
+  }
+
+  /**
    * 获取服务状态
    *
    * 注意：/api/status 响应没有 success 字段，直接返回数据本身。
@@ -416,7 +434,13 @@ export class ApiClient {
     this.ws = new WebSocket(`${wsProtocol}//${wsHost}/ws/logs${wsQuery}`);
 
     this.ws.onmessage = (event) => {
-      const log = JSON.parse(event.data) as LogMessage;
+      const data = JSON.parse(event.data);
+      if (data?.type === 'plan_update') {
+        const ev = data as PlanUpdateEvent;
+        this.planUpdateCallbacks.forEach(cb => cb(ev));
+        return;
+      }
+      const log = data as LogMessage;
       this.logCallbacks.forEach(cb => cb(log));
     };
 
@@ -447,6 +471,14 @@ export class ApiClient {
   }
 
   /**
+   * 注册计划状态变更推送回调（type=plan_update）。
+   * 与日志回调不同：注册列表跨重连保留，直到 disconnectLogs。
+   */
+  onPlanUpdate(cb: (ev: PlanUpdateEvent) => void): void {
+    this.planUpdateCallbacks.push(cb);
+  }
+
+  /**
    * 断开 WebSocket
    */
   disconnectLogs(): void {
@@ -460,6 +492,7 @@ export class ApiClient {
       this.ws = null;
     }
     this.logCallbacks = [];
+    this.planUpdateCallbacks = [];
   }
 }
 
