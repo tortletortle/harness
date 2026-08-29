@@ -5,6 +5,7 @@
 
 import sqlite3
 import json
+import uuid
 from contextlib import closing
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -14,6 +15,10 @@ from models import DesignDocument, ExecutionPlan, Step, PlanStatus, StepStatus
 from logging_config import get_logger
 
 logger = get_logger(__name__)
+
+
+class DatabaseError(RuntimeError):
+    """数据库操作异常：SQL 失败、连接损坏等意外错误。False/None 仅表示未命中，不代表故障。"""
 
 
 class Database:
@@ -202,8 +207,8 @@ class Database:
                 conn.commit()
             return True
         except Exception as e:
-            logger.error("保存设计书失败: {}", e)
-            return False
+            logger.exception("保存设计书失败: {}", e)
+            raise DatabaseError(f"保存设计书失败: {e}") from e
     
     def get_design(self, design_id: str) -> Optional[DesignDocument]:
         """获取设计书"""
@@ -230,8 +235,8 @@ class Database:
                     )
                 return None
         except Exception as e:
-            logger.error("获取设计书失败: {}", e)
-            return None
+            logger.exception("查询设计书失败: {}", e)
+            raise DatabaseError(f"查询设计书失败: {e}") from e
     
     def save_plan(self, plan: ExecutionPlan) -> bool:
         """保存执行计划。"""
@@ -335,7 +340,7 @@ class Database:
             return True
         except Exception as e:
             logger.exception("保存执行计划失败: {}", e)
-            return False
+            raise DatabaseError(f"保存执行计划失败: {e}") from e
     
     def get_plan_status(self, plan_id: str) -> Optional[str]:
         """轻量级查询计划当前状态，不解析 segments JSON。用于执行循环中频繁检测是否被请求暂停。"""
@@ -346,8 +351,42 @@ class Database:
                 row = cursor.fetchone()
                 return row["status"] if row else None
         except Exception as e:
-            logger.error("查询计划状态失败: {}", e)
-            return None
+            logger.exception("查询计划状态失败: {}", e)
+            raise DatabaseError(f"查询计划状态失败: {e}") from e
+
+    def get_plan_status_summary(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        """
+        轻量级查询计划状态与活动步骤状态，供 plan_update WebSocket 广播使用。
+
+        Returns:
+            {"status": <计划状态>, "steps": [{"step_id": str, "status": str}, ...]}
+            steps 只含未废弃（is_obsolete=0）的活动行——回滚后旧分支的废弃克隆
+            不会混入广播；按 branch_version 升序、step_order 升序排列。
+            计划行不存在返回 None（未命中，非故障）。
+
+        SQL 失败抛 DatabaseError（与其他读操作一致）。
+        """
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT status FROM plans WHERE plan_id = ?", (plan_id,))
+                plan_row = cursor.fetchone()
+                if not plan_row:
+                    return None
+                cursor.execute(
+                    "SELECT step_id, status FROM steps "
+                    "WHERE plan_id = ? AND is_obsolete = 0 "
+                    "ORDER BY branch_version ASC, step_order ASC",
+                    (plan_id,),
+                )
+                steps = [
+                    {"step_id": str(row["step_id"]), "status": row["status"]}
+                    for row in cursor.fetchall()
+                ]
+                return {"status": plan_row["status"], "steps": steps}
+        except Exception as e:
+            logger.exception("查询计划状态摘要失败: {}", e)
+            raise DatabaseError(f"查询计划状态摘要失败: {e}") from e
 
     def get_plan(self, plan_id: str) -> Optional[ExecutionPlan]:
         """获取执行计划"""
@@ -367,11 +406,15 @@ class Database:
                     # 从 JSON 加载 segments
                     segments_data = json.loads(row['segments'])
                     
-                    # 从 steps 表读取步骤状态和输出（覆盖 JSON 中的旧数据）
+                    # 从 steps 表读取步骤状态和输出（覆盖 JSON 中的旧数据）。
+                    # 回滚克隆会沿用原 step_id 产生多行（旧分支 obsolete + 新分支活动），
+                    # dict 覆盖顺序必须让「活动分支、未废弃」的行排在最后生效，
+                    # 否则 get_plan 会随机返回旧分支的过期状态。
                     cursor.execute("""
-                        SELECT step_id, status, outputs, executed_at, retry_count, max_retries
+                        SELECT *
                         FROM steps
                         WHERE plan_id = ?
+                        ORDER BY is_obsolete DESC, branch_version ASC
                     """, (plan_id,))
 
                     steps_rows = cursor.fetchall()
@@ -382,8 +425,32 @@ class Database:
                             'executed_at': row['executed_at'],
                             'retry_count': row['retry_count'],
                             'max_retries': row['max_retries'],
+                            'duration_ms': row['duration_ms'],
+                            'failure_reason': row['failure_reason'],
+                            'compressed_context': row['compressed_context'],
+                            'state_snapshot': json.loads(row['state_snapshot']) if row['state_snapshot'] else None,
+                            'is_obsolete': row['is_obsolete'],
+                            'step_order': row['step_order'],
+                            'branch_version': row['branch_version'],
                         }
                         for row in steps_rows
+                    }
+
+                    # 回滚克隆拥有新 step_id（原 id 是主键，无法重复插入），
+                    # 但 segments JSON 里只有原步骤。把活动分支克隆行的状态
+                    # 通过 parent_step_id 映射回原步骤，展示层才能反映当前分支。
+                    current_branch = row['current_branch'] or 1
+                    clone_updates = {
+                        r['parent_step_id']: {
+                            'status': r['status'],
+                            'outputs': json.loads(r['outputs']) if r['outputs'] else None,
+                            'executed_at': r['executed_at'],
+                            'retry_count': r['retry_count'],
+                            'is_obsolete': r['is_obsolete'],
+                            'branch_version': r['branch_version'],
+                        }
+                        for r in steps_rows
+                        if r['parent_step_id'] and r['branch_version'] == current_branch
                     }
 
                     # 更新 segments 中的步骤状态
@@ -392,6 +459,8 @@ class Database:
                             step_id = step.get('step_id')
                             if step_id in steps_updates:
                                 step.update(steps_updates[step_id])
+                            if step_id in clone_updates:
+                                step.update(clone_updates[step_id])
                     
                     return ExecutionPlan(
                         plan_id=UUID(row['plan_id']),
@@ -401,11 +470,14 @@ class Database:
                         segments=segments_data,
                         implementation_list=json.loads(row['implementation_list']),
                         dynamic_insertions=json.loads(row['dynamic_insertions']),
+                        current_branch=row['current_branch'] or 1,
+                        resume_from_step_id=UUID(row['resume_from_step_id']) if row['resume_from_step_id'] else None,
+                        paused_at_step_id=UUID(row['paused_at_step_id']) if row['paused_at_step_id'] else None,
                     )
                 return None
         except Exception as e:
             logger.exception("获取执行计划失败: {}", e)
-            return None
+            raise DatabaseError(f"获取执行计划失败: {e}") from e
     
     def list_designs(self, limit: int = 10) -> List[Dict[str, Any]]:
         """列出最近的设计书"""
@@ -423,8 +495,8 @@ class Database:
                 rows = cursor.fetchall()
                 return [dict(row) for row in rows]
         except Exception as e:
-            logger.error("列出设计书失败: {}", e)
-            return []
+            logger.exception("列出设计书失败: {}", e)
+            raise DatabaseError(f"列出设计书失败: {e}") from e
     
     def list_plans(self, design_id: str = None, limit: int = 10) -> List[Dict[str, Any]]:
         """列出执行计划"""
@@ -451,8 +523,8 @@ class Database:
                 rows = cursor.fetchall()
                 return [dict(row) for row in rows]
         except Exception as e:
-            logger.error("列出执行计划失败: {}", e)
-            return []
+            logger.exception("列出执行计划失败: {}", e)
+            raise DatabaseError(f"列出执行计划失败: {e}") from e
     
     def get_steps(self, plan_id: str) -> List[Dict[str, Any]]:
         """获取计划的所有步骤"""
@@ -469,17 +541,109 @@ class Database:
                 rows = cursor.fetchall()
                 return [dict(row) for row in rows]
         except Exception as e:
-            logger.error("获取步骤列表失败: {}", e)
-            return []
-    
+            logger.exception("获取步骤列表失败: {}", e)
+            raise DatabaseError(f"获取步骤列表失败: {e}") from e
+
+    def get_active_steps_snapshot(self, plan_id: str, branch_version: int) -> List[Dict[str, Any]]:
+        """
+        获取指定分支上未废弃的活动步骤快照，按 step_order 升序。
+
+        专用于暂停检查点计算：SQL 里直接过滤 branch_version / is_obsolete，
+        避免把历史分支与废弃行全量拉到调用方再客户端过滤（get_steps 是全表行）。
+        空列表表示该分支没有活动步骤（未命中，非故障）；SQL 失败抛 DatabaseError。
+        """
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM steps
+                    WHERE plan_id = ? AND branch_version = ? AND is_obsolete = 0
+                    ORDER BY step_order ASC
+                """, (plan_id, branch_version))
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.exception("查询活动步骤快照失败: {}", e)
+            raise DatabaseError(f"查询活动步骤快照失败: {e}") from e
+
+    def get_effective_step_status(self, plan_id: str, step_id: str, branch_version: int) -> Optional[str]:
+        """
+        查询步骤在指定分支上的「生效状态」。
+
+        回滚克隆拥有新 step_id 且 parent_step_id 指向原步骤，活动行是克隆行；
+        因此优先取该分支上 parent_step_id == step_id 的未废弃克隆行状态，
+        没有克隆时回落到原行本身的状态。找不到任何行返回 None（未命中，非故障）；
+        SQL 失败抛 DatabaseError。
+        """
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT status FROM steps
+                    WHERE plan_id = ? AND parent_step_id = ?
+                      AND is_obsolete = 0 AND branch_version = ?
+                    ORDER BY step_order ASC
+                    LIMIT 1
+                """, (plan_id, step_id, branch_version))
+                row = cursor.fetchone()
+                if row:
+                    return row["status"]
+                cursor.execute(
+                    "SELECT status FROM steps WHERE plan_id = ? AND step_id = ?",
+                    (plan_id, step_id),
+                )
+                row = cursor.fetchone()
+                return row["status"] if row else None
+        except Exception as e:
+            logger.exception("查询步骤生效状态失败: {}", e)
+            raise DatabaseError(f"查询步骤生效状态失败: {e}") from e
+
+    def mark_step_tree_skipped(self, plan_id: str, step_id: str, executed_at: datetime = None) -> bool:
+        """
+        把指定步骤及其所有未废弃后代（回滚克隆沿 parent_step_id 链）标记为 Skipped。
+
+        跳过的语义是「这个步骤不再执行」：克隆行与原步骤共用执行语义但 id 不同，
+        只改原 id 会让活动分支上的克隆照常执行，跳过形同虚设。
+        """
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE steps SET status = ?, executed_at = COALESCE(?, executed_at) "
+                    "WHERE plan_id = ? AND step_id = ?",
+                    (StepStatus.SKIPPED.value, executed_at.isoformat() if executed_at else None,
+                     plan_id, step_id),
+                )
+                frontier = [step_id]
+                while frontier:
+                    placeholders = ",".join("?" * len(frontier))
+                    cursor.execute(
+                        f"UPDATE steps SET status = ?, executed_at = COALESCE(?, executed_at) "
+                        f"WHERE plan_id = ? AND parent_step_id IN ({placeholders}) AND is_obsolete = 0",
+                        [StepStatus.SKIPPED.value,
+                         executed_at.isoformat() if executed_at else None, plan_id] + frontier,
+                    )
+                    if cursor.rowcount == 0:
+                        break
+                    cursor.execute(
+                        f"SELECT step_id FROM steps WHERE plan_id = ? "
+                        f"AND parent_step_id IN ({placeholders}) AND is_obsolete = 0",
+                        [plan_id] + frontier,
+                    )
+                    frontier = [r["step_id"] for r in cursor.fetchall()]
+                return True
+        except Exception as e:
+            logger.exception("标记跳过失败: {}", e)
+            raise DatabaseError(f"标记跳过失败: {e}") from e
+
     def update_step(self, step_id: str, status: str, outputs: Dict[str, Any] = None, executed_at: datetime = None, retry_count: Optional[int] = None) -> bool:
         """
         更新步骤状态。
 
         Returns:
             True  — 命中并更新了数据行
-            False — step_id 不存在、状态值非法或写入异常
+            False — step_id 不存在或状态值非法（未命中，非故障）
 
+        数据库异常（SQL 失败、连接损坏等）抛出 DatabaseError，不再静默吞掉。
         调用方必须检查返回值。忽略它会导致「日志显示成功、DB 状态未变」的静默失败。
         """
         # 校验状态值，避免写入脏数据
@@ -518,8 +682,8 @@ class Database:
 
                 return cursor.rowcount > 0
         except Exception as e:
-            logger.error("更新步骤状态失败: {}", e)
-            return False
+            logger.exception("更新步骤状态失败: {}", e)
+            raise DatabaseError(f"更新步骤状态失败: {e}") from e
 
     def update_step_state_machine(
         self,
@@ -569,8 +733,8 @@ class Database:
                 ))
                 return cursor.rowcount > 0
         except Exception as e:
-            logger.error("更新步骤状态机状态失败: {}", e)
-            return False
+            logger.exception("更新步骤状态机状态失败: {}", e)
+            raise DatabaseError(f"更新步骤状态机状态失败: {e}") from e
 
     def add_step_event(self, step_id: str, plan_id: str, event_type: str, event_data: Dict[str, Any] = None, branch_version: int = 1) -> bool:
         """
@@ -592,8 +756,8 @@ class Database:
                 ))
                 return True
         except Exception as e:
-            logger.error("写入 step_event 失败: {}", e)
-            return False
+            logger.exception("写入 step_event 失败: {}", e)
+            raise DatabaseError(f"写入 step_event 失败: {e}") from e
 
     def get_step_events(self, plan_id: str, step_id: str = None, branch_version: int = None) -> List[Dict[str, Any]]:
         """获取计划/步骤的事件流，用于回溯与可视化。"""
@@ -612,8 +776,8 @@ class Database:
                 cursor.execute(query, params)
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
-            logger.error("查询 step_events 失败: {}", e)
-            return []
+            logger.exception("查询 step_events 失败: {}", e)
+            raise DatabaseError(f"查询 step_events 失败: {e}") from e
 
     def get_next_runnable_step(self, plan_id: str, branch_version: int = 1, resume_from_step_id: str = None):
         """
@@ -640,8 +804,8 @@ class Database:
                 row = cursor.fetchone()
                 return dict(row) if row else None
         except Exception as e:
-            logger.error("获取下一个可运行步骤失败: {}", e)
-            return None
+            logger.exception("获取下一个可运行步骤失败: {}", e)
+            raise DatabaseError(f"获取下一个可运行步骤失败: {e}") from e
 
     def mark_steps_obsolete(self, plan_id: str, after_step_id: str, branch_version: int) -> int:
         """
@@ -662,25 +826,37 @@ class Database:
                 """, (plan_id, branch_version, plan_id, after_step_id))
                 return cursor.rowcount
         except Exception as e:
-            logger.error("标记 obsolete 失败: {}", e)
-            return 0
+            logger.exception("标记 obsolete 失败: {}", e)
+            raise DatabaseError(f"标记 obsolete 失败: {e}") from e
 
     def clone_steps_from(self, plan_id: str, after_step_id: str, new_branch_version: int) -> bool:
         """
         从指定 step 之后克隆后续步骤到新 branch，保留原 branch 用于对比。
+        只克隆「当前活动分支」上未废弃的步骤——否则多分支计划每次回滚
+        都会把历史分支的同序号步骤再克隆一遍，产生重复步骤。
         """
         try:
             with closing(self._get_connection()) as conn, conn:
                 cursor = conn.cursor()
                 cursor.execute("""
+                    SELECT current_branch FROM plans WHERE plan_id = ?
+                """, (plan_id,))
+                plan_row = cursor.fetchone()
+                source_branch = plan_row["current_branch"] if plan_row and plan_row["current_branch"] else 1
+                cursor.execute("""
                     SELECT * FROM steps
-                    WHERE plan_id = ? AND step_order > (
-                        SELECT step_order FROM steps WHERE plan_id = ? AND step_id = ?
-                    )
+                    WHERE plan_id = ?
+                      AND branch_version = ?
+                      AND is_obsolete = 0
+                      AND step_order > (
+                          SELECT step_order FROM steps WHERE plan_id = ? AND step_id = ?
+                      )
                     ORDER BY step_order ASC
-                """, (plan_id, plan_id, after_step_id))
+                """, (plan_id, source_branch, plan_id, after_step_id))
                 rows = cursor.fetchall()
                 for row in rows:
+                    # step_id 是主键，克隆必须生成新 id；
+                    # parent_step_id 保留原步骤 id 以维持血缘（get_plan 展示层据此映射）。
                     cursor.execute("""
                         INSERT INTO steps (
                             step_id, plan_id, segment_id, step_order,
@@ -691,7 +867,7 @@ class Database:
                         )
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        str(row["step_id"]),
+                        str(uuid.uuid4()),
                         str(row["plan_id"]),
                         str(row["segment_id"]),
                         row["step_order"],
@@ -713,8 +889,8 @@ class Database:
                     ))
                 return True
         except Exception as e:
-            logger.error("克隆步骤失败: {}", e)
-            return False
+            logger.exception("克隆步骤失败: {}", e)
+            raise DatabaseError(f"克隆步骤失败: {e}") from e
 
     def update_plan(self, plan_id: str, status: str) -> bool:
         """
@@ -747,8 +923,71 @@ class Database:
                 ))
                 return cursor.rowcount > 0
         except Exception as e:
-            logger.error("更新计划状态机状态失败: {}", e)
+            logger.exception("更新计划状态机状态失败: {}", e)
+            raise DatabaseError(f"更新计划状态机状态失败: {e}") from e
+
+    def claim_plan_status(self, plan_id: str, to_status: str, from_statuses: tuple) -> bool:
+        """
+        原子认领计划状态：UPDATE plans SET status=? WHERE plan_id=? AND status IN (...)。
+
+        把「读当前状态 → 判断 → 写新状态」的 check-then-set 竞态收敛为单条 UPDATE，
+        用于消除 暂停/执行(恢复) 并发时互相覆盖状态的竞态：
+        只有两个操作都以条件 UPDATE 抢占，才能保证同一个计划只被一个操作认领。
+
+        Returns:
+            True  — 认领成功（计划当前状态属于 from_statuses，已被置为 to_status）
+            False — 未命中：plan_id 不存在、当前状态不属于 from_statuses、
+                    to_status 非法（与 update_plan_state_machine 一致，告警返回）、
+                    from_statuses 为空
+
+        SQL 失败（连接损坏等）抛 DatabaseError。
+        """
+        valid = {s.value for s in PlanStatus}
+        if to_status not in valid:
+            logger.warning("拒绝非法计划状态 {!r}，合法值: {}", to_status, sorted(valid))
             return False
+        if not from_statuses:
+            logger.warning("claim_plan_status 未提供来源状态集合，无法认领: plan_id={}", plan_id)
+            return False
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                placeholders = ",".join("?" * len(from_statuses))
+                cursor.execute(
+                    f"UPDATE plans SET status = ? "
+                    f"WHERE plan_id = ? AND status IN ({placeholders})",
+                    [to_status, plan_id, *from_statuses],
+                )
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.exception("认领计划状态失败: {}", e)
+            raise DatabaseError(f"认领计划状态失败: {e}") from e
+
+    def clear_plan_checkpoint(self, plan_id: str) -> bool:
+        """
+        清除计划的恢复断点（resume_from_step_id / paused_at_step_id 置 NULL）。
+
+        恢复执行认领 Running 成功后调用：断点此刻已被本次恢复消费
+        （plan.resume_from_step_id 已带入执行循环），留在库中只会成为过期数据。
+
+        Returns:
+            True  — 命中并清除
+            False — plan_id 不存在（未命中，非故障）
+
+        SQL 失败抛 DatabaseError。
+        """
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE plans SET resume_from_step_id = NULL, paused_at_step_id = NULL "
+                    "WHERE plan_id = ?",
+                    (plan_id,),
+                )
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.exception("清除计划断点失败: {}", e)
+            raise DatabaseError(f"清除计划断点失败: {e}") from e
 
     def recover_orphaned_executions(self) -> int:
         """
@@ -786,8 +1025,8 @@ class Database:
 
                 return len(orphaned_plan_ids)
         except Exception as e:
-            logger.error("孤儿任务恢复失败: {}", e)
-            return 0
+            logger.exception("孤儿任务恢复失败: {}", e)
+            raise DatabaseError(f"孤儿任务恢复失败: {e}") from e
     
     def log(self, level: str, message: str, context: Dict[str, Any] = None, service: str = None):
         """记录日志"""
@@ -808,6 +1047,8 @@ class Database:
 
                 conn.commit()
         except Exception as e:
+            # 观察性写入，刻意保持静默：日志表写入失败不应中断业务流程，
+            # 且本方法可能在异常处理路径中被调用，抛错会造成连锁失败。
             logger.error("记录日志失败: {}", e)
 
     def save_audit_log(
@@ -870,8 +1111,8 @@ class Database:
                 rows = cursor.fetchall()
                 return [dict(row) for row in rows]
         except Exception as e:
-            logger.error("查询审计日志失败: {}", e)
-            return []
+            logger.exception("查询审计日志失败: {}", e)
+            raise DatabaseError(f"查询审计日志失败: {e}") from e
 
 
 # 全局数据库实例

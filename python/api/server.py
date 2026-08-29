@@ -22,6 +22,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import yaml
 
@@ -29,10 +30,10 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm_client import LLMClient, Message
-from designer import DefaultDesigner
+from designer import DefaultDesigner, GenerationError
 from executor import DefaultExecutor
 from tools import ToolRegistry
-from database import Database
+from database import Database, DatabaseError
 from models import DesignDocument, ExecutionPlan, PlanSegment, Step, StepStatus, PlanStatus
 from api.auth import load_token, require_token, verify_token
 print("[SERVER MODULE LOADED]", __file__)
@@ -227,7 +228,41 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-API-Token"],
 )
 
+# ===== 全局异常处理 =====
+# DatabaseError / GenerationError 统一转换为带 code 的 JSON 响应：
+# - 数据库故障 → 500 database_error
+# - LLM 生成失败（上游依赖故障）→ 502 generation_failed
+# 端点内的 HTTPException(404/409/500) 分支不受影响，仍然原样抛出。
+
+@app.exception_handler(DatabaseError)
+async def _database_error_handler(request, exc):
+    return JSONResponse(status_code=500, content={"detail": str(exc), "code": "database_error"})
+
+
+@app.exception_handler(GenerationError)
+async def _generation_error_handler(request, exc):
+    return JSONResponse(status_code=502, content={"detail": str(exc), "code": "generation_failed"})
+
 # ===== WebSocket 日志广播 =====
+
+async def _send_to_clients(payload: dict) -> None:
+    """把 payload 发送给所有 WebSocket 客户端，并移除发送失败的连接。
+
+    单个客户端发送失败（连接已断开等）只摘除该连接，不中断对其余客户端的
+    广播；不能用裸 except——那会连取消信号（CancelledError）一起吞掉。
+    """
+    disconnected = []
+    for client in state.websocket_clients:
+        try:
+            await client.send_json(payload)
+        except Exception:
+            # 连接已断开等发送失败；不能用裸 except——那会连取消信号一起吞掉
+            disconnected.append(client)
+
+    # 移除断开的客户端
+    for client in disconnected:
+        state.websocket_clients.remove(client)
+
 
 async def broadcast_log(message: str, level: str = "info"):
     """向所有 WebSocket 客户端广播日志"""
@@ -236,17 +271,32 @@ async def broadcast_log(message: str, level: str = "info"):
         "level": level,
         "message": message
     }
-    
-    disconnected = []
-    for client in state.websocket_clients:
-        try:
-            await client.send_json(log_data)
-        except:
-            disconnected.append(client)
-    
-    # 移除断开的客户端
-    for client in disconnected:
-        state.websocket_clients.remove(client)
+    await _send_to_clients(log_data)
+
+
+async def broadcast_plan_update(plan_id: str) -> None:
+    """向所有 WebSocket 客户端广播计划状态变更（type=plan_update）。
+
+    载荷取自数据库的最新状态摘要（计划状态 + 未废弃步骤状态），前端据此
+    免轮询刷新计划视图。设计约束：
+    - 计划已消失（摘要为 None）时静默返回——客户端的 30s 轮询兜底覆盖该边界；
+    - 摘要读取失败只记日志不向上抛：广播是观察性副作用，绝不能把执行循环
+      或端点的成功路径打断（与 _send_to_clients 的逐客户端容错一致）。
+    """
+    try:
+        summary = state.database.get_plan_status_summary(str(plan_id))
+    except Exception as e:
+        logger.warning("plan_update 广播跳过（状态摘要读取失败）: {}", e)
+        return
+    if summary is None:
+        return
+    payload = {
+        "type": "plan_update",
+        "plan_id": str(plan_id),
+        "status": summary["status"],
+        "steps": summary["steps"],
+    }
+    await _send_to_clients(payload)
 
 # ===== 格式转换辅助函数 =====
 
@@ -355,6 +405,8 @@ def format_plan_for_frontend(plan) -> dict:
     return {
         "plan_id": str(plan_data.get('plan_id', '')),
         "design_id": str(plan_data.get('design_id', '')),
+        # 计划级权威状态，前端轮询据此驱动暂停/恢复/进度，而非解析日志文本
+        "status": plan_data.get('status') or 'Pending',
         "segments": segments,
         "steps": all_steps,  # Flattened list for easy access
         "created_at": str(plan_data.get('created_at', '')),
@@ -421,6 +473,7 @@ async def create_design(request: DesignRequest):
         }
         
     except Exception as e:
+        logger.exception("生成设计书端点失败: {}", e)
         await broadcast_log(f"设计书生成失败: {str(e)}", "error")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -451,6 +504,7 @@ async def get_designs(limit: int = 10):
             "designs": designs
         }
     except Exception as e:
+        logger.exception("查询设计书列表失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/design/{design_id}", dependencies=[Depends(require_token)])
@@ -468,6 +522,7 @@ async def get_design(design_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("查询设计书失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/design/{design_id}/approve", dependencies=[Depends(require_token)])
@@ -521,6 +576,7 @@ async def approve_design(design_id: str, request: ApprovalRequest):
                 }
             
     except Exception as e:
+        logger.exception("审批设计书端点失败: {}", e)
         await broadcast_log(f"审批失败: {str(e)}", "error")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -528,7 +584,7 @@ async def approve_design(design_id: str, request: ApprovalRequest):
 async def get_plans(limit: int = 10):
     """获取执行计划列表"""
     try:
-        plans_raw = state.database.list_plans(limit)
+        plans_raw = state.database.list_plans(limit=limit)
         plans = []
         for p in plans_raw:
             plans.append({
@@ -542,6 +598,7 @@ async def get_plans(limit: int = 10):
             "plans": plans
         }
     except Exception as e:
+        logger.exception("查询执行计划列表失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/plan/{plan_id}", dependencies=[Depends(require_token)])
@@ -559,6 +616,7 @@ async def get_plan(plan_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("查询执行计划失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/plan/{plan_id}/execute", dependencies=[Depends(require_token)])
@@ -602,12 +660,18 @@ async def execute_plan(plan_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("启动计划执行失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/plan/{plan_id}/pause", dependencies=[Depends(require_token)])
 async def pause_plan(plan_id: str):
-    """暂停正在执行的计划。执行循环会在下一个步骤开始前检测到 Paused 状态并退出。"""
+    """暂停正在执行的计划。执行循环会在下一个步骤开始前检测到 Paused 状态并退出。
+
+    暂停时一次性写入恢复检查点（resume_from_step_id / paused_at_step_id）：
+    状态与断点在同一条 UPDATE 里落库，保证原子性——不会出现「状态已 Paused
+    但断点缺失」的中间态，恢复端点因此总能拿到一致的断点。
+    """
     try:
         plan = state.database.get_plan(plan_id)
         if not plan:
@@ -620,15 +684,62 @@ async def pause_plan(plan_id: str):
                 detail=f"只能暂停 Running/Pending 状态的计划，当前状态: {current_status}",
             )
 
-        if not state.database.update_plan(plan_id, "Paused"):
-            raise HTTPException(status_code=500, detail="暂停失败")
+        branch_version = getattr(plan, 'current_branch', 1) or 1
+        paused_at_step_id, resume_from_step_id = _compute_pause_checkpoint(plan_id, branch_version)
 
+        if paused_at_step_id is None and resume_from_step_id is None:
+            # 当前分支上没有 Running/Pending/Retry 步骤（例如全部已完成）：
+            # update_plan_state_machine 的 COALESCE 语义下不传字段即保留旧断点，
+            # 避免把可能有用的历史断点误清成 NULL。
+            _require_write(
+                state.database.update_plan_state_machine(plan_id, "Paused"),
+                f"计划 {plan_id} 状态 → Paused",
+            )
+        else:
+            # 单条 UPDATE 同时写状态与断点（原子）。个别字段为 None 时
+            # COALESCE 保留旧值（例如存在 Running 步骤但没有 Pending/Retry 步骤）。
+            _require_write(
+                state.database.update_plan_state_machine(
+                    plan_id,
+                    "Paused",
+                    resume_from_step_id=resume_from_step_id,
+                    paused_at_step_id=paused_at_step_id,
+                ),
+                f"计划 {plan_id} 状态 → Paused（含恢复断点）",
+            )
+
+        await broadcast_plan_update(plan_id)
         await broadcast_log(f"计划 {plan_id} 已请求暂停", "info")
         return {"success": True, "message": "暂停请求已发出，将在当前步骤完成后生效"}
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("暂停计划失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _compute_pause_checkpoint(plan_id: str, branch_version: int):
+    """
+    计算暂停检查点，返回 (paused_at_step_id, resume_from_step_id)。
+
+    - paused_at_step_id: 当前分支上第一个 status == Running 的活动步骤（暂停发生地）
+    - resume_from_step_id: 当前分支上第一个 status ∈ (Pending, Retry) 的活动步骤
+      （按 step_order 排序）；没有运行中步骤时它就是第一个未完成步骤。
+
+    找不到返回 None，由调用方决定保留旧断点（COALESCE）。数据库故障沿
+    DatabaseError 向上抛给端点的统一异常处理。
+    """
+    rows = state.database.get_active_steps_snapshot(plan_id, branch_version)
+    paused_at = next(
+        (str(r["step_id"]) for r in rows if r["status"] == StepStatus.RUNNING.value),
+        None,
+    )
+    resume_from = next(
+        (str(r["step_id"]) for r in rows
+         if r["status"] in (StepStatus.PENDING.value, StepStatus.RETRY.value)),
+        None,
+    )
+    return paused_at, resume_from
 
 
 @app.post("/api/plan/{plan_id}/resume", dependencies=[Depends(require_token)])
@@ -660,30 +771,61 @@ async def resume_plan(plan_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("恢复计划失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/plan/{plan_id}/skip-step/{step_id}", dependencies=[Depends(require_token)])
 async def skip_step(plan_id: str, step_id: str):
-    """把指定步骤标记为 Skipped。正在进行中的执行循环会在避开该步骤时直接跳过不执行。"""
+    """把指定步骤标记为 Skipped。正在进行中的执行循环会在避开该步骤时直接跳过不执行。
+
+    守卫：
+    - 计划已进入终态（Completed/Failed/RolledBack）时拒绝跳过；
+    - 按步骤的「生效状态」判断——回滚后活动行是克隆行（parent_step_id 指向原 id），
+      生效状态取活动克隆行，无克隆才回落到原行；生效状态非 Pending/Retry 拒绝跳过。
+    """
     try:
         plan = state.database.get_plan(plan_id)
         if not plan:
             raise HTTPException(status_code=404, detail="执行计划不存在")
 
+        current_status = state.database.get_plan_status(plan_id)
+        if current_status in ("Completed", "Failed", "RolledBack"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"计划已结束（当前状态: {current_status}），无法跳过步骤",
+            )
+
         steps = state.database.get_steps(plan_id)
         if not any(s["step_id"] == step_id for s in steps):
             raise HTTPException(status_code=404, detail="步骤不存在")
 
-        if not state.database.update_step(step_id=step_id, status="Skipped", executed_at=datetime.now()):
+        branch_version = getattr(plan, 'current_branch', 1) or 1
+        effective_status = state.database.get_effective_step_status(plan_id, step_id, branch_version)
+        if effective_status is None:
+            # 存在性检查已通过，这里兜底（理论上不可达）
+            raise HTTPException(status_code=404, detail="步骤不存在")
+        if effective_status not in ("Pending", "Retry"):
+            raise HTTPException(status_code=409, detail="步骤已在执行或已完成，无法跳过")
+
+        # 跳过需沿克隆血缘传播：活动分支上的克隆行若保持 Pending，执行时会照常运行
+        if not state.database.mark_step_tree_skipped(plan_id, step_id, executed_at=datetime.now()):
             raise HTTPException(status_code=500, detail="跳过失败")
 
+        await broadcast_plan_update(plan_id)
         await broadcast_log(f"步骤 {step_id} 已被手动跳过", "info")
         return {"success": True, "message": "步骤已标记为跳过"}
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("跳过步骤失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _require_write(ok: bool, what: str) -> None:
+    """状态写入必须成功；False（未命中/非法状态）与异常同样致命，向上抛给外层统一清理。"""
+    if not ok:
+        raise RuntimeError(f"状态写入失败: {what}")
 
 
 def _persist_step_status(
@@ -811,12 +953,14 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
         )
         if not state.database.add_step_event(step_id, plan_id, "success", {"duration_ms": duration_ms}):
             logger.warning("step_event success 写入失败: {}", step_id)
+        result["duration_ms"] = duration_ms
         return result
 
     # 仅记录 failed 事件，不写入 Failed 状态，留给调用方在重试耗尽后统一写入
     failure_reason = error or check_status or "unknown"
     if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": blocked, "duration_ms": duration_ms}):
         logger.warning("step_event failed 写入失败: {}", step_id)
+    result["duration_ms"] = duration_ms
     return result
 
 
@@ -832,7 +976,51 @@ async def execute_plan_background(plan, resume: bool = False):
     print(f"[BG] STARTED plan={plan.plan_id} resume={resume}", flush=True)
     try:
         debug_log(f"execute_plan_background STARTED for plan {plan.plan_id} (resume={resume})")
-        state.database.update_plan_state_machine(str(plan.plan_id), "Running")
+        # 原子认领：把「读状态→判断→写 Running」收敛为单条条件 UPDATE，
+        # 消除 /pause 与 /execute(或 /resume) 并发时的状态覆盖竞态。
+        # - execute：从除 Paused 外的全部可执行状态认领——计划若在任务排队期间被暂停，
+        #   认领必然失败，执行绝不会把 Paused 翻成 Running（暂停被无声吞掉的竞态）。
+        #   Completed/RolledBack 在列以保持「重跑已完成计划」「回滚后重跑」可用。
+        # - resume：只从 Paused 认领。
+        if resume:
+            claim_from = (PlanStatus.PAUSED.value,)
+        else:
+            claim_from = (
+                PlanStatus.PENDING.value,
+                PlanStatus.APPROVED.value,
+                PlanStatus.FAILED.value,
+                PlanStatus.COMPLETED.value,
+                PlanStatus.ROLLED_BACK.value,
+            )
+        claimed = state.database.claim_plan_status(str(plan.plan_id), "Running", claim_from)
+        if not claimed:
+            # 认领失败 = 状态已被并发操作改变（被暂停 / 已被另一个任务认领 Running /
+            # 状态在排队期间变化）。此时绝不标记 Failed：Paused 归暂停逻辑所有，
+            # 已是 Running 说明另一个任务合法拥有执行权，把计划打成 Failed 会
+            # 覆盖别人的合法状态。优雅退出即可，finally 会释放 current_execution。
+            current_status = state.database.get_plan_status(str(plan.plan_id))
+            debug_log(f"Plan {plan.plan_id} claim Running failed (resume={resume}, current={current_status}), exiting gracefully")
+            if current_status == PlanStatus.PAUSED.value:
+                await broadcast_log("计划已暂停，跳过执行", "info")
+            else:
+                await broadcast_log(
+                    f"计划状态已变化（当前: {current_status}），跳过执行", "info"
+                )
+            return
+
+        await broadcast_plan_update(str(plan.plan_id))
+        if resume:
+            # 断点已随认领成功被本次恢复消费（plan.resume_from_step_id 已带入执行循环），
+            # 此刻清除库中检查点。顺序必须是先认领后清除：认领失败时断点仍在，
+            # 下次恢复仍可使用。清除失败不使恢复失败——残留的过期断点是良性的：
+            # 它只影响下次 resume 的起点，且显式 resume 路径取到的步骤若已
+            # Success/Skipped 会被执行循环跳过；静默吞掉异常仅记日志。
+            try:
+                if not state.database.clear_plan_checkpoint(str(plan.plan_id)):
+                    logger.warning("清除恢复断点未命中（计划可能已不存在），已忽略: {}", plan.plan_id)
+            except Exception as clear_exc:
+                logger.exception("清除恢复断点失败（忽略，不影响本次恢复）: {}", clear_exc)
+
         print(f"[BG] plan={plan.plan_id} status=Running", flush=True)
         await broadcast_log(f"{'恢复' if resume else '开始'}执行计划: {plan.plan_id}", "info")
 
@@ -844,7 +1032,11 @@ async def execute_plan_background(plan, resume: bool = False):
             if current_status == "Paused":
                 debug_log(f"Plan {plan.plan_id} is Paused, stopping execution loop")
                 await broadcast_log(f"计划 {plan.plan_id} 已暂停", "info")
-                state.database.update_plan_state_machine(str(plan.plan_id), "Paused")
+                _require_write(
+                    state.database.update_plan_state_machine(str(plan.plan_id), "Paused"),
+                    f"计划 {plan.plan_id} 状态 → Paused",
+                )
+                await broadcast_plan_update(str(plan.plan_id))
                 break
 
             step = state.database.get_next_runnable_step(
@@ -853,7 +1045,11 @@ async def execute_plan_background(plan, resume: bool = False):
                 resume_from_step_id=resume_from_step_id,
             )
             if not step:
-                state.database.update_plan_state_machine(str(plan.plan_id), "Completed")
+                _require_write(
+                    state.database.update_plan_state_machine(str(plan.plan_id), "Completed"),
+                    f"计划 {plan.plan_id} 状态 → Completed",
+                )
+                await broadcast_plan_update(str(plan.plan_id))
                 await broadcast_log(f"计划执行完成: {plan.plan_id}", "success")
                 debug_log(f"Plan {plan.plan_id} execution COMPLETED")
                 break
@@ -877,6 +1073,7 @@ async def execute_plan_background(plan, resume: bool = False):
                         executed_at=datetime.now(),
                         outputs=step.get("outputs") or {},
                     )
+                    await broadcast_plan_update(str(plan.plan_id))
                 continue
 
             debug_log(f"Step {step_id}: {step.get('description', '')[:30]}...")
@@ -886,8 +1083,14 @@ async def execute_plan_background(plan, resume: bool = False):
                 msg = f"步骤 {step_id} 状态写入失败（DB 中无此步骤），中止执行"
                 debug_log(f"ABORT: {msg}")
                 await broadcast_log(f"[ERROR] {msg}", "error")
-                state.database.update_plan_state_machine(str(plan.plan_id), "Failed")
+                _require_write(
+                    state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
+                    f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 未命中）",
+                )
+                await broadcast_plan_update(str(plan.plan_id))
                 break
+
+            await broadcast_plan_update(str(plan.plan_id))
 
             max_attempts = getattr(state, "retry_max_attempts", 3)
             backoff_factor = getattr(state, "retry_backoff_factor", 2)
@@ -914,13 +1117,17 @@ async def execute_plan_background(plan, resume: bool = False):
                         step_id=step_id,
                         status=StepStatus.FAILED.value,
                         outputs={"error": error, "check_status": result.get("check_status")},
-                        duration_ms=duration_ms,
+                        duration_ms=result.get("duration_ms"),
                         failure_reason=failure_reason,
                         state_snapshot=result,
                     )
-                    if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": True, "duration_ms": duration_ms}):
+                    if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": True, "duration_ms": result.get("duration_ms")}):
                         logger.warning("step_event failed 写入失败: {}", step_id)
-                    state.database.update_plan_state_machine(str(plan.plan_id), "Failed")
+                    _require_write(
+                        state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
+                        f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 被拦截）",
+                    )
+                    await broadcast_plan_update(str(plan.plan_id))
                     break
 
                 if result.get("check_status") == "failed":
@@ -931,13 +1138,17 @@ async def execute_plan_background(plan, resume: bool = False):
                         step_id=step_id,
                         status=StepStatus.FAILED.value,
                         outputs={"error": error, "check_status": "failed"},
-                        duration_ms=duration_ms,
+                        duration_ms=result.get("duration_ms"),
                         failure_reason=failure_reason,
                         state_snapshot=result,
                     )
-                    if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": False, "duration_ms": duration_ms}):
+                    if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms")}):
                         logger.warning("step_event failed 写入失败: {}", step_id)
-                    state.database.update_plan_state_machine(str(plan.plan_id), "Failed")
+                    _require_write(
+                        state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
+                        f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 校验失败）",
+                    )
+                    await broadcast_plan_update(str(plan.plan_id))
                     break
 
                 if result.get("success"):
@@ -953,25 +1164,31 @@ async def execute_plan_background(plan, resume: bool = False):
                             step_id=step_id,
                             status=StepStatus.FAILED.value,
                             outputs={"error": error, "check_status": check_status},
-                            duration_ms=duration_ms,
+                            duration_ms=result.get("duration_ms"),
                             failure_reason=failure_reason,
                             retry_count=attempt,
                             state_snapshot=result,
                         )
-                        if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": False, "duration_ms": duration_ms, "attempt": attempt}):
+                        if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms"), "attempt": attempt}):
                             logger.warning("step_event failed 写入失败: {}", step_id)
-                        state.database.update_plan_state_machine(str(plan.plan_id), "Failed")
+                        _require_write(
+                            state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
+                            f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 重试耗尽）",
+                        )
+                        await broadcast_plan_update(str(plan.plan_id))
                         break
                     # success=False 且 check_status=unverified: 仍视为完成，继续后续步骤
+                    result["terminal_success"] = True
                     state.database.update_step_state_machine(
                         step_id=step_id,
                         status="Success",
                         outputs={"check_status": check_status, "message": error},
-                        duration_ms=duration_ms,
+                        duration_ms=result.get("duration_ms"),
                         state_snapshot=result,
                     )
-                    if not state.database.add_step_event(step_id, plan_id, "success", {"duration_ms": duration_ms, "note": "unverified treated as success"}):
+                    if not state.database.add_step_event(step_id, plan_id, "success", {"duration_ms": result.get("duration_ms"), "note": "unverified treated as success"}):
                         logger.warning("step_event success 写入失败: {}", step_id)
+                    await broadcast_plan_update(str(plan.plan_id))
                     break
 
                 attempt += 1
@@ -983,14 +1200,21 @@ async def execute_plan_background(plan, resume: bool = False):
                 debug_log(f"Step {step_id} retrying, attempt {attempt}/{max_attempts - 1}, delay={delay}")
                 print(f"[RETRY] step={step_id} attempt={attempt} delay={delay}", flush=True)
                 state.database.update_step_state_machine(step_id=step_id, status="Retry", retry_count=attempt)
-                state.database.add_step_event(step_id, str(plan.plan_id), "retry", {"attempt": attempt, "delay": delay}, branch_version=branch_version)
+                _require_write(
+                    state.database.add_step_event(
+                        step_id, str(plan.plan_id), "retry",
+                        {"attempt": attempt, "delay": delay}, branch_version=branch_version,
+                    ),
+                    f"步骤 {step_id} retry 事件写入",
+                )
+                await broadcast_plan_update(str(plan.plan_id))
                 await asyncio.sleep(delay)
 
             print(f"[AFTER_LOOP] step={step_id} success={result.get('success')} check={result.get('check_status')} attempt={attempt}", flush=True)
             # 明确失败才终止循环继续执行。
             # success=False 是执行失败；check_status="failed" 是校验明确不通过。
             # "unverified" 只表示无法自动校验，不应阻断计划继续。
-            if not result.get("success") or result.get("check_status") == "failed":
+            if (not result.get("success") and not result.get("terminal_success")) or result.get("check_status") == "failed":
                 await broadcast_log(f"[ERROR] 步骤 {step_id} 失败（已重试 {attempt} 次）: {result.get('error')}", "error")
                 break
 
@@ -1004,6 +1228,7 @@ async def execute_plan_background(plan, resume: bool = False):
         debug_log(f"Traceback: {traceback.format_exc()}")
         try:
             state.database.update_plan_state_machine(str(plan.plan_id), "Failed")
+            await broadcast_plan_update(str(plan.plan_id))
         except Exception as inner:
             debug_log(f"update_plan failed during exception handling: {inner}")
         await broadcast_log(f"执行失败: {str(e)}", "error")
@@ -1031,13 +1256,19 @@ async def rollback_plan(plan_id: str, request: Optional[Dict[str, Any]] = None):
         current_branch = getattr(plan, 'current_branch', 1) or 1
         new_branch = current_branch + 1
 
+        # 先克隆到新分支并校验结果，再废弃旧分支步骤——
+        # 任何一步失败都不得留下「步骤已废弃但没有克隆」的破损状态。
+        if not state.database.clone_steps_from(plan_id, target_step_id, new_branch):
+            raise HTTPException(status_code=500, detail="克隆步骤到新分支失败，回滚未执行")
         marked = state.database.mark_steps_obsolete(plan_id, target_step_id, current_branch)
-        state.database.clone_steps_from(plan_id, target_step_id, new_branch)
-        state.database.update_plan_state_machine(
-            plan_id,
-            PlanStatus.PENDING.value,
-            resume_from_step_id=target_step_id,
-            current_branch=new_branch,
+        _require_write(
+            state.database.update_plan_state_machine(
+                plan_id,
+                PlanStatus.PENDING.value,
+                resume_from_step_id=target_step_id,
+                current_branch=new_branch,
+            ),
+            f"计划 {plan_id} 状态 → Pending（回滚到步骤 {target_step_id}，新分支 {new_branch}）",
         )
         state.database.add_step_event(
             target_step_id,
@@ -1046,6 +1277,7 @@ async def rollback_plan(plan_id: str, request: Optional[Dict[str, Any]] = None):
             {"strategy": strategy, "new_branch": new_branch, "marked_obsolete": marked},
             branch_version=new_branch,
         )
+        await broadcast_plan_update(plan_id)
         await broadcast_log(f"计划已回滚到 {target_step_id}，新 branch={new_branch}", "warning")
         return {
             "success": True,
@@ -1057,6 +1289,7 @@ async def rollback_plan(plan_id: str, request: Optional[Dict[str, Any]] = None):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("回滚计划失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/audit-logs", dependencies=[Depends(require_token)])
@@ -1069,6 +1302,7 @@ async def get_audit_logs(limit: int = 100, plan_id: Optional[str] = None):
             "logs": logs
         }
     except Exception as e:
+        logger.exception("查询审计日志失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1099,6 +1333,7 @@ async def get_tools():
             "tools": formatted_tools
         }
     except Exception as e:
+        logger.exception("查询工具列表失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/config", dependencies=[Depends(require_token)])
@@ -1118,6 +1353,7 @@ async def get_config():
             "config": safe_config
         }
     except Exception as e:
+        logger.exception("查询配置失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/config", dependencies=[Depends(require_token)])
@@ -1142,8 +1378,9 @@ async def update_config(request: ConfigUpdateRequest):
             "success": True,
             "message": "配置已保存，重启服务后生效"
         }
-        
+
     except Exception as e:
+        logger.exception("更新配置失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat", dependencies=[Depends(require_token)])
@@ -1174,8 +1411,9 @@ async def chat(request: ChatRequest):
             "success": True,
             "response": response.content
         }
-        
+
     except Exception as e:
+        logger.exception("AI 助手对话失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/restart", dependencies=[Depends(require_token)])

@@ -39,9 +39,31 @@ export interface ToolRequirement {
   quality?: string;
 }
 
+/** 计划状态（与后端 PlanStatus 枚举对应） */
+export type PlanStatus =
+  | 'Draft'
+  | 'Pending'
+  | 'Approved'
+  | 'Running'
+  | 'Paused'
+  | 'Completed'
+  | 'Failed'
+  | 'RolledBack';
+
+/** 步骤状态（与后端 StepStatus 枚举对应） */
+export type StepStatus =
+  | 'Pending'
+  | 'Running'
+  | 'Success'
+  | 'Failed'
+  | 'Retry'
+  | 'Skipped'
+  | 'RolledBack';
+
 export interface ExecutionPlan {
   plan_id: string;
   design_id: string;
+  status?: PlanStatus;
   segments: PlanSegment[];
   created_at?: string;
 }
@@ -58,6 +80,9 @@ export interface Step {
   tool: string;
   inputs: Record<string, any>;
   expected_outputs: string[];
+  status?: StepStatus;
+  outputs?: Record<string, any> | null;
+  executed_at?: string | null;
 }
 
 export interface Tool {
@@ -76,8 +101,42 @@ export interface LogMessage {
   timestamp?: string;
 }
 
+/** WebSocket 推送的计划状态变更事件（type=plan_update） */
+export interface PlanUpdateEvent {
+  type: 'plan_update';
+  plan_id: string;
+  status: PlanStatus;
+  steps: { step_id: string; status: StepStatus }[];
+}
+
+/** 审计日志条目（后端 /api/audit-logs 返回的原始行） */
+export interface AuditLogEntry {
+  audit_id: number;
+  timestamp: string;
+  plan_id: string;
+  step_id: string | null;
+  tool_id: string | null;
+  instruction: string | null;
+  inputs: string | null;
+  success: 0 | 1 | null;
+  blocked: 0 | 1;
+  block_reason: string | null;
+  actor: string | null;
+}
+
 export interface ApiResponse<T = any> {
   success: boolean;
   data?: T;
   error?: string;
+}
+
+/** Toast 通知级别 */
+export type ToastLevel = 'error' | 'warning';
+
+/** Toast 通知（右下角浮出，自动消失） */
+export interface Toast {
+  id: number;
+  level: ToastLevel;
+  message: string;
+  timestamp: string;
 }

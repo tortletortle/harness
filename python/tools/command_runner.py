@@ -120,17 +120,24 @@ class CommandRunner:
                 cwd=cwd,
                 timeout=timeout,
                 capture_output=True,
-                text=True
+                text=False,
             )
-            
+            stdout = (result.stdout or b"").decode("utf-8", errors="replace")
+            stderr = (result.stderr or b"").decode("utf-8", errors="replace")
             return {
                 "success": result.returncode == 0,
                 "message": "命令执行完成" if result.returncode == 0 else "命令执行失败",
                 "returncode": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr
+                "stdout": stdout,
+                "stderr": stderr,
             }
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout
+            stderr = exc.stderr
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode("utf-8", errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
             return {
                 "success": False,
                 "message": f"命令执行超时（{timeout}秒）",

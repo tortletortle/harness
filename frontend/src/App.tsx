@@ -12,9 +12,12 @@ import { AiPanel } from './components/AiPanel';
 import { InputView } from './components/InputView';
 import { DesignView } from './components/DesignView';
 import { PlanView } from './components/PlanView';
+import { ExecutionView } from './components/ExecutionView';
 import { ToolsView } from './components/ToolsView';
 import { HistoryView } from './components/HistoryView';
+import { AuditView } from './components/AuditView';
 import { ConfigView } from './components/ConfigView';
+import { ToastHub } from './components/ToastHub';
 
 function App() {
   const { currentView, addLog, sidebarCollapsed, logPanelCollapsed, aiPanelCollapsed } = useAppStore();
@@ -22,6 +25,10 @@ function App() {
   useEffect(() => {
     apiClient.connectLogs((log) => {
       addLog(log);
+    });
+    // plan_update 推送：只打事件计数，权威状态由 usePlanPolling 全量拉取
+    apiClient.onPlanUpdate((ev) => {
+      useAppStore.getState().notifyPlanEvent(ev.plan_id);
     });
     return () => {
       apiClient.disconnectLogs();
@@ -36,10 +43,14 @@ function App() {
         return <DesignView />;
       case 'plan':
         return <PlanView />;
+      case 'execution':
+        return <ExecutionView />;
       case 'tools':
         return <ToolsView />;
       case 'history':
         return <HistoryView />;
+      case 'audit':
+        return <AuditView />;
       case 'config':
         return <ConfigView />;
       default:
@@ -110,6 +121,9 @@ function App() {
           </>
         )}
       </PanelGroup>
+
+      {/* 全局 Toast 通知（覆盖在面板之上） */}
+      <ToastHub />
     </div>
   );
 }
