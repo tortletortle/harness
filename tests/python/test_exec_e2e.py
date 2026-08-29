@@ -178,6 +178,19 @@ def test_concurrent_execution_and_full_run(server, plan_fixture, workdir):
     has_check = [s.get("outputs", {}).get("check_status") for s in steps if s.get("outputs")]
     assert has_check and all(c is not None for c in has_check), str(has_check)
 
+    # 确认真实 LLM 生成的结构化验收被执行并留下确定性证据，
+    # 不只是工具自报 success。
+    acceptance_results = [
+        s.get("outputs", {}).get("acceptance")
+        for s in steps
+        if s.get("outputs")
+    ]
+    assert acceptance_results and all(r and r.get("status") == "passed" for r in acceptance_results)
+    assert all(
+        all(check.get("passed") for check in r.get("checks", []))
+        for r in acceptance_results
+    )
+
     # 执行完成后可以再次执行（锁已释放）
     code3, d3 = _req(f"/api/plan/{plan_id}/execute", method="POST")
     assert code3 == 200, f"reexecute -> {code3} {d3!r}"

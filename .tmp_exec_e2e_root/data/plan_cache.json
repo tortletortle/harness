@@ -1,25 +1,37 @@
 {
-  "df14507683c182733fb8f787c6e6f247": {
+  "de11b61a11af296f11108313cb47f495": {
     "design": {
-      "plan_id": "a8aca4b0-2a1b-4688-af20-fb18e8cb12f1",
-      "design_id": "58012cec-cb95-46fe-84aa-43610fc65979",
-      "created_at": "2026-08-29T11:04:56.486212",
+      "plan_id": "4289cb4c-202f-439e-a693-fad9b6deeaef",
+      "design_id": "917f870c-2e01-4232-9956-773218a0fbbf",
+      "created_at": "2026-08-29T15:00:37.727296",
       "status": "Pending",
       "segments": [
         {
-          "segment_id": "d13280e0-adef-4e2f-b7da-33c1dc8bb7a9",
-          "description": "创建文本文件",
+          "segment_id": "1a56bdca-697c-4b80-81d8-96a702b47dca",
+          "description": "创建工作目录文件",
           "steps": [
             {
-              "step_id": "3076ea43-c0fb-43ee-8e2e-939c1f519d31",
+              "step_id": "4e391da9-4e1f-4a10-9596-5ef0066805f7",
               "order": 1,
-              "description": "创建a.txt文件",
+              "description": "创建 a.txt 文件",
               "tool": "file_creator",
               "inputs": {
-                "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-137\\verify_p1_workdir0\\a.txt",
+                "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-146\\verify_p1_workdir0\\a.txt",
                 "content": "hello"
               },
               "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-146\\verify_p1_workdir0\\a.txt",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-146\\verify_p1_workdir0\\a.txt",
+                  "text": "hello"
+                }
+              ],
               "outputs": null,
               "status": "Pending",
               "executed_at": null,
@@ -34,15 +46,27 @@
               "is_obsolete": false
             },
             {
-              "step_id": "cc3121d0-0819-4473-95ae-b3996109c0ce",
+              "step_id": "472f295d-d9d4-4999-ba19-a08ebf0c23dd",
               "order": 2,
-              "description": "创建b.txt文件",
+              "description": "创建 b.txt 文件",
               "tool": "file_creator",
               "inputs": {
-                "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-137\\verify_p1_workdir0\\b.txt",
+                "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-146\\verify_p1_workdir0\\b.txt",
                 "content": "world"
               },
               "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-146\\verify_p1_workdir0\\b.txt",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-146\\verify_p1_workdir0\\b.txt",
+                  "text": "world"
+                }
+              ],
               "outputs": null,
               "status": "Pending",
               "executed_at": null,
@@ -60,17 +84,17 @@
         }
       ],
       "implementation_list": [
-        "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-137\\verify_p1_workdir0\\a.txt",
-        "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-137\\verify_p1_workdir0\\b.txt"
+        "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-146\\verify_p1_workdir0\\a.txt",
+        "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-146\\verify_p1_workdir0\\b.txt"
       ],
       "dynamic_insertions": [],
       "current_branch": 1,
       "resume_from_step_id": null,
       "paused_at_step_id": null
     },
-    "timestamp": 1788001496.4872136,
-    "last_access": 1788001496.4872136,
+    "timestamp": 1788015637.728297,
+    "last_access": 1788015637.728297,
     "hits": 0,
-    "user_request": "58012cec-cb95-46fe-84aa-43610fc65979"
+    "user_request": "917f870c-2e01-4232-9956-773218a0fbbf"
   }
 }

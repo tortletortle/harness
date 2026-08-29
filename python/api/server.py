@@ -1295,10 +1295,18 @@ async def execute_plan_background(plan, resume: bool = False):
                     error = result.get("error", "blocked")
                     failure_reason = error
                     debug_log(f"Step {step_id} blocked: {error}")
+                    failure_outputs = {"error": error, "check_status": result.get("check_status")}
+                    if result.get("acceptance_result") is not None:
+                        failure_outputs.update({
+                            "acceptance": result.get("acceptance_result"),
+                            "acceptance_status": result.get("acceptance_status"),
+                            "acceptance_evidence": result.get("acceptance_evidence", []),
+                            "reward": result.get("reward"),
+                        })
                     state.database.update_step_state_machine(
                         step_id=step_id,
                         status=StepStatus.FAILED.value,
-                        outputs={"error": error, "check_status": result.get("check_status")},
+                        outputs=failure_outputs,
                         duration_ms=result.get("duration_ms"),
                         failure_reason=failure_reason,
                         state_snapshot=result,
@@ -1316,10 +1324,18 @@ async def execute_plan_background(plan, resume: bool = False):
                     error = result.get("error", "check failed")
                     failure_reason = error
                     debug_log(f"Step {step_id} check failed: {error}")
+                    failure_outputs = {"error": error, "check_status": "failed"}
+                    if result.get("acceptance_result") is not None:
+                        failure_outputs.update({
+                            "acceptance": result.get("acceptance_result"),
+                            "acceptance_status": result.get("acceptance_status"),
+                            "acceptance_evidence": result.get("acceptance_evidence", []),
+                            "reward": result.get("reward"),
+                        })
                     state.database.update_step_state_machine(
                         step_id=step_id,
                         status=StepStatus.FAILED.value,
-                        outputs={"error": error, "check_status": "failed"},
+                        outputs=failure_outputs,
                         duration_ms=result.get("duration_ms"),
                         failure_reason=failure_reason,
                         state_snapshot=result,
@@ -1344,10 +1360,18 @@ async def execute_plan_background(plan, resume: bool = False):
                     check_status = result.get("check_status")
                     debug_log(f"Step {step_id} retry exhausted")
                     if check_status == "failed" or not result.get("success"):
+                        failure_outputs = {"error": error, "check_status": check_status}
+                        if result.get("acceptance_result") is not None:
+                            failure_outputs.update({
+                                "acceptance": result.get("acceptance_result"),
+                                "acceptance_status": result.get("acceptance_status"),
+                                "acceptance_evidence": result.get("acceptance_evidence", []),
+                                "reward": result.get("reward"),
+                            })
                         state.database.update_step_state_machine(
                             step_id=step_id,
                             status=StepStatus.FAILED.value,
-                            outputs={"error": error, "check_status": check_status},
+                            outputs=failure_outputs,
                             duration_ms=result.get("duration_ms"),
                             failure_reason=failure_reason,
                             retry_count=attempt,

@@ -79,8 +79,16 @@ impl EasApp {
     }
 
     fn select_plan(&mut self, plan_id: String) {
+        if self.selected_plan_id.as_deref() != Some(plan_id.as_str()) {
+            // Do not render or control the previously selected plan while the new
+            // epoch's REST detail is in flight. Same-plan refreshes retain live WS state.
+            self.state.selected = None;
+        }
         self.selected_plan_id = Some(plan_id.clone());
-        self.selected_request_epoch = self.selected_request_epoch.saturating_add(1);
+        self.selected_request_epoch = self
+            .selected_request_epoch
+            .checked_add(1)
+            .expect("计划详情请求 epoch 溢出");
         let epoch = self.selected_request_epoch;
         self.send(Command::SelectPlan { plan_id, epoch });
     }

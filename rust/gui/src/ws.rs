@@ -152,7 +152,13 @@ pub async fn run_ws(
                 if e.to_string().contains("1008") {
                     kind = DisconnectKind::AuthRejected;
                 }
-                if !send_event(&tx, WsEvent::Disconnected(format!("WS 连接失败: {e}"))).await {
+                if !send_event(
+                    &tx,
+                    WsEvent::Disconnected(format!("WS 连接失败: {e}")),
+                    &mut cancel,
+                )
+                .await
+                {
                     return DisconnectKind::Cancelled;
                 }
                 if !should_reconnect(kind) {
@@ -161,7 +167,7 @@ pub async fn run_ws(
             }
             Ok((mut ws, _)) => {
                 backoff_secs = 1; // 连接成功，重置退避
-                if !send_event(&tx, WsEvent::Connected).await {
+                if !send_event(&tx, WsEvent::Connected, &mut cancel).await {
                     return DisconnectKind::Cancelled;
                 }
                 let kind = loop {
@@ -183,7 +189,7 @@ pub async fn run_ws(
                     match item {
                         Ok(Message::Text(text)) => {
                             if let Some(ev) = parse_frame(&text) {
-                                if !send_event(&tx, ev).await {
+                                if !send_event(&tx, ev, &mut cancel).await {
                                     break DisconnectKind::Cancelled; // UI 已退出
                                 }
                             }
@@ -219,7 +225,7 @@ pub async fn run_ws(
                         DisconnectKind::Error => "WS 断开: Error".to_string(),
                         DisconnectKind::Intentional => unreachable!(),
                     };
-                    if !send_event(&tx, WsEvent::Disconnected(text)).await {
+                    if !send_event(&tx, WsEvent::Disconnected(text), &mut cancel).await {
                         return DisconnectKind::Cancelled;
                     }
                 }
