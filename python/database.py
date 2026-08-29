@@ -354,6 +354,40 @@ class Database:
             logger.exception("查询计划状态失败: {}", e)
             raise DatabaseError(f"查询计划状态失败: {e}") from e
 
+    def get_plan_status_summary(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        """
+        轻量级查询计划状态与活动步骤状态，供 plan_update WebSocket 广播使用。
+
+        Returns:
+            {"status": <计划状态>, "steps": [{"step_id": str, "status": str}, ...]}
+            steps 只含未废弃（is_obsolete=0）的活动行——回滚后旧分支的废弃克隆
+            不会混入广播；按 branch_version 升序、step_order 升序排列。
+            计划行不存在返回 None（未命中，非故障）。
+
+        SQL 失败抛 DatabaseError（与其他读操作一致）。
+        """
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT status FROM plans WHERE plan_id = ?", (plan_id,))
+                plan_row = cursor.fetchone()
+                if not plan_row:
+                    return None
+                cursor.execute(
+                    "SELECT step_id, status FROM steps "
+                    "WHERE plan_id = ? AND is_obsolete = 0 "
+                    "ORDER BY branch_version ASC, step_order ASC",
+                    (plan_id,),
+                )
+                steps = [
+                    {"step_id": str(row["step_id"]), "status": row["status"]}
+                    for row in cursor.fetchall()
+                ]
+                return {"status": plan_row["status"], "steps": steps}
+        except Exception as e:
+            logger.exception("查询计划状态摘要失败: {}", e)
+            raise DatabaseError(f"查询计划状态摘要失败: {e}") from e
+
     def get_plan(self, plan_id: str) -> Optional[ExecutionPlan]:
         """获取执行计划"""
         try:
