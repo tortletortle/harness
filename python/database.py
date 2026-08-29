@@ -885,7 +885,7 @@ class Database:
                             parent_step_id, branch_version, state_snapshot,
                             compressed_context, duration_ms, failure_reason, is_obsolete
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         str(uuid.uuid4()),
                         str(row["plan_id"]),

@@ -70,11 +70,19 @@ pub enum WsEvent {
 
 /// 日志是尽力而为事件，内部通道满时跳过；连接/计划事件等待空间，
 /// 避免日志洪峰阻塞或静默丢弃控制相关状态。
-async fn send_event(tx: &mpsc::Sender<WsEvent>, event: WsEvent) -> bool {
+async fn send_event(
+    tx: &mpsc::Sender<WsEvent>,
+    event: WsEvent,
+    cancel: &mut watch::Receiver<bool>,
+) -> bool {
     if matches!(event, WsEvent::Log { .. }) {
         tx.try_send(event).is_ok()
     } else {
-        tx.send(event).await.is_ok()
+        tokio::select! {
+            biased;
+            result = tx.send(event) => result.is_ok(),
+            changed = cancel.changed() => changed.is_ok() && !*cancel.borrow(),
+        }
     }
 }
 

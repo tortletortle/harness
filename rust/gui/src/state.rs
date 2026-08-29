@@ -128,12 +128,10 @@ impl GuiState {
         let plan_id = detail.plan_id.clone();
         if let Some(previous) = self.selected.take() {
             if previous.plan_id == plan_id {
-                let mut live_status = previous.live_status;
-                // REST 返回的状态仅作为没有 WS 覆盖时的 fallback。
-                for step in &detail.steps {
-                    live_status.entry(step.step_id.clone()).or_insert_with(|| parse_step_status(&step.status));
-                }
-                let status = if previous.last_version > 0 {
+                // REST detail 只更新静态详情；已有 live_status 由 WS 提供，
+                // 不能把旧 REST 值伪装成更新鲜的运行态。
+                let live_status = previous.live_status;
+                let status = if previous.has_ws_status {
                     previous.status
                 } else {
                     parse_plan_status(&detail.status)
