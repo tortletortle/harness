@@ -604,6 +604,15 @@ PlanUpdateEvent 增加自增 version
   4. **命名不一致**：manual_tool.py 注册 ID 为 `manual`，易误导模型与开发者。
 - 评测方式：RUN_REAL_LLM_EVAL=1 开启；离线 `_infer_instruction` 映射测试随常规 pytest 运行。
 
+### 上述问题修复记录（2026-08-29）
+
+1. **事件循环**：`OpenAICompatibleProvider.chat` 改为每次调用现开现关 `httpx.AsyncClient`；`close()` 保留为兼容空操作。
+2. **git_commit 自动暂存**：默认 `git add -A` 后提交，返回 `staged_files` 供审计；支持 `auto_stage=False` 关闭；元数据注明"无需先 git_add"。
+3. **路由契约 note 模式**：路由器提示词规定 `tool_id=none` 时 `note` 必填（澄清的结构化通道），评测脚本同步校验——该契约即未来 Capability Router 的输出规格。
+4. **manual 命名统一**：注册 ID 统一为 `manual_tool`，registry 新增 `aliases` 机制保留 `manual` 为兼容别名（旧数据库计划不受影响）；元数据 tool_id 同步更新。
+
+修复后验收：评测工具选型 15/15、指令选型 15/15、契约违规 0/15；后端 273 passed + 1 skipped，真实 LLM E2E 2 passed。
+
 ## 20. 桌面控制台（Rust egui）设计
 
 ### 20.1 定位与后端选择
@@ -741,3 +750,13 @@ PlanUpdateEvent 增加自增 version
   进入 LLM 上下文）。
 - 实现约束：解析必须在各工具内部进行（executor 的 `_infer_instruction`
   依赖原始 path 字符串区分文件/目录），不能前移到执行器。
+
+### 0.8-draft — 2026-08-29
+
+- 新增第 20 节：桌面控制台（Rust egui）设计——定位为 Web 界面的原生补充，
+  直连 Python FastAPI 后端；明确排除 rust/server(:8090) 脚手架；
+  架构采用 eframe UI 线程 + tokio 后台 IO + mpsc 桥接；
+  DTO fork 不复用 eas-common（枚举/契约过期），理由与回收条件入档。
+- 阶段 1（骨架/计划列表/详情/实时状态/日志流/四项控制）同日实现，
+  阶段 2（审批卡片/审计/回滚）与阶段 3（设计链路）待做。
+- 版本号修正：文首长期停留的 0.1-draft 更新为当前实际版本。

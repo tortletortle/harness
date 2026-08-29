@@ -53,6 +53,8 @@ reqwest = { version = "0.11", features = ["json"] }
 # GUI
 eframe = "0.28"
 egui = "0.28"
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
 
 # Config
 config = "0.14"
