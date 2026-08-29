@@ -623,6 +623,12 @@ class DefaultDesigner(Designer):
 3. inputs 必须使用键 `path` 和 `content`，不要用 `file_path` / `file_content`
 4. 确保所有括号都正确闭合
 
+📁 路径语义（重要）：
+- 用户需求中明确给出的路径（无论绝对还是相对）必须**原样使用**，不得改写
+- 用户未指定路径时，使用相对路径（如 "output/report.txt"），
+  相对路径将自动解析到工作区根目录
+- 目录路径以 / 结尾（如 "output/"），文件路径带扩展名
+
 ⚠️ 约束：只使用 file_creator，不要执行任何 shell 命令，不要使用 command_runner / package_installer / git_operator / text_editor / web_fetcher。
 
 🎯 注意事项（重要）：

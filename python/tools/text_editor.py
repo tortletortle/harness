@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from pathlib import Path
 from typing import Any, Dict
 
+from tools.workspace import resolve_workspace_path
+
 # 默认超时（秒）。文件IO一般不会真正卡死，但网络盘/异常磁盘故障时可能长时间阻塞，
 # 这里给每个操作一个上限，避免拖垂整个执行流程。
 DEFAULT_TIMEOUT = 10
@@ -35,7 +37,7 @@ class TextEditor:
         return {
             "tool_id": "text_editor",
             "name": "文本编辑工具",
-            "description": "编辑文本文件内容",
+            "description": "编辑文本文件内容（相对路径基于工作区根目录解析）",
             "category": "generation",
             "version": "1.0.0",
             "capabilities": {
@@ -273,8 +275,14 @@ class TextEditor:
 
     @staticmethod
     def execute(instruction: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        """执行工具指令"""
+        """执行工具指令
+
+        路径语义：相对路径基于工作区根目录解析（tools/workspace.py）。
+        在入口统一解析一次，所有指令实现收到的都是实际路径。
+        """
         timeout = inputs.get("timeout", DEFAULT_TIMEOUT)
+        if "path" in inputs:
+            inputs = {**inputs, "path": str(resolve_workspace_path(inputs["path"]))}
         if instruction == "write" or instruction == "write_file":
             # 兼容 content 或 code 参数
             content = inputs.get("content") or inputs.get("code", "")

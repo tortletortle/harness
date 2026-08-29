@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import subprocess
 
+from tools.workspace import resolve_workspace_root
+
 _DANGEROUS_PATTERNS = [
     r"rm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\s+/(\s|$)",
     r"rm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\s+/\*",
@@ -36,10 +38,8 @@ def _is_dangerous_command(command: str):
 
 
 def _resolve_workspace_root() -> Path:
-    root = os.environ.get("EAS_WORKSPACE_ROOT")
-    if root:
-        return Path(root).resolve()
-    return Path(__file__).resolve().parent.parent.parent
+    """工作区根目录（共享实现见 tools/workspace.py）。"""
+    return resolve_workspace_root()
 
 
 def _is_cwd_allowed(cwd: str) -> bool:
@@ -64,7 +64,7 @@ class CommandRunner:
         return {
             "tool_id": "command_runner",
             "name": "命令执行工具",
-            "description": "执行shell命令",
+            "description": "执行shell命令（工作目录限于工作区内）",
             "category": "other",
             "version": "1.0.0",
             "capabilities": {
@@ -104,14 +104,17 @@ class CommandRunner:
                 return {
                     "success": False,
                     "message": f"命令被拒绝：命中危险命令模式 ({dangerous_match!r})",
-                    "error": "Dangerous command blocked"
+                    "error": "Dangerous command blocked",
+                    # P0-b：结构化拦截标志——上游不再依赖错误文案字符串判断
+                    "blocked": True,
                 }
 
             if cwd and not _is_cwd_allowed(cwd):
                 return {
                     "success": False,
                     "message": f"工作目录不在允许范围内，拒绝执行: {cwd!r}",
-                    "error": "Workdir not allowed"
+                    "error": "Workdir not allowed",
+                    "blocked": True,
                 }
 
             result = subprocess.run(

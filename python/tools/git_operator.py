@@ -1,10 +1,14 @@
 """
 Git操作工具
 用于版本控制操作
+
+路径语义：仓库路径（path）相对时基于工作区根目录解析（tools/workspace.py）。
 """
 
 import subprocess
 from typing import Any, Dict
+
+from tools.workspace import resolve_workspace_path
 
 
 class GitOperator:
@@ -162,6 +166,9 @@ class GitOperator:
     @staticmethod
     def execute(instruction: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """执行工具指令"""
+        # 仓库路径相对时基于工作区根解析（"." 也指向工作区根）
+        if "path" in inputs:
+            inputs = {**inputs, "path": str(resolve_workspace_path(inputs["path"]))}
         if instruction == "git_init":
             return GitOperator.git_init(path=inputs.get("path", "."))
         elif instruction == "git_add":

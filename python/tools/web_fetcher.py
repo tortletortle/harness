@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import urlparse
 
+from tools.workspace import resolve_workspace_path
+
 _ALLOWED_SCHEMES = {"http", "https"}
 _DEFAULT_TIMEOUT = 30  # 秒
 _MAX_DOWNLOAD_SIZE = 200 * 1024 * 1024  # 200MB
@@ -101,10 +103,11 @@ class WebFetcher:
                 return {
                     "success": False,
                     "message": error,
-                    "error": "Invalid or blocked URL"
+                    "error": "Invalid or blocked URL",
+                    "blocked": True
                 }
 
-            file_path = Path(path)
+            file_path = resolve_workspace_path(path)
 
             # 确保父目录存在
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -162,7 +165,8 @@ class WebFetcher:
                 return {
                     "success": False,
                     "message": error,
-                    "error": "Invalid or blocked URL"
+                    "error": "Invalid or blocked URL",
+                    "blocked": True
                 }
 
             req = urllib.request.Request(url, headers={"User-Agent": "EAS-WebFetcher/1.0"})

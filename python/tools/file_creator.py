@@ -1,12 +1,16 @@
 """
 文件创建工具
 用于创建文件和目录
+
+路径语义：相对路径基于工作区根目录解析（见 tools/workspace.py）。
 """
 
 import os
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import Any, Dict
+
+from tools.workspace import resolve_workspace_path
 
 # 默认超时（秒）。文件IO一般不会真正卡死，但网络盘/异常磁盘故障时可能长时间阻塞，
 # 这里给每个操作一个上限，避免拖垂整个执行流程。
@@ -36,7 +40,7 @@ class FileCreator:
         return {
             "tool_id": "file_creator",
             "name": "文件创建工具",
-            "description": "创建文件和目录",
+            "description": "创建文件和目录（相对路径基于工作区根目录解析）",
             "category": "generation",
             "version": "1.0.0",
             "capabilities": {
@@ -68,7 +72,7 @@ class FileCreator:
     def _create_file_impl(path: str, content: str = "", encoding: str = "utf-8") -> Dict[str, Any]:
         """创建文件"""
         try:
-            file_path = Path(path)
+            file_path = resolve_workspace_path(path)
 
             # 确保父目录存在
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,7 +82,7 @@ class FileCreator:
 
             return {
                 "success": True,
-                "message": f"文件创建成功: {path}",
+                "message": f"文件创建成功: {file_path}",
                 "path": str(file_path.absolute()),
                 "size": len(content)
             }
@@ -98,12 +102,12 @@ class FileCreator:
     def _create_directory_impl(path: str, parents: bool = True) -> Dict[str, Any]:
         """创建目录"""
         try:
-            dir_path = Path(path)
+            dir_path = resolve_workspace_path(path)
             dir_path.mkdir(parents=parents, exist_ok=True)
 
             return {
                 "success": True,
-                "message": f"目录创建成功: {path}",
+                "message": f"目录创建成功: {dir_path}",
                 "path": str(dir_path.absolute())
             }
         except Exception as e:

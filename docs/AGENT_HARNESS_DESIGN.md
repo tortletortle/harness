@@ -446,7 +446,111 @@ AgentSession
 - token budget、自动 compact 和 stop reason；
 - 统一事件 envelope。
 
-## 16. 版本变更规则
+## 16. 源码拆解验证：Cline
+
+参考仓库：<https://github.com/cline/cline>（本次核实基于 main 分支 commit `cea134b`）
+
+关键路径：
+
+- `apps/vscode/src/shared/WebviewMessage.ts`、`ExtensionMessage.ts`：webview 与扩展之间的 gRPC 信封协议（request_id、流式、stateVersion 单调递增、epoch 会话围栏）。
+- `sdk/packages/agents/src/agent-runtime.ts`：无状态 AgentRuntime 循环，`prepareToolExecution` → `resolveToolPolicy` → `requestToolApproval` → 工具执行。
+- `apps/vscode/src/sdk/sdk-interaction-coordinator.ts`：审批/提问用"挂起 Promise + 单槽 resolver"实现，turn phase 切到 `awaiting_approval`/`awaiting_followup`，响应到达时 resolve。
+- `sdk/packages/core/src/extensions/tools/`：`createTool` 工厂 + zod schema、9 个默认工具（含 `apply_patch`、`run_commands`、`ask_question`）、executors 限制输出大小和路径范围。
+- `sdk/packages/core/src/extensions/context/compaction.ts`：0.9 触发线、压缩到 0.7、保留最近 20k token；LLM 摘要与确定性压缩双策略；溢出自愈只重试一次。
+- `apps/vscode/src/sdk/sdk-diff-edit-coordinator.ts`：审批前打开只读虚拟 diff 预览（5 秒超时不阻塞审批），批准后写盘。
+- `apps/vscode/src/sdk/sdk-task-control-coordinator.ts`：取消时先同步 bump epoch 再 abort，旧事件按 epoch 丢弃。
+
+### 已验证并保留的设计
+
+1. **工具级审批用挂起 Promise，不用状态位轮询**：EAS 若实现"工具调用前等用户确认"，FastAPI 侧用 `asyncio.Event/Future`，`POST /approve` 时 set，执行协程 await——不需要 DB 轮询，也不必等待步骤边界。
+2. **审批前推送拟写入 diff（只读预览）+ 超时兜底**：预览卡住不阻塞审批本身。
+3. **拒绝理由语义**：拒绝审批时回喂"操作未发生 + 用户附言"的结构化理由，防止模型把拒绝当成"已完成可迭代"。
+4. **事件版本围栏**：`broadcast_plan_update` 应带自增 version，前端只应用更新的；取消时先 bump epoch 再 abort。
+5. **上下文压缩**：turn 前预算投影 + 0.9 触发 + provider 溢出后确定性压缩重试一次（恢复不依赖 LLM 成功）。
+6. **排队消息 queue/steer 双语义**：运行中消息可排队到下一轮或立即注入当前轮。
+7. **纯推送 + 轮询兜底**：plan 快照走 WS 推送（权威执行阶段），30 秒轮询只做兜底。
+
+### 不直接复用的部分
+
+- Cline 的 gRPC/postMessage 协议和 VS Code 宿主结构不适用于 EAS 的 FastAPI+React 形态，只借鉴其信封语义。
+- Cline 是单会话流式循环，崩溃恢复弱于 EAS 的 DB 权威状态机；不替换 EAS 状态机，而是把审批/diff 预览/排队消息/epoch 围架在执行协程内。
+- 自动重试策略：Cline 不做自动 step 重试（避免空转烧 token），EAS 已有有限重试，保留但需上限联动暂停。
+
+### 对 EAS 的首个实现影响
+
+```text
+执行协程内（不改状态机）：
+  工具执行前 → Policy 判断 → 需要审批？
+    → asyncio.Event 挂起 + WS 推送审批卡片(含 diff 预览)
+    → /approve 或 /reject → resolve
+    → 拒绝时回喂结构化拒绝理由
+PlanUpdateEvent 增加自增 version
+暂停时提供"放弃等待长命令、取 partial 输出继续"的出路
+```
+
+## 17. 源码拆解验证：OpenHands
+
+参考仓库：<https://github.com/OpenHands/OpenHands>（经典 Python 架构核实自 tag 0.62.0，commit `7fbb48c`；当前 main 已转型 TS Agent Canvas，Python 后端迁往 software-agent-sdk）
+
+关键路径：
+
+- `events/stream.py`：`EventStream.add_event` 分配 id → 秘密脱敏 → 同步写 FileStore → 独立线程顺序派发给订阅者。事件既是消息总线也是 append-only 持久化日志。
+- `controller/agent_controller.py`：事件驱动（非常驻循环），`_step()` 前检查 `_pending_action` 单飞、`_is_stuck()` 循环检测、ControlFlag 预算；`set_agent_state_to` 状态变更即广播并持久化。
+- `events/action/action.py` + `security/llm/analyzer.py`：Action 声明 `security_risk`（自评+独立复核）；无分析器时置 UNKNOWN（fail-safe），HIGH/UNKNOWN 强制进入 `AWAITING_CONFIRMATION`。
+- `runtime/base.py` + `runtime/impl/action_execution/action_execution_client.py`：Runtime 抽象 + 沙箱内常驻 FastAPI `action_execution_server`，执行入口双重设卡（拒绝执行 AWAITING_CONFIRMATION/REJECTED 的 action）。
+- `controller/state/state.py`：State（事件窗口 + ControlFlag + metrics）pickle 持久化；恢复 = 事件文件全量重放 + pickle 兜底。
+- `memory/condenser/`：Condenser 体系（9 个实现），压缩本身也是事件，可审计可重放。
+- `storage/`：FileStore 极小接口（write/read/list/delete），local/S3/GCS/memory/web_hook 可换。
+
+### 已验证并保留的设计
+
+1. **状态推导自事件，DB 状态仅作缓存**：EAS 的 `step_events` 已是 append-only，但执行循环真值仍靠改写 `steps.status`。恢复时应以事件重放为准——`recover_orphaned_executions` 目前粗暴把 Running→Failed，若以事件重放为准可区分"步骤实际已成功但状态没写完"。
+2. **pending-action 补偿**：进程在"工具已执行、结果未落库"窗口崩溃后，恢复时为 `Running` 步骤补 `step_event('interrupted')` 并强制重跑（OpenHands 在 STOPPED/ERROR 时为未完成 pending action 补 ErrorObservation 保证 tool-call 配对完整），而不是直接标 Failed。
+3. **错误分类驱动状态转移**：限流/网络超时 → Retry 状态自动续跑；安全拦截 → Failed。当前"attempt 计数+指数退避"单策略应升级。
+4. **确认闸门双层防御 + fail-safe**：无分析器 → UNKNOWN → 强制确认；Runtime 执行入口拒绝 AWAITING_CONFIRMATION 的 action。EAS 的拦截靠错误字符串匹配（`executor/__init__.py:161-166` 依赖魔法字符串），应把 blocked 提升为结构化字段并在 executor 外层加第二道守卫。
+5. **状态变更即广播 + 统一领域事件**：在 `update_step_state_machine` 等状态机写入处统一发事件，消除散落的手动 broadcast。
+6. **Runtime 进程隔离是远期蓝图**：shell/浏览器放进独立进程，host 侧只有 HTTP 客户端 + 超时 + 心跳 + 重连。执行不受信代码时采用。
+
+### 不直接复用的部分
+
+- OpenHands 0.62.0 的 pickle 状态、每事件一文件的存储对 SQLite EAS 过重；SQLite 行存储 + step_events 已够用。
+- OpenHands 没有原生文件系统快照/回滚（只有 git 分支 + 对话截断）；**EAS 的 `clone_steps_from` + `branch_version` 血缘回滚比它强，应保留**。
+- Condenser 的 9 种压缩实现不必照搬；先实现 0.9 触发线 + LLM 摘要 + 确定性兜底（Cline 已验证的双策略）。
+
+### 对 EAS 的首个实现影响
+
+```text
+崩溃恢复升级：
+  恢复时重放 step_events → 区分 interrupted/succeeded
+  Running 步骤补 'interrupted' 事件并强制重跑
+
+错误分类：
+  result 增加 retryable 字段（限流/超时 → 自动重试；安全拦截 → Failed）
+
+安全闸门：
+  blocked 从错误字符串提升为结构化 result 字段
+  executor 外层加第二道守卫（对应 OpenHands run_action 双闸）
+```
+
+## 18. 拆解总结与 EAS 改造优先级
+
+五个项目拆解完成后的汇总结论：
+
+| 能力 | 最强参考 | EAS 现状 | 改造优先级 |
+|---|---|---|---|
+| 状态机权威 + 崩溃恢复 | EAS 自身（血缘回滚）+ OpenHands 事件重放 | DB 状态机已强，恢复逻辑粗 | P1：事件重放恢复 |
+| 工具级审批（Promise 挂起） | Cline | 无（只有设计书级审批） | P0：asyncio.Event + /approve |
+| 授权前置（Grant） | Codex CLI | 无（工具内部正则拦截） | P1：Runtime 签发 Grant |
+| blocked 结构化 | OpenHands 双闸 | 错误字符串匹配 | P0：结构化字段 + 外层守卫 |
+| 上下文压缩 | Cline 0.9/0.7 + OpenHands Condenser | 每步 LLM 摘要 | P2：预算投影 + 溢出自愈 |
+| 事件版本围栏 | Cline epoch/stateVersion | broadcast 无版本号 | P1：自增 version |
+| AgentSession/Turn/Attempt | Codex/Goose | Step 一层概念 | P2：概念分层 |
+| MCP 适配 | Goose | 无 | P3：外部扩展适配层 |
+| 运行时进程隔离 | OpenHands action_execution_server | to_thread + wait_for | P3：远期 |
+
+改造顺序原则：**先做 P0（审批 + blocked 结构化，改动小、收益直接），再做 P1（授权、恢复、围栏），最后做概念分层和隔离。**
+
+## 19. 版本变更规则
 
 每次更新本文件时：
 
@@ -457,6 +561,17 @@ AgentSession
 - 源码分析结论必须附项目、路径或链接。
 
 ## 变更记录
+
+### 0.6-draft — 2026-08-29
+
+- 根据 OpenHands 0.62.0 源码验证：事件驱动状态机、pending-action 补偿、错误分类状态转移、确认双闸 + fail-safe、Condenser、Runtime 进程隔离蓝图。
+- 确认 EAS 血缘回滚强于 OpenHands，保留；step_events 应升级为状态推导依据。
+- 新增第 18 节：五项目拆解总结与 P0-P3 改造优先级。
+
+### 0.5-draft — 2026-08-29
+
+- 根据 Cline 源码（commit cea134b）验证：Promise 挂起式工具审批、审批前 diff 预览、拒绝理由语义、epoch/stateVersion 围栏、上下文压缩双策略、queue/steer 排队消息、推送+轮询兜底。
+- 确认 EAS 保留 DB 权威状态机，交互层（审批/预览/排队）架在执行协程内，不替换状态机。
 
 ### 0.4-draft — 2026-08-29
 
@@ -481,3 +596,17 @@ AgentSession
 - 建立工具优先、Agent 即工具、平行协作的初版设计。
 - 定义 WorkGraph、Capability、Grant、Artifact 和 Acceptance 的初步边界。
 - 规定本文件为后续设计迭代的唯一主文档。
+
+### 0.2.1-draft — 2026-08-29：工作区路径语义（已实现）
+
+- **相对路径** → 所有文件类工具（file_creator / text_editor / web_fetcher
+  download / git_operator / package_installer cwd）统一解析到工作区根目录。
+  工作区根由 `EAS_WORKSPACE_ROOT` 指定，未设置时回落到仓库根
+  （共享实现：`python/tools/workspace.py`）。
+- **绝对路径** → 原样使用。自托管环境信任输入，不做白名单沙箱；
+  command_runner 的工作目录白名单属于其自身安全语义，保持不变。
+- **LLM 侧约定**：计划生成提示词要求 path 使用相对路径（目录以 / 结尾、
+  文件带扩展名），工具 metadata 描述同步声明该语义（设计阶段随工具列表
+  进入 LLM 上下文）。
+- 实现约束：解析必须在各工具内部进行（executor 的 `_infer_instruction`
+  依赖原始 path 字符串区分文件/目录），不能前移到执行器。

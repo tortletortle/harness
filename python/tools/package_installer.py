@@ -8,6 +8,8 @@ import shutil
 import subprocess
 from typing import Any, Dict, List
 
+from tools.workspace import resolve_workspace_path
+
 # 只允许合法的包名/版本约束字符，防止命令注入
 # 允许: 字母数字 . _ - + [ ] , 空格(用于extras) 以及版本操作符 = < > ! ~ *
 _SAFE_PACKAGE_RE = re.compile(r"^[A-Za-z0-9._+\-\[\],<>=!~* ]+$")
@@ -76,7 +78,8 @@ class PackageInstaller:
                     return {
                         "success": False,
                         "message": str(e),
-                        "error": "Invalid package name"
+                        "error": "Invalid package name",
+                        "blocked": True,
                     }
                 command = ["pip", "install", *packages]
             else:
@@ -123,7 +126,8 @@ class PackageInstaller:
                     return {
                         "success": False,
                         "message": str(e),
-                        "error": "Invalid package name"
+                        "error": "Invalid package name",
+                        "blocked": True,
                     }
                 command = [npm_exe, "install", *pkg_list]
                 if dev:
@@ -180,10 +184,12 @@ class PackageInstaller:
                 else:
                     packages = [pkg]
             
+            # cwd 相对时基于工作区根解析；'path' 键兼容 Designer 生成的格式
+            raw_cwd = inputs.get("cwd") or inputs.get("path")
             return PackageInstaller.install_npm(
                 packages=packages,
                 package_json=inputs.get("package_json", False),
-                cwd=inputs.get("cwd") or inputs.get("path"),  # 也处理 'path' 键
+                cwd=str(resolve_workspace_path(raw_cwd)) if raw_cwd else None,
                 dev=inputs.get("dev", False)
             )
         else:
