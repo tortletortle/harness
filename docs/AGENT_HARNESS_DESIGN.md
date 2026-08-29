@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`0.8-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2 改造已实施
+- 当前版本：`0.9-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2 改造已实施；工具选型评测达标；薄弱环节补强路线已定
 - 最后更新：2026-08-29
 
 ## 1. 目标
@@ -613,6 +613,29 @@ PlanUpdateEvent 增加自增 version
 
 修复后验收：评测工具选型 15/15、指令选型 15/15、契约违规 0/15；后端 273 passed + 1 skipped，真实 LLM E2E 2 passed。
 
+### 薄弱环节补强路线（2026-08-29 开源方案调研，待实施）
+
+针对三大薄弱环节（授权半个、验收空白、并行为零）的采纳顺序：
+
+**1. AcceptanceRunner（验收器）—— 最优先，纯增量**
+
+- 参考：τ²-bench（sierra-research/tau2-bench）——任务成功的唯一判据是**最终环境状态**与期望一致，完全不看 Agent 自述；pass^k 指标（arXiv:2406.12045）——同一任务 k 次全过才算可靠。
+- 落法：`AcceptanceRunner` 挂在步骤成功后跑确定性检查清单（file_exists / content_contains / exit_code / diff_scope），输出 reward；场景 YAML 定义期望终态；可靠率用 pass^3。LLM-as-judge 只作兜底补充。
+- 堵住的洞：`unverified` 宽松放行。
+
+**2. Grant YAML（授权收尾）**
+
+- 参考：Claude Code 权限语义（声明式 allow/deny 规则 + hooks 只收紧 + OS 沙箱是真边界）；资源级决策外置先不引 OPA，等规则复杂再挂（Vercel AI SDK 已有 OPA 接工具审批的范例；alibaba/open-agent-auth 为 agent 场景的细粒度权限框架）。
+- 落法：Grant = YAML 声明 {allow/deny 规则, 资源 glob, 预算, 过期时间}，glob 匹配用 pathlib 即可；`approval.required_tools` 给非空默认（git/web/安装类）。
+- 关键共识：提示词与 hook 都不是安全边界，沙箱才是。
+
+**3. worktree 并行（parallel-code 模式）—— 最后做**
+
+- 参考：社区共识"别协调、直接隔离"——parallel-code / git-lanes 每个并行 agent 一个 git worktree，完成后审 diff 合并；文件锁只用于必须共享的资源。
+- 落法：`git_operator` 增加 worktree 指令；计划与计划之间各占一个 worktree 天然隔离，计划内写步骤保持串行；`current_execution` 单任务锁由"每 worktree 一个执行权"替代。
+
+实施前提：Grant 和验收器就位之前不拆执行循环做并行——没有资源边界和质量闸门的并行是真危险。
+
 ## 20. 桌面控制台（Rust egui）设计
 
 ### 20.1 定位与后端选择
@@ -695,6 +718,11 @@ PlanUpdateEvent 增加自增 version
 - 源码分析结论必须附项目、路径或链接。
 
 ## 变更记录
+
+### 0.9-draft — 2026-08-29
+
+- 新增 §19"薄弱环节补强路线"：基于开源调研确定三项采纳顺序——AcceptanceRunner（τ²-bench 状态校验 + pass^k）、Grant YAML（Claude Code 权限语义）、worktree 并行（parallel-code 隔离模式）。
+- 明确实施前提：Grant 与验收器就位前不拆执行循环做并行。
 
 ### 0.7-draft — 2026-08-29
 
