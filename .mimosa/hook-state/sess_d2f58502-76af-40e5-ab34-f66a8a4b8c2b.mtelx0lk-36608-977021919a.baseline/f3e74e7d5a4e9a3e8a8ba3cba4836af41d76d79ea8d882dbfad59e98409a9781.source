@@ -1,0 +1,473 @@
+//! GUI 本地 DTO——精确对齐 `python/api/server.py` 的实际 REST 契约。
+//!
+//! 设计决策（docs/AGENT_HARNESS_DESIGN.md §20.4）：不复用 eas-common——
+//! 其 PlanStatus/StepStatus 缺少 Approved/Retry/RolledBack，且 API DTO 对应
+//! 已废弃的 /api/v1 形状。待 eas-common 与 Python 契约对齐后再评估回收。
+
+use serde::de::Deserializer;
+use serde::Deserialize;
+use serde_json::Value;
+
+/// Deserialize a value while treating both an omitted and explicit `null` field
+/// as its type's default. The design endpoint has historically emitted a mix of
+/// missing and null optional sections, so the GUI keeps rendering even when a
+/// provider returns a partial design.
+fn null_to_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// Python PlanStatus 全集（models/__init__.py）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum PlanStatus {
+    Draft,
+    Pending,
+    Approved,
+    Running,
+    Paused,
+    Completed,
+    Failed,
+    RolledBack,
+}
+
+/// Python StepStatus 全集
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum StepStatus {
+    Pending,
+    Running,
+    Success,
+    Failed,
+    Retry,
+    Skipped,
+    RolledBack,
+}
+
+/// 宽松反序列化：未知字符串不炸（向前兼容新状态），只丢精度。
+pub fn parse_plan_status(s: &str) -> PlanStatus {
+    match s {
+        "Draft" => PlanStatus::Draft,
+        "Approved" => PlanStatus::Approved,
+        "Running" => PlanStatus::Running,
+        "Paused" => PlanStatus::Paused,
+        "Completed" => PlanStatus::Completed,
+        "Failed" => PlanStatus::Failed,
+        "RolledBack" => PlanStatus::RolledBack,
+        _ => PlanStatus::Pending,
+    }
+}
+
+pub fn parse_step_status(s: &str) -> StepStatus {
+    match s {
+        "Running" => StepStatus::Running,
+        "Success" => StepStatus::Success,
+        "Failed" => StepStatus::Failed,
+        "Retry" => StepStatus::Retry,
+        "Skipped" => StepStatus::Skipped,
+        "RolledBack" => StepStatus::RolledBack,
+        _ => StepStatus::Pending,
+    }
+}
+
+/// GET /api/plans 列表行
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlanSummary {
+    pub plan_id: String,
+    #[serde(default)]
+    pub design_id: String,
+    #[serde(default)]
+    pub created_at: String,
+}
+
+/// POST/GET /api/design and GET /api/design/{id} formatted design.
+///
+/// The Python formatter has evolved over time and may omit sections or return
+/// null for them.  The GUI intentionally normalizes those cases to empty
+/// values so one malformed optional field cannot make the review unusable.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Design {
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub design_id: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub user_request: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub created_at: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub part1: DesignPart1,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub part2: ToolAssessment,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct DesignPart1 {
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub architecture: Architecture,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub difficulty: Difficulty,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct Architecture {
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub components: Vec<String>,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub data_flow: Vec<String>,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub tech_stack: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct Difficulty {
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub level: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub reasoning: String,
+}
+
+/// A tool shown in either the available or missing list.  `ToolRequirement` is
+/// retained as an alias for callers that use the backend's terminology.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct ToolSummary {
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub tool_id: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub purpose: String,
+    /// Available tools include quality; missing tools generally omit it.
+    #[serde(default)]
+    pub quality: Option<String>,
+}
+
+pub type ToolRequirement = ToolSummary;
+
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct ToolAssessment {
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub available_tools: Vec<ToolSummary>,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub missing_tools: Vec<ToolRequirement>,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub recommendations: Vec<String>,
+}
+
+/// Response variants returned by POST /api/design/{id}/approve.
+#[derive(Debug, Clone)]
+pub enum DesignApprovalResponse {
+    Approved { plan: PlanDetail },
+    Revised { design: Design },
+    Rejected { message: String },
+}
+
+impl<'de> Deserialize<'de> for DesignApprovalResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("设计审批响应必须是 JSON 对象"))?;
+        if object.get("success").and_then(Value::as_bool) != Some(true) {
+            return Err(serde::de::Error::custom("设计审批响应 success 不是 true"));
+        }
+        if let Some(plan) = object.get("plan") {
+            return serde_json::from_value(plan.clone())
+                .map(|plan| Self::Approved { plan })
+                .map_err(serde::de::Error::custom);
+        }
+        if object.get("revised").and_then(Value::as_bool) == Some(true) {
+            let design = object
+                .get("design")
+                .ok_or_else(|| serde::de::Error::custom("修订响应缺少 design"))?;
+            return serde_json::from_value(design.clone())
+                .map(|design| Self::Revised { design })
+                .map_err(serde::de::Error::custom);
+        }
+        if object.get("rejected").and_then(Value::as_bool) == Some(true) {
+            let message = object
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("设计书已拒绝")
+                .to_string();
+            return Ok(Self::Rejected { message });
+        }
+        Err(serde::de::Error::custom("无法识别的设计审批响应变体"))
+    }
+}
+
+/// GET /api/plan/{id} 的步骤（segments 内嵌与顶层 steps 同构）
+#[derive(Debug, Clone, Deserialize)]
+pub struct StepView {
+    pub step_id: String,
+    #[serde(default)]
+    pub order: i64,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tool: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub outputs: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SegmentView {
+    #[serde(default)]
+    pub segment_id: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub steps: Vec<StepView>,
+}
+
+/// GET /api/plan/{id} 响应体（status 为新增的计划级字段）
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlanDetail {
+    pub plan_id: String,
+    #[serde(default)]
+    pub design_id: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub segments: Vec<SegmentView>,
+    #[serde(default)]
+    pub steps: Vec<StepView>,
+}
+
+/// GET /api/status 响应
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServiceStatus {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub llm_providers: Vec<String>,
+    #[serde(default)]
+    pub tools_count: u32,
+    #[serde(default)]
+    pub current_execution: Option<String>,
+}
+
+/// WS plan_update 事件（后端带自增 version 围栏）
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlanUpdateEvent {
+    #[serde(default)]
+    pub plan_id: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub steps: Vec<StepStatusRow>,
+    #[serde(default)]
+    pub version: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StepStatusRow {
+    #[serde(default)]
+    pub step_id: String,
+    #[serde(default)]
+    pub status: String,
+}
+
+/// GET /api/approvals and WS approval_request payload.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ApprovalRequest {
+    pub approval_id: String,
+    pub plan_id: String,
+    pub step_id: String,
+    pub tool_id: String,
+    pub instruction: String,
+    pub inputs: Value,
+    pub created_at: String,
+}
+
+/// WS approval_resolved payload (also returned by approve/reject endpoints).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ApprovalResolved {
+    pub approval_id: String,
+    pub approved: bool,
+}
+
+/// GET /api/audit-logs row. SQLite integer flags intentionally remain integers:
+/// success is tri-state (1/0/NULL), while blocked is 0/1.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct AuditLogEntry {
+    pub audit_id: i64,
+    pub timestamp: String,
+    pub plan_id: Option<String>,
+    pub step_id: Option<String>,
+    pub tool_id: Option<String>,
+    pub instruction: Option<String>,
+    pub inputs: Option<String>,
+    pub success: Option<i64>,
+    pub blocked: i64,
+    pub block_reason: Option<String>,
+    pub actor: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditResult {
+    Success,
+    Failed,
+    Blocked,
+    Unknown,
+}
+
+impl AuditLogEntry {
+    /// Blocked takes precedence over success because a blocked invocation did not run.
+    pub fn result(&self) -> AuditResult {
+        if self.blocked != 0 {
+            AuditResult::Blocked
+        } else {
+            match self.success {
+                Some(1) => AuditResult::Success,
+                Some(0) => AuditResult::Failed,
+                _ => AuditResult::Unknown,
+            }
+        }
+    }
+}
+
+/// POST /api/plan/{id}/rollback success payload.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RollbackResult {
+    pub new_branch: i64,
+    pub resume_from: String,
+    pub strategy: String,
+    pub marked_obsolete: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 真实 API 形状夹具：含全部扩展状态（Approved/Retry/RolledBack），
+    /// eas-common 的枚举在此会反序列化失败——这正是 fork 的理由。
+    #[test]
+    fn parse_plan_detail_with_full_status_set() {
+        let raw = r#"{
+            "plan_id": "p1",
+            "design_id": "d1",
+            "status": "Approved",
+            "segments": [{"segment_id": "s1", "description": "seg", "steps": [
+                {"step_id": "st1", "order": 1, "description": "d1", "tool": "file_creator",
+                 "status": "Retry", "outputs": null},
+                {"step_id": "st2", "order": 2, "description": "d2", "tool": "manual",
+                 "status": "RolledBack", "outputs": {"error": "x"}}
+            ]}],
+            "steps": [
+                {"step_id": "st1", "order": 1, "description": "d1", "tool": "file_creator", "status": "Retry"},
+                {"step_id": "st2", "order": 2, "description": "d2", "tool": "manual", "status": "RolledBack"}
+            ],
+            "created_at": "2026-08-29T00:00:00"
+        }"#;
+        let detail: PlanDetail = serde_json::from_str(raw).expect("解析必须成功");
+        assert_eq!(detail.status, "Approved");
+        assert_eq!(detail.steps.len(), 2);
+        assert_eq!(detail.steps[0].status, "Retry");
+        assert_eq!(detail.steps[1].status, "RolledBack");
+        assert_eq!(parse_plan_status(&detail.status), PlanStatus::Approved);
+        assert_eq!(
+            parse_step_status(&detail.steps[0].status),
+            StepStatus::Retry
+        );
+    }
+
+    #[test]
+    fn parse_design_full_shape_and_null_optional_fields() {
+        let design: Design = serde_json::from_value(serde_json::json!({
+            "design_id": "d1",
+            "user_request": "make a dashboard",
+            "created_at": null,
+            "part1": {
+                "architecture": {
+                    "components": ["web", "api"],
+                    "data_flow": ["web -> api"],
+                    "tech_stack": ["Rust"]
+                },
+                "difficulty": {"level": "medium", "reasoning": "two services"}
+            },
+            "part2": {
+                "available_tools": [{"tool_id": "shell", "purpose": "run commands", "quality": null}],
+                "missing_tools": [{"tool_id": "db", "purpose": "persistence"}],
+                "recommendations": ["add backups"]
+            }
+        }))
+        .unwrap();
+        assert_eq!(design.design_id, "d1");
+        assert_eq!(design.part1.architecture.components.len(), 2);
+        assert_eq!(design.part2.available_tools[0].quality, None);
+        assert_eq!(design.created_at, "");
+
+        let partial: Design = serde_json::from_value(serde_json::json!({
+            "design_id": "d2", "part1": null, "part2": null
+        }))
+        .unwrap();
+        assert_eq!(partial.part1, DesignPart1::default());
+        assert_eq!(partial.part2, ToolAssessment::default());
+    }
+
+    #[test]
+    fn parse_service_status() {
+        let raw = r#"{"status":"running","llm_providers":["bbapi"],"tools_count":7,"current_execution":null}"#;
+        let st: ServiceStatus = serde_json::from_str(raw).unwrap();
+        assert_eq!(st.tools_count, 7);
+        assert!(st.current_execution.is_none());
+    }
+
+    #[test]
+    fn parse_plan_update_event() {
+        let raw = r#"{"type":"plan_update","plan_id":"p1","status":"Running",
+            "steps":[{"step_id":"s1","status":"Running"}],"version":42}"#;
+        let ev: PlanUpdateEvent = serde_json::from_str(raw).unwrap();
+        assert_eq!(ev.version, 42);
+        assert_eq!(ev.steps[0].status, "Running");
+    }
+
+    #[test]
+    fn parse_approval_request_and_resolution() {
+        let request: ApprovalRequest = serde_json::from_value(serde_json::json!({
+            "approval_id": "a1", "plan_id": "p1", "step_id": "s1",
+            "tool_id": "shell", "instruction": "run", "inputs": {"argv": ["x"]},
+            "created_at": "2026-08-29T00:00:00"
+        }))
+        .unwrap();
+        assert_eq!(request.inputs["argv"][0], "x");
+        let resolved: ApprovalResolved = serde_json::from_value(serde_json::json!({
+            "approval_id": "a1", "approved": false
+        }))
+        .unwrap();
+        assert!(!resolved.approved);
+    }
+
+    #[test]
+    fn parse_audit_nulls_and_classify_integer_flags() {
+        let unknown: AuditLogEntry = serde_json::from_value(serde_json::json!({
+            "audit_id": 1, "timestamp": "t", "plan_id": "p", "step_id": null,
+            "tool_id": null, "instruction": null, "inputs": null, "success": null,
+            "blocked": 0, "block_reason": null, "actor": null
+        }))
+        .unwrap();
+        assert_eq!(unknown.result(), AuditResult::Unknown);
+        let blocked: AuditLogEntry = serde_json::from_value(serde_json::json!({
+            "audit_id": 2, "timestamp": "t", "plan_id": "p", "step_id": "s",
+            "tool_id": "t", "instruction": "i", "inputs": "{}", "success": 1,
+            "blocked": 1, "block_reason": "policy", "actor": "a"
+        }))
+        .unwrap();
+        assert_eq!(blocked.result(), AuditResult::Blocked);
+    }
+
+    #[test]
+    fn parse_rollback_result() {
+        let result: RollbackResult = serde_json::from_value(serde_json::json!({
+            "new_branch": 2, "resume_from": "s1", "strategy": "retry", "marked_obsolete": 3
+        }))
+        .unwrap();
+        assert_eq!(result.new_branch, 2);
+        assert_eq!(result.marked_obsolete, 3);
+    }
+}

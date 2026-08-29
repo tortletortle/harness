@@ -4,6 +4,7 @@ FastAPI 服务器
 """
 
 import asyncio
+import inspect
 import json
 import os
 from datetime import datetime
@@ -37,6 +38,7 @@ from database import Database, DatabaseError
 from models import DesignDocument, ExecutionPlan, PlanSegment, Step, StepStatus, PlanStatus
 from api.auth import load_token, require_token, verify_token
 from api.approval import ApprovalManager, ApprovalTimeout
+from authorization import AuthorizationManager
 print("[SERVER MODULE LOADED]", __file__)
 from logging_config import get_logger
 
@@ -89,6 +91,8 @@ class AppState:
         self.retry_backoff_factor: float = 2
         # 工具级审批（P0-a）：高风险工具执行前挂起等待人工批准
         self.approval_manager: ApprovalManager = ApprovalManager()
+        # Runtime 临时 Grant（授权一次步骤调用，执行后撤销）
+        self.authorization_manager: AuthorizationManager = AuthorizationManager()
         # plan_update 广播自增版本号（P1-b）：前端丢弃过期推送，防止乱序覆盖
         self.plan_update_version: int = 0
 
@@ -186,6 +190,14 @@ async def lifespan(app: FastAPI):
             required_tools=approval_cfg.get("required_tools", []),
             timeout_seconds=approval_cfg.get("timeout_seconds", 600),
         )
+
+        # Runtime 临时授权：每个步骤单独签发，默认限制一次工具调用、
+        # 禁止 .env/.git 资源，结束后撤销；不把授权对象放进模型上下文。
+        state.authorization_manager = AuthorizationManager.from_config(
+            state.config.get("authorization", {})
+        )
+        # Executor 通过同一个 manager 执行调用前授权检查。
+        state.executor.authorization_manager = state.authorization_manager
 
         logger.info("EAS 2.0 API 服务启动成功")
 
@@ -1089,9 +1101,59 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
             }
         await broadcast_log(f"[APPROVAL] 步骤 {step_id} 审批通过，继续执行", "info")
 
+    # Runtime Grant：审批（若有）结束后、工具调用前签发一次性授权。
+    # Grant 本体只留在 Runtime 内存；事件只记录 id 与用量摘要，不把授权放入模型上下文。
+    grant = state.authorization_manager.issue_for_step(
+        plan_id=plan_id,
+        step=step_model,
+        subject="executor",
+        approval_required=False,
+    )
+    state.database.add_step_event(
+        step_id, plan_id, "grant_issued",
+        {"grant_id": grant.grant_id, "expires_at": grant.expires_at.isoformat(), "tool_id": tool_id_for_approval},
+        branch_version=step_model.branch_version,
+    )
     started = datetime.utcnow()
-    result = await state.executor.execute_step(step_model)
+    try:
+        # 兼容尚未升级 grant_id 参数的测试/第三方 Executor；正式 DefaultExecutor
+        # 始终走带 Grant 的调用路径。
+        execute_step = state.executor.execute_step
+        if "grant_id" in inspect.signature(execute_step).parameters:
+            result = await execute_step(step_model, grant_id=grant.grant_id)
+        else:
+            result = await execute_step(step_model)
+    finally:
+        state.authorization_manager.revoke(grant.grant_id)
+        state.database.add_step_event(
+            step_id, plan_id, "grant_revoked",
+            {"grant_id": grant.grant_id, "usage": grant.usage()},
+            branch_version=step_model.branch_version,
+        )
     duration_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+    result = dict(result)
+    result.setdefault("grant_id", grant.grant_id)
+    result.setdefault("grant_usage", grant.usage())
+    grant_denied = result.get("blocked_reason") in {
+        "grant_not_found",
+        "grant_revoked",
+        "grant_expired",
+        "tool_not_granted",
+        "resource_denied",
+        "budget_exceeded",
+        "grant_required",
+    }
+    state.database.add_step_event(
+        step_id,
+        plan_id,
+        "grant_denied" if grant_denied else "grant_allowed",
+        {
+            "grant_id": grant.grant_id,
+            "reason": result.get("blocked_reason") if grant_denied else "allowed",
+            "usage": result.get("grant_usage"),
+        },
+        branch_version=step_model.branch_version,
+    )
 
     success = bool(result.get("success"))
     check_status = result.get("check_status")
@@ -1447,8 +1509,9 @@ async def execute_plan_background(plan, resume: bool = False):
         # 防止残留的挂起请求泄漏或被后续计划误 resolve。
         try:
             state.approval_manager.reject_all_for_plan(str(plan.plan_id), "plan execution ended")
-        except Exception as approval_exc:
-            debug_log(f"reject_all_for_plan failed: {approval_exc}")
+            state.authorization_manager.revoke_all_for_plan(str(plan.plan_id))
+        except Exception as runtime_cleanup_exc:
+            debug_log(f"runtime grant cleanup failed: {runtime_cleanup_exc}")
         debug_log(f"execute_plan_background FINISHED for plan {plan.plan_id}")
 
 

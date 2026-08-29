@@ -172,9 +172,14 @@ class Database:
                     success INTEGER,
                     blocked INTEGER NOT NULL DEFAULT 0,
                     block_reason TEXT,
-                    actor TEXT
+                    actor TEXT,
+                    grant_id TEXT
                 )
             """)
+            cursor.execute("PRAGMA table_info(audit_logs)")
+            audit_columns = {row[1] for row in cursor.fetchall()}
+            if "grant_id" not in audit_columns:
+                cursor.execute("ALTER TABLE audit_logs ADD COLUMN grant_id TEXT")
             
             conn.commit()
     
@@ -1126,6 +1131,7 @@ class Database:
         blocked: bool = False,
         block_reason: str = None,
         actor: str = None,
+        grant_id: str = None,
     ) -> bool:
         """
         写入审计日志。每一次工具调用（无论成功/失败/被安全拦截）都应记录，
@@ -1138,8 +1144,8 @@ class Database:
                 cursor.execute("""
                     INSERT INTO audit_logs (
                         timestamp, plan_id, step_id, tool_id, instruction,
-                        inputs, success, blocked, block_reason, actor
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        inputs, success, blocked, block_reason, actor, grant_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     datetime.utcnow().isoformat(),
                     plan_id,
@@ -1151,6 +1157,7 @@ class Database:
                     int(bool(blocked)),
                     block_reason,
                     actor,
+                    grant_id,
                 ))
                 return True
         except Exception as e:

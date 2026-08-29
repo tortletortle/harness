@@ -27,10 +27,7 @@ async fn forward_event(
     ctx: &egui::Context,
     event: GuiEvent,
 ) -> bool {
-    let sent = if matches!(
-        event,
-        GuiEvent::Ws(ws::WsEvent::Log { .. })
-    ) {
+    let sent = if matches!(event, GuiEvent::Ws(ws::WsEvent::Log { .. })) {
         events_tx.try_send(event).is_ok()
     } else {
         events_tx.send(event).await.is_ok()
@@ -95,6 +92,23 @@ async fn supervisor(
                 if let Ok(plans) = poll_api.get_plans(20).await {
                     forward_event(&poll_tx, &poll_ctx, GuiEvent::Plans(plans)).await;
                 }
+                if let Ok(designs) = poll_api.get_designs(20).await {
+                    forward_event(&poll_tx, &poll_ctx, GuiEvent::Designs { designs, epoch: 0 })
+                        .await;
+                }
+                // Approval notifications normally arrive via WS; polling closes the
+                // reconnect/startup gap and also recovers events missed while offline.
+                if let Ok(approvals) = poll_api.get_pending_approvals(None).await {
+                    forward_event(
+                        &poll_tx,
+                        &poll_ctx,
+                        GuiEvent::Approvals {
+                            approvals,
+                            epoch: 0,
+                        },
+                    )
+                    .await;
+                }
                 let current = poll_selected.read().await.clone();
                 if let Some((plan_id, epoch)) = current {
                     let _guard = poll_lock.lock().await;
@@ -135,7 +149,113 @@ async fn supervisor(
                     forward_event(&events_tx, &ctx, GuiEvent::Plans(plans)).await;
                 }
             }
-            Command::SelectPlan { plan_id, epoch } | Command::RefreshPlanDetail { plan_id, epoch } => {
+            Command::RefreshDesigns { epoch } => match api.get_designs(20).await {
+                Ok(designs) => {
+                    forward_event(&events_tx, &ctx, GuiEvent::Designs { designs, epoch }).await;
+                }
+                Err(error) => {
+                    forward_event(
+                        &events_tx,
+                        &ctx,
+                        GuiEvent::DesignError {
+                            message: format!("获取设计书列表失败: {error}"),
+                            epoch,
+                            action: app::DesignErrorAction::List,
+                        },
+                    )
+                    .await;
+                }
+            },
+            Command::SelectDesign { design_id, epoch } => match api.get_design(&design_id).await {
+                Ok(design) => {
+                    forward_event(
+                        &events_tx,
+                        &ctx,
+                        GuiEvent::DesignDetail {
+                            design: Box::new(design),
+                            epoch,
+                        },
+                    )
+                    .await;
+                }
+                Err(error) => {
+                    forward_event(
+                        &events_tx,
+                        &ctx,
+                        GuiEvent::DesignError {
+                            message: format!("获取设计书失败: {error}"),
+                            epoch,
+                            action: app::DesignErrorAction::Detail,
+                        },
+                    )
+                    .await;
+                }
+            },
+            Command::GenerateDesign {
+                user_request,
+                epoch,
+            } => {
+                let design_api = api.clone();
+                let design_tx = events_tx.clone();
+                let design_ctx = ctx.clone();
+                tokio::spawn(async move {
+                    let result = design_api.create_design(&user_request).await;
+                    match result {
+                        Ok(design) => {
+                            forward_event(
+                                &design_tx,
+                                &design_ctx,
+                                GuiEvent::DesignGenerated {
+                                    design: Box::new(design),
+                                    epoch,
+                                },
+                            )
+                            .await;
+                        }
+                        Err(error) => {
+                            forward_event(
+                                &design_tx,
+                                &design_ctx,
+                                GuiEvent::DesignError {
+                                    message: format!("生成设计书失败: {error}"),
+                                    epoch,
+                                    action: app::DesignErrorAction::Generate,
+                                },
+                            )
+                            .await;
+                        }
+                    }
+                });
+            }
+            Command::ApproveDesign {
+                design_id,
+                approved,
+                feedback,
+                epoch,
+            } => {
+                let design_api = api.clone();
+                let design_tx = events_tx.clone();
+                let design_ctx = ctx.clone();
+                tokio::spawn(async move {
+                    let result = design_api
+                        .approve_design(&design_id, approved, feedback.as_deref())
+                        .await
+                        .map_err(|error| error.to_string());
+                    forward_event(
+                        &design_tx,
+                        &design_ctx,
+                        GuiEvent::DesignApprovalResult {
+                            design_id,
+                            approved,
+                            result,
+                            epoch,
+                        },
+                    )
+                    .await;
+                });
+            }
+            Command::SelectPlan { plan_id, epoch }
+            | Command::RefreshPlanDetail { plan_id, epoch } => {
                 *selected.write().await = Some((plan_id.clone(), epoch));
                 let _guard = detail_fetch_lock.lock().await;
                 match api.get_plan(&plan_id).await {
@@ -154,6 +274,114 @@ async fn supervisor(
                         forward_event(&events_tx, &ctx, GuiEvent::Error(e.to_string())).await;
                     }
                 }
+            }
+            Command::RefreshApprovals { plan_id, epoch } => {
+                match api.get_pending_approvals(plan_id.as_deref()).await {
+                    Ok(approvals) => {
+                        forward_event(&events_tx, &ctx, GuiEvent::Approvals { approvals, epoch })
+                            .await;
+                    }
+                    Err(error) => {
+                        forward_event(
+                            &events_tx,
+                            &ctx,
+                            GuiEvent::ApprovalsError {
+                                message: error.to_string(),
+                                epoch,
+                            },
+                        )
+                        .await;
+                    }
+                }
+            }
+            Command::Approve {
+                plan_id,
+                approval_id,
+                comment,
+            } => {
+                let approval_api = api.clone();
+                let approval_tx = events_tx.clone();
+                let approval_ctx = ctx.clone();
+                tokio::spawn(async move {
+                    let result = approval_api
+                        .approve_tool_call(&plan_id, &approval_id, comment.as_deref())
+                        .await
+                        .map_err(|error| error.to_string());
+                    forward_event(
+                        &approval_tx,
+                        &approval_ctx,
+                        GuiEvent::ApprovalResult {
+                            approval_id,
+                            result,
+                        },
+                    )
+                    .await;
+                });
+            }
+            Command::Reject {
+                plan_id,
+                approval_id,
+                comment,
+            } => {
+                let approval_api = api.clone();
+                let approval_tx = events_tx.clone();
+                let approval_ctx = ctx.clone();
+                tokio::spawn(async move {
+                    let result = approval_api
+                        .reject_tool_call(&plan_id, &approval_id, comment.as_deref())
+                        .await
+                        .map_err(|error| error.to_string());
+                    forward_event(
+                        &approval_tx,
+                        &approval_ctx,
+                        GuiEvent::ApprovalResult {
+                            approval_id,
+                            result,
+                        },
+                    )
+                    .await;
+                });
+            }
+            Command::RefreshAudit {
+                plan_id,
+                limit,
+                epoch,
+            } => match api.get_audit_logs(limit, plan_id.as_deref()).await {
+                Ok(logs) => {
+                    forward_event(&events_tx, &ctx, GuiEvent::AuditLogs { logs, epoch }).await;
+                }
+                Err(error) => {
+                    forward_event(
+                        &events_tx,
+                        &ctx,
+                        GuiEvent::AuditError {
+                            message: error.to_string(),
+                            epoch,
+                        },
+                    )
+                    .await;
+                }
+            },
+            Command::Rollback {
+                plan_id,
+                step_id,
+                strategy,
+                epoch,
+            } => {
+                let result = api
+                    .rollback_plan(&plan_id, &step_id, &strategy)
+                    .await
+                    .map_err(|error| error.to_string());
+                forward_event(
+                    &events_tx,
+                    &ctx,
+                    GuiEvent::RollbackResult {
+                        plan_id,
+                        result,
+                        epoch,
+                    },
+                )
+                .await;
             }
             Command::Execute(plan_id) => {
                 let result = api.execute_plan(&plan_id).await.map_err(|e| e.to_string());
@@ -183,7 +411,10 @@ async fn supervisor(
                 .await;
             }
             Command::Skip { plan_id, step_id } => {
-                let result = api.skip_step(&plan_id, &step_id).await.map_err(|e| e.to_string());
+                let result = api
+                    .skip_step(&plan_id, &step_id)
+                    .await
+                    .map_err(|e| e.to_string());
                 forward_event(
                     &events_tx,
                     &ctx,
@@ -196,15 +427,15 @@ async fn supervisor(
                 // WS manager 观察 generation 并负责重启连接。
                 match api.validate_and_set_token(new_token).await {
                     Ok(config) => {
+                        forward_event(&events_tx, &ctx, GuiEvent::TokenApplied(config.token)).await;
+                    }
+                    Err(e) => {
                         forward_event(
                             &events_tx,
                             &ctx,
-                            GuiEvent::TokenApplied(config.token),
+                            GuiEvent::Error(format!("token 校验失败: {e}")),
                         )
                         .await;
-                    }
-                    Err(e) => {
-                        forward_event(&events_tx, &ctx, GuiEvent::Error(format!("token 校验失败: {e}"))).await;
                     }
                 }
             }
@@ -247,19 +478,18 @@ fn spawn_ws_manager(api: Arc<api::ApiClient>, ws_tx: mpsc::Sender<ws::WsEvent>) 
 /// 找不到字体文件时静默跳过——界面退化为方块但不崩溃。
 fn load_cjk_font(ctx: &egui::Context) {
     let candidates = [
-        "C:/Windows/Fonts/msyh.ttc",     // 微软雅黑
-        "C:/Windows/Fonts/simhei.ttf",   // 黑体
-        "C:/Windows/Fonts/simsun.ttc",   // 宋体
+        "C:/Windows/Fonts/msyh.ttc",   // 微软雅黑
+        "C:/Windows/Fonts/simhei.ttf", // 黑体
+        "C:/Windows/Fonts/simsun.ttc", // 宋体
         "/System/Library/Fonts/PingFang.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     ];
     for path in candidates {
         if let Ok(bytes) = std::fs::read(path) {
             let mut fonts = egui::FontDefinitions::default();
-            fonts.font_data.insert(
-                "cjk".into(),
-                egui::FontData::from_owned(bytes).into(),
-            );
+            fonts
+                .font_data
+                .insert("cjk".into(), egui::FontData::from_owned(bytes).into());
             if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
                 family.insert(0, "cjk".into());
             }

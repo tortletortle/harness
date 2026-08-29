@@ -3,12 +3,29 @@
 //! 所有 /api/* 端点要求 Bearer token；失败时优先透传后端中文 detail
 //! （FastAPI {"detail": ...} 格式），与 Web 端 client.ts 的行为一致。
 
-use crate::types::{PlanDetail, PlanSummary, ServiceStatus};
+use crate::types::{
+    ApprovalRequest, ApprovalResolved, AuditLogEntry, Design, DesignApprovalResponse, PlanDetail,
+    PlanSummary, RollbackResult, ServiceStatus,
+};
+use serde::Serialize;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::sync::watch;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CreateDesignRequest<'a> {
+    pub user_request: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DesignApprovalRequest<'a> {
+    pub design_id: &'a str,
+    pub approved: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feedback: Option<&'a str>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiError {
@@ -59,6 +76,19 @@ async fn check(resp: reqwest::Response, fallback: &str) -> Result<reqwest::Respo
         status,
         message: detail,
     })
+}
+
+fn query_escape(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(char::from(byte));
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
 }
 
 fn normalize_base(base: &str) -> Result<String, ApiError> {
@@ -112,10 +142,7 @@ impl ApiClient {
     }
 
     pub fn config(&self) -> RuntimeConfig {
-        self.config
-            .read()
-            .expect("API 配置锁被污染")
-            .clone()
+        self.config.read().expect("API 配置锁被污染").clone()
     }
 
     /// 订阅 base/token 改动；WS 用它来取消当前连接并重启。
@@ -179,13 +206,10 @@ impl ApiClient {
             .http
             .request(method, format!("{base}{path}"))
             .bearer_auth(token);
-        let resp = builder
-            .send()
-            .await
-            .map_err(|e| ApiError {
-                status: 0,
-                message: format!("连接失败: {e}"),
-            })?;
+        let resp = builder.send().await.map_err(|e| ApiError {
+            status: 0,
+            message: format!("连接失败: {e}"),
+        })?;
         check(resp, "请求失败").await
     }
 
@@ -214,9 +238,115 @@ impl ApiClient {
             .await
     }
 
+    async fn post_json<T: serde::Serialize>(
+        &self,
+        path: &str,
+        body: &T,
+    ) -> Result<reqwest::Response, ApiError> {
+        let config = self.config();
+        let resp = self
+            .http
+            .post(format!("{}{path}", config.base))
+            .bearer_auth(&config.token)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| ApiError {
+                status: 0,
+                message: format!("连接失败: {e}"),
+            })?;
+        check(resp, "请求失败").await
+    }
+
     pub async fn get_status(&self) -> Result<ServiceStatus, ApiError> {
         let resp = self.get("/api/status").await?;
         Ok(resp.json().await?)
+    }
+
+    pub async fn create_design(&self, user_request: &str) -> Result<Design, ApiError> {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            success: bool,
+            design: Option<Design>,
+        }
+        let resp = self
+            .post_json("/api/design", &CreateDesignRequest { user_request })
+            .await?;
+        let w: Wrap = resp.json().await?;
+        if !w.success {
+            return Err(ApiError {
+                status: 200,
+                message: "生成设计书失败".into(),
+            });
+        }
+        w.design.ok_or_else(|| ApiError {
+            status: 200,
+            message: "生成设计书响应缺少 design".into(),
+        })
+    }
+
+    pub async fn get_designs(&self, limit: u32) -> Result<Vec<Design>, ApiError> {
+        let resp = self.get(&format!("/api/designs?limit={limit}")).await?;
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            success: bool,
+            #[serde(default)]
+            designs: Vec<Design>,
+        }
+        let w: Wrap = resp.json().await?;
+        if !w.success {
+            return Err(ApiError {
+                status: 200,
+                message: "获取设计书列表失败".into(),
+            });
+        }
+        Ok(w.designs)
+    }
+
+    pub async fn get_design(&self, design_id: &str) -> Result<Design, ApiError> {
+        let resp = self.get(&format!("/api/design/{design_id}")).await?;
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            success: bool,
+            design: Option<Design>,
+        }
+        let w: Wrap = resp.json().await?;
+        if !w.success {
+            return Err(ApiError {
+                status: 200,
+                message: "获取设计书失败".into(),
+            });
+        }
+        w.design.ok_or_else(|| ApiError {
+            status: 200,
+            message: "获取设计书响应缺少 design".into(),
+        })
+    }
+
+    pub async fn approve_design(
+        &self,
+        design_id: &str,
+        approved: bool,
+        feedback: Option<&str>,
+    ) -> Result<DesignApprovalResponse, ApiError> {
+        // The backend requires the body ID and path ID to be identical.  Using
+        // one borrowed argument for both makes that invariant explicit.
+        let resp = self
+            .post_json(
+                &format!("/api/design/{design_id}/approve"),
+                &DesignApprovalRequest {
+                    design_id,
+                    approved,
+                    feedback,
+                },
+            )
+            .await?;
+        resp.json::<DesignApprovalResponse>()
+            .await
+            .map_err(ApiError::from)
     }
 
     pub async fn get_plans(&self, limit: u32) -> Result<Vec<PlanSummary>, ApiError> {
@@ -238,6 +368,151 @@ impl ApiClient {
         }
         let w: Wrap = resp.json().await?;
         Ok(w.plan)
+    }
+
+    pub async fn get_pending_approvals(
+        &self,
+        plan_id: Option<&str>,
+    ) -> Result<Vec<ApprovalRequest>, ApiError> {
+        let path = match plan_id {
+            Some(plan_id) => format!("/api/approvals?plan_id={}", query_escape(plan_id)),
+            None => "/api/approvals".to_string(),
+        };
+        let resp = self.get(&path).await?;
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            success: bool,
+            #[serde(default)]
+            approvals: Vec<ApprovalRequest>,
+        }
+        let w: Wrap = resp.json().await?;
+        if !w.success {
+            return Err(ApiError {
+                status: 200,
+                message: "获取审批列表失败".into(),
+            });
+        }
+        Ok(w.approvals)
+    }
+
+    async fn resolve_tool_call(
+        &self,
+        plan_id: &str,
+        approval_id: &str,
+        action: &str,
+        comment: Option<&str>,
+    ) -> Result<ApprovalResolved, ApiError> {
+        #[derive(serde::Serialize)]
+        struct Body<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            comment: Option<&'a str>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            success: bool,
+            approved: bool,
+        }
+        let resp = self
+            .post_json(
+                &format!("/api/plan/{plan_id}/approval/{approval_id}/{action}"),
+                &Body { comment },
+            )
+            .await?;
+        let w: Wrap = resp.json().await?;
+        if !w.success {
+            return Err(ApiError {
+                status: 200,
+                message: format!("{action}审批失败"),
+            });
+        }
+        Ok(ApprovalResolved {
+            approval_id: approval_id.to_string(),
+            approved: w.approved,
+        })
+    }
+
+    pub async fn approve_tool_call(
+        &self,
+        plan_id: &str,
+        approval_id: &str,
+        comment: Option<&str>,
+    ) -> Result<ApprovalResolved, ApiError> {
+        self.resolve_tool_call(plan_id, approval_id, "approve", comment)
+            .await
+    }
+
+    pub async fn reject_tool_call(
+        &self,
+        plan_id: &str,
+        approval_id: &str,
+        comment: Option<&str>,
+    ) -> Result<ApprovalResolved, ApiError> {
+        self.resolve_tool_call(plan_id, approval_id, "reject", comment)
+            .await
+    }
+
+    pub async fn get_audit_logs(
+        &self,
+        limit: u32,
+        plan_id: Option<&str>,
+    ) -> Result<Vec<AuditLogEntry>, ApiError> {
+        let mut path = format!("/api/audit-logs?limit={limit}");
+        if let Some(plan_id) = plan_id {
+            path.push_str("&plan_id=");
+            path.push_str(&query_escape(plan_id));
+        }
+        let resp = self.get(&path).await?;
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            success: bool,
+            #[serde(default)]
+            logs: Vec<AuditLogEntry>,
+        }
+        let w: Wrap = resp.json().await?;
+        if !w.success {
+            return Err(ApiError {
+                status: 200,
+                message: "获取审计日志失败".into(),
+            });
+        }
+        Ok(w.logs)
+    }
+
+    pub async fn rollback_plan(
+        &self,
+        plan_id: &str,
+        step_id: &str,
+        strategy: &str,
+    ) -> Result<RollbackResult, ApiError> {
+        #[derive(serde::Serialize)]
+        struct Body<'a> {
+            step_id: &'a str,
+            strategy: &'a str,
+        }
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            success: bool,
+            #[serde(flatten)]
+            result: RollbackResult,
+        }
+        let resp = self
+            .post_json(
+                &format!("/api/plan/{plan_id}/rollback"),
+                &Body { step_id, strategy },
+            )
+            .await?;
+        let w: Wrap = resp.json().await?;
+        if !w.success {
+            return Err(ApiError {
+                status: 200,
+                message: "回滚失败".into(),
+            });
+        }
+        Ok(w.result)
     }
 
     async fn control(&self, path: &str, ok_msg: &str) -> ControlResult {
@@ -292,5 +567,70 @@ mod tests {
         let before = api.config();
         assert!(api.validate_and_set_token(String::new()).await.is_err());
         assert_eq!(api.config(), before);
+    }
+
+    #[test]
+    fn design_request_serialization_matches_backend_contract() {
+        assert_eq!(
+            serde_json::to_value(CreateDesignRequest {
+                user_request: "build a service"
+            })
+            .unwrap(),
+            serde_json::json!({"user_request": "build a service"})
+        );
+        assert_eq!(
+            serde_json::to_value(DesignApprovalRequest {
+                design_id: "d1",
+                approved: false,
+                feedback: None,
+            })
+            .unwrap(),
+            serde_json::json!({"design_id": "d1", "approved": false})
+        );
+        assert_eq!(
+            serde_json::to_value(DesignApprovalRequest {
+                design_id: "d1",
+                approved: false,
+                feedback: Some("split the API layer"),
+            })
+            .unwrap(),
+            serde_json::json!({
+                "design_id": "d1",
+                "approved": false,
+                "feedback": "split the API layer"
+            })
+        );
+    }
+
+    #[test]
+    fn approval_response_variants_deserialize() {
+        let approved: DesignApprovalResponse = serde_json::from_value(serde_json::json!({
+            "success": true,
+            "plan": {"plan_id": "p1", "status": "Pending", "segments": [], "steps": []}
+        }))
+        .unwrap();
+        assert!(
+            matches!(approved, DesignApprovalResponse::Approved { plan } if plan.plan_id == "p1")
+        );
+
+        let revised: DesignApprovalResponse = serde_json::from_value(serde_json::json!({
+            "success": true,
+            "revised": true,
+            "design": {"design_id": "d1", "user_request": "updated"}
+        }))
+        .unwrap();
+        assert!(
+            matches!(revised, DesignApprovalResponse::Revised { design } if design.design_id == "d1")
+        );
+
+        let rejected: DesignApprovalResponse = serde_json::from_value(serde_json::json!({
+            "success": true,
+            "rejected": true,
+            "message": "设计书已拒绝"
+        }))
+        .unwrap();
+        assert!(
+            matches!(rejected, DesignApprovalResponse::Rejected { message } if message == "设计书已拒绝")
+        );
     }
 }

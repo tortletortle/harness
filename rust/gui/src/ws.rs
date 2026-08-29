@@ -5,14 +5,12 @@
 //! 拒绝，token 无效，不再重连）、Error（网络/协议错误，按指数退避重连）。
 //! 事件经有界 mpsc 通道送 UI 线程（设计稿 §20.2）。
 
-use crate::types::PlanUpdateEvent;
+use crate::types::{ApprovalRequest, ApprovalResolved, PlanUpdateEvent};
 use futures_util::{SinkExt, StreamExt};
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::{
-    protocol::frame::coding::CloseCode,
-    Error as WsError,
-    Message,
+    protocol::frame::coding::CloseCode, Error as WsError, Message,
 };
 
 /// WS 断开分类（供 UI 提示与重连决策）。
@@ -32,7 +30,10 @@ pub enum DisconnectKind {
 
 /// 是否应继续尝试重连。
 fn should_reconnect(kind: DisconnectKind) -> bool {
-    !matches!(kind, DisconnectKind::Intentional | DisconnectKind::Cancelled | DisconnectKind::AuthRejected)
+    !matches!(
+        kind,
+        DisconnectKind::Intentional | DisconnectKind::Cancelled | DisconnectKind::AuthRejected
+    )
 }
 
 fn classify_close(reason: Option<&str>, code: CloseCode) -> DisconnectKind {
@@ -64,6 +65,8 @@ fn classify_err(e: &WsError) -> DisconnectKind {
 pub enum WsEvent {
     Log { level: String, message: String },
     PlanUpdate(PlanUpdateEvent),
+    ApprovalRequest(ApprovalRequest),
+    ApprovalResolved(ApprovalResolved),
     Connected,
     Disconnected(String),
 }
@@ -219,7 +222,9 @@ pub async fn run_ws(
 
                 if !matches!(kind, DisconnectKind::Intentional) {
                     let text = match kind {
-                        DisconnectKind::AuthRejected => "认证被拒（token 无效），停止重连".to_string(),
+                        DisconnectKind::AuthRejected => {
+                            "认证被拒（token 无效），停止重连".to_string()
+                        }
                         DisconnectKind::Normal => "WS 正常关闭".to_string(),
                         DisconnectKind::Cancelled => "WS 已取消".to_string(),
                         DisconnectKind::Error => "WS 断开: Error".to_string(),
@@ -274,6 +279,14 @@ fn parse_frame(text: &str) -> Option<WsEvent> {
             let ev: PlanUpdateEvent = serde_json::from_value(v).ok()?;
             Some(WsEvent::PlanUpdate(ev))
         }
+        "approval_request" => {
+            let ev: ApprovalRequest = serde_json::from_value(v).ok()?;
+            Some(WsEvent::ApprovalRequest(ev))
+        }
+        "approval_resolved" => {
+            let ev: ApprovalResolved = serde_json::from_value(v).ok()?;
+            Some(WsEvent::ApprovalResolved(ev))
+        }
         _ => None,
     }
 }
@@ -317,6 +330,24 @@ mod tests {
             }
             _ => panic!("应为 PlanUpdate"),
         }
+        let approval = parse_frame(r#"{"type":"approval_request","approval_id":"a1","plan_id":"p1","step_id":"s1","tool_id":"shell","instruction":"run","inputs":{"x":1},"created_at":"t"}"#).unwrap();
+        match approval {
+            WsEvent::ApprovalRequest(ev) => {
+                assert_eq!(ev.approval_id, "a1");
+                assert_eq!(ev.inputs["x"], 1);
+            }
+            _ => panic!("应为 ApprovalRequest"),
+        }
+        let resolved =
+            parse_frame(r#"{"type":"approval_resolved","approval_id":"a1","approved":false}"#)
+                .unwrap();
+        match resolved {
+            WsEvent::ApprovalResolved(ev) => {
+                assert_eq!(ev.approval_id, "a1");
+                assert!(!ev.approved);
+            }
+            _ => panic!("应为 ApprovalResolved"),
+        }
         assert!(parse_frame(r#"{"type":"unknown"}"#).is_none());
         assert!(parse_frame("not json").is_none());
     }
@@ -327,16 +358,19 @@ mod tests {
             classify_close(None, CloseCode::Policy),
             DisconnectKind::AuthRejected
         );
-        assert_eq!(classify_close(None, CloseCode::Normal), DisconnectKind::Normal);
-        assert_eq!(classify_close(None, CloseCode::Abnormal), DisconnectKind::Error);
+        assert_eq!(
+            classify_close(None, CloseCode::Normal),
+            DisconnectKind::Normal
+        );
+        assert_eq!(
+            classify_close(None, CloseCode::Abnormal),
+            DisconnectKind::Error
+        );
     }
 
     #[test]
     fn distinguish_intentional_and_cancelled() {
-        assert_eq!(
-            DisconnectKind::Intentional,
-            DisconnectKind::Intentional
-        );
+        assert_eq!(DisconnectKind::Intentional, DisconnectKind::Intentional);
         assert_ne!(DisconnectKind::Intentional, DisconnectKind::Cancelled);
         assert!(!should_reconnect(DisconnectKind::AuthRejected));
         assert!(!should_reconnect(DisconnectKind::Intentional));
@@ -347,12 +381,10 @@ mod tests {
 
     #[test]
     fn parse_close_frame_payload() {
-        match Message::Close(Some(
-            tokio_tungstenite::tungstenite::protocol::CloseFrame {
-                code: CloseCode::Policy,
-                reason: std::borrow::Cow::Borrowed("invalid token"),
-            },
-        )) {
+        match Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
+            code: CloseCode::Policy,
+            reason: std::borrow::Cow::Borrowed("invalid token"),
+        })) {
             Message::Close(frame) => {
                 let f = frame.unwrap();
                 assert_eq!(f.code, CloseCode::Policy);

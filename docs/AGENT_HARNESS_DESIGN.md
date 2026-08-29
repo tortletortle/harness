@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`0.9-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2 改造已实施；工具选型评测达标；薄弱环节补强路线已定
+- 当前版本：`1.0-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2 与 AcceptanceRunner 第一阶段已实施；工具选型评测达标；Grant/worktree 路线已定
 - 最后更新：2026-08-29
 
 ## 1. 目标
@@ -617,11 +617,12 @@ PlanUpdateEvent 增加自增 version
 
 针对三大薄弱环节（授权半个、验收空白、并行为零）的采纳顺序：
 
-**1. AcceptanceRunner（验收器）—— 最优先，纯增量**
+**1. AcceptanceRunner（验收器）—— 已完成第一阶段**
 
 - 参考：τ²-bench（sierra-research/tau2-bench）——任务成功的唯一判据是**最终环境状态**与期望一致，完全不看 Agent 自述；pass^k 指标（arXiv:2406.12045）——同一任务 k 次全过才算可靠。
-- 落法：`AcceptanceRunner` 挂在步骤成功后跑确定性检查清单（file_exists / content_contains / exit_code / diff_scope），输出 reward；场景 YAML 定义期望终态；可靠率用 pass^3。LLM-as-judge 只作兜底补充。
-- 堵住的洞：`unverified` 宽松放行。
+- 已落地：`python/acceptance_runner.py` 的确定性检查清单（file_exists / content_contains / exit_code / diff_scope，含别名与 fail-closed）；结构化 `Step.acceptance` 随 SQLite `acceptance_json` 保存/读取/branch clone；Executor deterministic-first；失败证据写入 outputs/state_snapshot/step_events；前端展示验收结果。
+- 已验证：工具自报成功但文件内容错误时，计划明确 Failed，不调用 LLM 猜测；真实 LLM E2E 已验证文件存在+内容匹配。
+- 后续：场景 YAML 与 pass^3 多次 Run 统计（需要 Run/Attempt 表）。
 
 **2. Grant YAML（授权收尾）**
 
@@ -718,6 +719,12 @@ PlanUpdateEvent 增加自增 version
 - 源码分析结论必须附项目、路径或链接。
 
 ## 变更记录
+
+### 1.0-draft — 2026-08-29
+
+- AcceptanceRunner 第一阶段完成：支持四类确定性检查、fail-closed、结构化 evidence/reward、SQLite 保存/读取/branch clone、Executor/状态机/Designer/前端接入。
+- 验证结果：验收器/集成测试通过；后端 282 passed + 1 skipped；真实 LLM E2E 2 passed；前端 35 passed；前端构建通过。
+- 设计明确保留旧字符串 `check_criteria` 兼容路径；pass^3、Grant YAML、worktree 并行仍为后续阶段。
 
 ### 0.9-draft — 2026-08-29
 

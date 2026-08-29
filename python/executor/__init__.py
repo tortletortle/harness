@@ -17,6 +17,7 @@ from utils.interfaces import ExecutorAI
 from llm_client import LLMClient, Message
 from tools import get_registry
 from acceptance_runner import AcceptanceRunner
+from authorization import AuthorizationManager
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -54,13 +55,16 @@ class DefaultExecutor(ExecutorAI):
     # （file_creator / text_editor / manual_tool）或自身超时机制失效的情况。
     DEFAULT_STEP_TIMEOUT = 120
 
-    def __init__(self, llm_client: LLMClient, model_config: Dict[str, Any], tool_registry=None, database=None) -> None:
+    def __init__(self, llm_client: LLMClient, model_config: Dict[str, Any], tool_registry=None, database=None, authorization_manager: AuthorizationManager = None) -> None:
         self.llm_client = llm_client
         self.model_config = model_config
         self.tool_registry = tool_registry if tool_registry else get_registry()
         # 可选：有则写入审计日志（谁/何时/哪个工具指令/结果），
         # 未传入时静静跳过，不影响现有调用方不传参的兼容性。
         self.database = database
+        # Runtime 注入时启用调用前 Grant 校验；直接使用 Executor 的旧调用
+        # 不传 manager，保持旧接口兼容（真实 API 路径始终传入）。
+        self.authorization_manager = authorization_manager
         # 确定性验收器：由执行器持有，结构化 acceptance 规则优先于 LLM 自检。
         self.acceptance_runner = AcceptanceRunner()
         # 支持通过 model_config 覆盖默认超时，未配置则用类默认值。
@@ -104,7 +108,7 @@ class DefaultExecutor(ExecutorAI):
     async def health_check(self) -> bool:
         return True
 
-    def _audit(self, tool_id: str, instruction: str, inputs: Dict[str, Any], success, blocked: bool, block_reason: str = None, step: Step = None):
+    def _audit(self, tool_id: str, instruction: str, inputs: Dict[str, Any], success, blocked: bool, block_reason: str = None, step: Step = None, grant_id: str = None):
         """写入审计日志，失败不影响主流程"""
         if not self.database:
             return
@@ -118,12 +122,13 @@ class DefaultExecutor(ExecutorAI):
                 blocked=blocked,
                 block_reason=block_reason,
                 actor="executor",
+                grant_id=grant_id,
             )
         except Exception as e:
             logger.warning("审计日志写入失败: {}", e)
 
-    async def execute_step(self, step: Step) -> Dict[str, Any]:
-        """执行单个步骤"""
+    async def execute_step(self, step: Step, grant_id: str = None) -> Dict[str, Any]:
+        """执行单个步骤；grant_id 存在时先经过 Runtime 授权。"""
 
         logger.info("执行步骤 {}: {}", step.order, step.description)
         logger.debug("工具: {}", step.tool)
@@ -152,6 +157,41 @@ class DefaultExecutor(ExecutorAI):
                 if not instruction:
                     instruction = "execute"
 
+            # Runtime Grant 调用前授权闸门。拒绝时不进入线程、不触发底层工具。
+            effective_inputs = dict(step.inputs or {})
+            grant = self.authorization_manager.get(grant_id) if self.authorization_manager and grant_id else None
+            if grant is not None and tool_id == "command_runner" and not effective_inputs.get("cwd"):
+                # 未指定 cwd 的命令固定在本次 Grant 的 workspace 中，避免工具落到
+                # API 进程当前目录；显式 cwd 仍由 Grant 资源检查约束。
+                effective_inputs["cwd"] = grant.workspace_root
+            if self.authorization_manager is not None and grant_id is not None:
+                decision = self.authorization_manager.authorize(
+                    grant_id, tool_id, instruction, effective_inputs,
+                )
+                if not decision.allowed:
+                    self._audit(
+                        tool_id=tool_id,
+                        instruction=instruction,
+                        inputs=effective_inputs,
+                        success=False,
+                        blocked=True,
+                        block_reason=decision.reason,
+                        step=step,
+                        grant_id=grant_id,
+                    )
+                    return {
+                        "success": False,
+                        "output": None,
+                        "check_status": self.CHECK_UNVERIFIED,
+                        "check_passed": False,
+                        "error": decision.message,
+                        "blocked": True,
+                        "blocked_reason": decision.reason,
+                        "retryable": False,
+                        "grant_id": grant_id,
+                        "grant_usage": decision.usage,
+                    }
+
             # 执行工具
             # execute_tool 是同步的，内部会跑 subprocess（command_runner 默认超时 60s）。
             # 直接调用会堵住整个事件循环，期间 API 和 WebSocket 全部无响应（前端表现为假死）。
@@ -160,7 +200,7 @@ class DefaultExecutor(ExecutorAI):
             try:
                 result = await asyncio.wait_for(
                     asyncio.to_thread(
-                        self.tool_registry.execute_tool, tool_id, instruction, step.inputs
+                        self.tool_registry.execute_tool, tool_id, instruction, effective_inputs
                     ),
                     timeout=self.step_timeout,
                 )
@@ -169,11 +209,12 @@ class DefaultExecutor(ExecutorAI):
                 self._audit(
                     tool_id=tool_id,
                     instruction=instruction,
-                    inputs=step.inputs,
+                    inputs=effective_inputs,
                     success=False,
                     blocked=False,
                     block_reason="Step execution timeout",
                     step=step,
+                    grant_id=grant_id,
                 )
                 return {
                     "success": False,
@@ -196,11 +237,12 @@ class DefaultExecutor(ExecutorAI):
             self._audit(
                 tool_id=tool_id,
                 instruction=instruction,
-                inputs=step.inputs,
+                inputs=effective_inputs,
                 success=result.get("success"),
                 blocked=blocked,
                 block_reason=error_code if blocked else None,
                 step=step,
+                grant_id=grant_id,
             )
 
             # P0-b 第二道守卫（OpenHands run_action 双闸思路）：
