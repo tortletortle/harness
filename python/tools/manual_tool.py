@@ -31,7 +31,7 @@ class ManualTool:
     @staticmethod
     def get_metadata() -> Dict[str, Any]:
         return {
-            "tool_id": "manual",
+            "tool_id": "manual_tool",
             "name": "手动工具",
             "description": "需要人工干预的步骤",
             "category": "other",

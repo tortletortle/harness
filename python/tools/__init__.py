@@ -213,6 +213,7 @@ class ToolRegistry:
             model_config: 模型配置（可选，用于AI agent）
         """
         self.tools = {}
+        self.aliases = {}  # 别名 -> 主 ID（兼容旧数据中的历史工具名）
         self._register_default_tools()
         
         # 初始化AI agent（如果提供了llm_client）
@@ -225,18 +226,27 @@ class ToolRegistry:
         self.register_tool("file_creator", FileCreator)
         self.register_tool("command_runner", CommandRunner)
         self.register_tool("package_installer", PackageInstaller)
-        self.register_tool("manual", ManualTool)
+        # manual_tool.py 的注册 ID 统一为 manual_tool；保留 "manual" 别名
+        # 兼容旧数据（数据库已有计划的 tool 字段存的是 "manual:..."）
+        self.register_tool("manual_tool", ManualTool, aliases=["manual"])
         self.register_tool("git_operator", GitOperator)
         self.register_tool("text_editor", TextEditor)
         self.register_tool("web_fetcher", WebFetcher)
     
-    def register_tool(self, tool_id: str, tool_class):
-        """注册工具"""
+    def register_tool(self, tool_id: str, tool_class, aliases: List[str] = None):
+        """注册工具。aliases 中的旧名可继续被 get_tool/execute_tool 解析。"""
         self.tools[tool_id] = tool_class
+        for alias in aliases or []:
+            self.aliases[alias] = tool_id
     
     def get_tool(self, tool_id: str):
-        """获取工具"""
-        return self.tools.get(tool_id)
+        """获取工具（先查主名，再查别名）"""
+        tool = self.tools.get(tool_id)
+        if tool is None:
+            canonical = self.aliases.get(tool_id)
+            if canonical:
+                tool = self.tools.get(canonical)
+        return tool
     
     def list_tools(self) -> List[Dict[str, Any]]:
         """列出所有工具"""

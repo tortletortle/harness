@@ -42,10 +42,11 @@ class GitOperator:
                     },
                     {
                         "name": "git_commit",
-                        "description": "提交更改",
+                        "description": "提交更改（默认先自动暂存全部改动再提交，无需先调用 git_add）",
                         "parameters": {
                             "path": "仓库路径",
-                            "message": "提交信息"
+                            "message": "提交信息",
+                            "auto_stage": "是否自动暂存（默认True）"
                         }
                     },
                     {
@@ -111,9 +112,40 @@ class GitOperator:
             }
     
     @staticmethod
-    def git_commit(path: str, message: str) -> Dict[str, Any]:
-        """提交更改"""
+    def git_commit(path: str, message: str, auto_stage: bool = True) -> Dict[str, Any]:
+        """提交更改。
+
+        auto_stage=True（默认）时先 `git add -A` 再提交：消除"未暂存导致
+        commit 必失败"的语义缺口——模型在"提交改动"任务上会在 git_add /
+        git_commit 之间随机摇摆，自动暂存让两种输出都能正确完成。
+        """
         try:
+            staged = None
+            if auto_stage:
+                stage_result = subprocess.run(
+                    ["git", "add", "-A"],
+                    cwd=path,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                if stage_result.returncode != 0:
+                    return {
+                        "success": False,
+                        "message": "自动暂存失败",
+                        "output": stage_result.stdout,
+                        "error": stage_result.stderr or "git add -A failed"
+                    }
+                # 记录实际进入本次提交的文件，供审计
+                listed = subprocess.run(
+                    ["git", "diff", "--cached", "--name-only"],
+                    cwd=path,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                staged = [f for f in listed.stdout.splitlines() if f.strip()]
+
             result = subprocess.run(
                 ["git", "commit", "-m", message],
                 cwd=path,
@@ -121,12 +153,13 @@ class GitOperator:
                 text=True,
                 timeout=30
             )
-            
+
             return {
                 "success": result.returncode == 0,
                 "message": "提交成功" if result.returncode == 0 else "提交失败",
                 "output": result.stdout,
-                "error": result.stderr if result.returncode != 0 else None
+                "error": result.stderr if result.returncode != 0 else None,
+                "staged_files": staged,
             }
         except Exception as e:
             return {
@@ -179,7 +212,8 @@ class GitOperator:
         elif instruction == "git_commit":
             return GitOperator.git_commit(
                 path=inputs.get("path", "."),
-                message=inputs.get("message", "Initial commit")
+                message=inputs.get("message", "Initial commit"),
+                auto_stage=bool(inputs.get("auto_stage", True)),
             )
         elif instruction == "git_clone":
             return GitOperator.git_clone(

@@ -20,6 +20,23 @@ from logging_config import get_logger
 
 logger = get_logger(__name__)
 
+# P0-b：工具安全拦截的结构化判定。
+# 工具结果现在应携带 "blocked": True 字段；下面的错误码仅为兼容旧工具/
+# 第三方插件的回退路径（OpenHands 式双层防御：结构化字段优先，文案兜底）。
+LEGACY_BLOCKED_ERROR_CODES = (
+    "Dangerous command blocked",
+    "Invalid package name",
+    "Invalid or blocked URL",
+    "Workdir not allowed",
+)
+
+
+def _is_blocked_result(result: Dict[str, Any]) -> bool:
+    """判断工具结果是否为安全拦截。结构化字段优先，错误码回退。"""
+    if result.get("blocked") is True:
+        return True
+    return result.get("error") in LEGACY_BLOCKED_ERROR_CODES
+
 
 class DefaultExecutor(ExecutorAI):
     """默认Executor实现"""
@@ -151,19 +168,17 @@ class DefaultExecutor(ExecutorAI):
                     "check_passed": False,
                     "error": "Step execution timeout",
                     "blocked": False,
+                    # P2 错误分类：超时多为瞬时负载，重试可能成功
+                    "retryable": True,
                 }
 
+            # P0-b：结构化拦截判定（字段优先，错误码回退）
+            blocked = _is_blocked_result(result)
             # 审计：记录本次工具调用及其结果（包括安全拦截：Dangerous command blocked /
             # Invalid package name / Invalid or blocked URL / Workdir not allowed）。
             error_code = None
             if not result.get("success"):
                 error_code = result.get("error")
-            blocked = error_code in (
-                "Dangerous command blocked",
-                "Invalid package name",
-                "Invalid or blocked URL",
-                "Workdir not allowed",
-            )
             self._audit(
                 tool_id=tool_id,
                 instruction=instruction,
@@ -173,6 +188,12 @@ class DefaultExecutor(ExecutorAI):
                 block_reason=error_code if blocked else None,
                 step=step,
             )
+
+            # P0-b 第二道守卫（OpenHands run_action 双闸思路）：
+            # 工具声称成功但结果带拦截标志 → 不可信，按拦截失败处理。
+            if result.get("success") and blocked:
+                logger.error("工具返回 success 但携带拦截标志，按拦截处理: {}", error_code)
+                result = {**result, "success": False, "error": error_code or "Blocked"}
 
             if result.get("success"):
                 logger.info("工具执行成功: {}", result.get("message"))
@@ -192,6 +213,8 @@ class DefaultExecutor(ExecutorAI):
                         "error": f"结果校验未通过（标准：{step.check_criteria}）",
                         # 校验失败是逻辑错误，不是网络抖动之类的瞬时故障，重试没有意义。
                         "blocked": True,
+                        # P2 错误分类：逻辑校验失败不可重试
+                        "retryable": False,
                     }
 
                 if check_status == self.CHECK_UNVERIFIED:
@@ -204,6 +227,7 @@ class DefaultExecutor(ExecutorAI):
                     "check_passed": check_status == self.CHECK_PASSED,
                     "error": None,
                     "blocked": False,
+                    "retryable": False,
                 }
             else:
                 logger.error("失败: {}", result.get("message"))
@@ -216,6 +240,8 @@ class DefaultExecutor(ExecutorAI):
                     # 安全拦截（危险命令/非法包名/非法URL/工作目录越界）重试无意义，
                     # 无论重试多少次结果都不会变。
                     "blocked": blocked,
+                    # P2 错误分类：拦截不可重试；其余失败（网络/依赖缺失等）可重试
+                    "retryable": not blocked,
                 }
 
         except Exception as e:
@@ -227,6 +253,8 @@ class DefaultExecutor(ExecutorAI):
                 "check_passed": False,
                 "error": str(e),
                 "blocked": False,
+                # P2 错误分类：未知异常按可重试处理，由重试上限兜底
+                "retryable": True,
             }
 
     def _infer_instruction(self, tool_id: str, inputs: Dict[str, Any]) -> str:

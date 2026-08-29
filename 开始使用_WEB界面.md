@@ -28,7 +28,7 @@
 
 ### 第 2 步：打开浏览器
 
-访问：**http://localhost:5173**
+访问：**http://localhost:3000**
 
 ### 第 3 步：开始使用
 
@@ -51,8 +51,10 @@
 📝 新建任务    - 输入需求生成设计书
 📄 设计书      - 查看和审批设计书
 ▶️  执行计划    - 查看步骤详情并执行
-🔧 工具        - 查看 7 个可用工具
+🎛️ 执行控制    - 暂停 / 恢复 / 跳步 / 回滚
 🕐 历史记录    - 查看过往项目
+📜 审计日志    - 查看工具调用记录（含被拦截的调用）
+🔧 工具        - 查看 7 个可用工具
 ⚙️  配置        - 设置 API 密钥
 ```
 
@@ -209,6 +211,7 @@ base_urls:
 **操作：**
 - 展开/折叠阶段查看详情
 - 点击 "开始执行" 运行计划
+- 执行中可暂停 / 恢复，可跳过单个步骤，失败后可回滚到指定步骤重试（旧分支步骤自动废弃）
 
 ### 4. 工具管理
 
@@ -315,7 +318,7 @@ base_urls:
 
 ## 🛠️ 系统地址
 
-- **前端界面：** http://localhost:5173
+- **前端界面：** http://localhost:3000
 - **后端 API：** http://localhost:8000
 - **API 文档：** http://localhost:8000/docs (FastAPI 自动文档)
 
@@ -356,7 +359,7 @@ base_urls:
 ### Q4: 如何更换端口？
 **A:**
 - 后端：编辑 `scripts/start_api.py`，修改 `port=8000`
-- 前端：编辑 `frontend/vite.config.ts`，添加 `server: { port: 5174 }`
+- 前端：编辑 `frontend/vite.config.ts`，把 `port: 3000` 改成其他端口（如 3001）
 - 前端 API 地址：编辑 `frontend/src/api/client.ts`，修改 `API_BASE`
 
 ### Q5: 如何停止服务？
@@ -392,10 +395,13 @@ base_urls:
 ```python
 import requests
 
+TOKEN = open('config/api_token').read().strip()
+headers = {'Authorization': f'Bearer {TOKEN}'}
+
 # 生成设计书
-response = requests.post('http://localhost:8000/api/design', json={
-    'user_request': '制作一个计算器应用'
-})
+response = requests.post('http://localhost:8000/api/design',
+    headers=headers,
+    json={'user_request': '制作一个计算器应用'})
 design = response.json()['design']
 print(design['design_id'])
 ```
@@ -407,7 +413,7 @@ print(design['design_id'])
 完整测试一遍系统：
 
 1. ✅ 双击 `启动完整系统.bat`
-2. ✅ 浏览器打开 http://localhost:5173
+2. ✅ 浏览器打开 http://localhost:3000
 3. ✅ 在 "新建任务" 输入需求并生成设计书
 4. ✅ 在 "设计书" 页面批准设计
 5. ✅ 在 "执行计划" 页面查看步骤
@@ -426,13 +432,13 @@ print(design['design_id'])
 
 **立即开始：**
 1. 双击 `启动完整系统.bat`
-2. 打开浏览器访问 http://localhost:5173
+2. 打开浏览器访问 http://localhost:3000
 3. 输入你的第一个项目需求！
 
 祝使用愉快！ 🚀
 
 ---
 
-**版本：** v0.1.0  
-**更新日期：** 2026-08-23  
-**支持：** 查看 WEB_IMPLEMENTATION_DONE.md 了解技术细节
+**版本：** v0.2.0  
+**更新日期：** 2026-08-29  
+**技术细节：** 查看 docs/STRUCTURE.md 与 docs/API.md

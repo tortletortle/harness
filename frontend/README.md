@@ -13,7 +13,7 @@
 
 这会自动启动后端 API 服务器和前端开发服务器。
 
-- 前端地址：http://localhost:5173
+- 前端地址：http://localhost:3000
 - 后端地址：http://localhost:8000
 
 ### 方式 2：分别启动
@@ -132,13 +132,22 @@ scripts/
 - `GET /api/plans` - 获取执行计划列表
 - `GET /api/plan/{id}` - 获取单个执行计划
 - `POST /api/plan/{id}/execute` - 执行计划
+- `POST /api/plan/{id}/pause` - 暂停（写入恢复断点）
+- `POST /api/plan/{id}/resume` - 从断点恢复
+- `POST /api/plan/{id}/skip-step/{step_id}` - 跳过步骤
+- `POST /api/plan/{id}/rollback` - 回滚到指定步骤（新分支）
 
 ### 其他
+- `GET /api/audit-logs` - 审计日志（工具调用记录）
 - `GET /api/tools` - 获取工具列表
-- `GET /api/config` - 获取配置
-- `POST /api/config` - 更新配置
+- `GET /api/config` / `POST /api/config` - 配置读写
+- `POST /api/chat` - AI 助手对话
+- `POST /api/restart` - 重启后端
 - `GET /api/status` - 系统状态
-- `WS /ws/logs` - WebSocket 实时日志
+- `WS /ws/logs?token=` - WebSocket 实时日志
+
+> 除 `GET /` 外所有端点需要 token（`Authorization: Bearer <token>` 或
+> `X-API-Token`；WebSocket 用 `?token=`）。token 在 `config/api_token`。
 
 ## 开发说明
 
@@ -182,10 +191,13 @@ npm run preview
 2. **InputView** - 需求输入页
 3. **DesignView** - 设计书审阅页
 4. **PlanView** - 执行计划页
-5. **ToolsView** - 工具管理页
+5. **ExecutionView** - 执行控制页（暂停/恢复/跳步/回滚）
 6. **HistoryView** - 历史记录页
-7. **ConfigView** - 配置页
-8. **LogPanel** - 实时日志面板
+7. **ToolsView** - 工具管理页
+8. **ConfigView** - 配置页
+9. **AuditView** - 审计日志页
+10. **LogPanel** - 实时日志面板
+11. **ToastHub** - 全局错误/警告提示条
 
 ## 注意事项
 
@@ -203,7 +215,7 @@ npm run preview
    - 修改后需要重启后端服务
 
 4. **端口占用**
-   - 前端默认使用 5173 端口
+   - 前端默认使用 3000 端口
    - 后端默认使用 8000 端口
    - 如有冲突可在配置中修改
 
@@ -226,7 +238,8 @@ npm run preview
 
 ## 后续计划
 
-- [ ] 添加用户认证
+- [x] 用户认证（后端 token 鉴权已实现，见 docs/API.md）
+- [ ] 计划状态 WebSocket 推送（替代 2 秒轮询）
 - [ ] 支持多项目并行
 - [ ] 添加更多可视化图表
 - [ ] 支持导出报告

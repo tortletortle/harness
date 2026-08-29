@@ -18,6 +18,10 @@ import { HistoryView } from './components/HistoryView';
 import { AuditView } from './components/AuditView';
 import { ConfigView } from './components/ConfigView';
 import { ToastHub } from './components/ToastHub';
+import { ApprovalBanner } from './components/ApprovalBanner';
+
+// P1-b 版本围栏：丢弃过期 plan_update 推送，防止慢广播用旧状态覆盖新状态
+let lastPlanEventVersion = 0;
 
 function App() {
   const { currentView, addLog, sidebarCollapsed, logPanelCollapsed, aiPanelCollapsed } = useAppStore();
@@ -28,7 +32,21 @@ function App() {
     });
     // plan_update 推送：只打事件计数，权威状态由 usePlanPolling 全量拉取
     apiClient.onPlanUpdate((ev) => {
+      if (typeof ev.version === 'number') {
+        if (ev.version <= lastPlanEventVersion) return; // 过期推送，丢弃
+        lastPlanEventVersion = ev.version;
+      }
       useAppStore.getState().notifyPlanEvent(ev.plan_id);
+    });
+    // P0-a 审批推送：请求 → 弹卡片；决定 → 关卡片
+    apiClient.onApprovalRequest((ev) => {
+      useAppStore.getState().setPendingApproval(ev);
+    });
+    apiClient.onApprovalResolved((ev) => {
+      const current = useAppStore.getState().pendingApproval;
+      if (current && current.approval_id === ev.approval_id) {
+        useAppStore.getState().setPendingApproval(null);
+      }
     });
     return () => {
       apiClient.disconnectLogs();
@@ -60,6 +78,8 @@ function App() {
 
   return (
     <div className="h-screen flex flex-col bg-black text-white">
+      {/* P0-a 工具审批卡片（置顶，覆盖面板布局） */}
+      <ApprovalBanner />
       <PanelGroup direction="vertical">
         {/* 上部区域: 侧边栏 + 内容 + AI面板 */}
         <Panel defaultSize={85} minSize={30}>

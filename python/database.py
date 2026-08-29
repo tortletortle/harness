@@ -994,8 +994,16 @@ class Database:
         单进程部署下，进程重启意味着之前标记为 Running 的执行必然已经中断（无人在后台推进）。
         这些残留的 Running 记录会永久卡住，未来也无法被正常的暂停/恢复逻辑感知。
 
-        在服务启动时调用：将所有 plans.status == Running 的计划标记为 Failed，
-        同时把其下所有仍为 Running 的 steps 也标记为 Failed，避免留下不一致的中间态。
+        P1-a 事件重放式恢复（OpenHands 语义）：状态以 step_events 推导为准，
+        DB 行状态只是缓存。对中断时正在 Running 的步骤逐事件回放判定：
+
+        - 事件流中已有 success 事件 → 步骤实际已执行完成，只是状态写入丢失，
+          修正为 Success（不再误标 Failed）；
+        - 否则 → 补一条 interrupted 事件并把步骤标回 Pending，
+          下次 /execute 认领后自动重跑（替代旧的"一律标 Failed"）。
+
+        计划本身仍标记为 Failed：进程级中断对用户是明确失败信号，
+        重新执行计划（FAILED 在 /execute 认领范围内）即可从断点续跑。
 
         Returns:
             被标记为 Failed 的计划数量
@@ -1018,10 +1026,45 @@ class Database:
                         "UPDATE plans SET status = ? WHERE plan_id = ?",
                         (PlanStatus.FAILED.value, plan_id),
                     )
+                    # 找出中断时仍在 Running 的步骤，逐个做事件重放判定
                     cursor.execute(
-                        "UPDATE steps SET status = ? WHERE plan_id = ? AND status = ?",
-                        (StepStatus.FAILED.value, plan_id, StepStatus.RUNNING.value),
+                        "SELECT step_id FROM steps WHERE plan_id = ? AND status = ?",
+                        (plan_id, StepStatus.RUNNING.value),
                     )
+                    interrupted_step_ids = [row["step_id"] for row in cursor.fetchall()]
+
+                    for step_id in interrupted_step_ids:
+                        cursor.execute(
+                            "SELECT COUNT(*) AS n FROM step_events "
+                            "WHERE step_id = ? AND event_type = 'success'",
+                            (step_id,),
+                        )
+                        succeeded_before_crash = cursor.fetchone()["n"] > 0
+
+                        if succeeded_before_crash:
+                            # 工具已执行完成、结果已入事件流，仅状态行写入丢失：
+                            # 重放事件得出 Success，不产生副作用重复执行
+                            cursor.execute(
+                                "UPDATE steps SET status = ? WHERE step_id = ?",
+                                (StepStatus.SUCCESS.value, step_id),
+                            )
+                        else:
+                            # 执行结果未知：标记 interrupted 并回到 Pending，
+                            # 下次执行重跑该步骤（可能重复副作用，由工具幂等性兜底）
+                            cursor.execute(
+                                "INSERT INTO step_events (step_id, plan_id, event_type, event_data, branch_version, created_at) "
+                                "VALUES (?, ?, 'interrupted', ?, 1, ?)",
+                                (
+                                    step_id,
+                                    plan_id,
+                                    json.dumps({"reason": "interrupted by service restart"}, ensure_ascii=False),
+                                    datetime.utcnow().isoformat(),
+                                ),
+                            )
+                            cursor.execute(
+                                "UPDATE steps SET status = ? WHERE step_id = ?",
+                                (StepStatus.PENDING.value, step_id),
+                            )
 
                 return len(orphaned_plan_ids)
         except Exception as e:

@@ -107,6 +107,27 @@ export interface PlanUpdateEvent {
   plan_id: string;
   status: PlanStatus;
   steps: { step_id: string; status: StepStatus }[];
+  /** P1-b 版本围栏：后端自增序号，前端丢弃过期推送 */
+  version?: number;
+}
+
+/** WebSocket 推送的工具审批请求（type=approval_request） */
+export interface ApprovalRequestEvent {
+  type: 'approval_request';
+  approval_id: string;
+  plan_id: string;
+  step_id: string;
+  tool_id: string;
+  instruction: string;
+  inputs: Record<string, unknown>;
+  created_at: string;
+}
+
+/** WebSocket 推送的审批决定（type=approval_resolved） */
+export interface ApprovalResolvedEvent {
+  type: 'approval_resolved';
+  approval_id: string;
+  approved: boolean;
 }
 
 /** 审计日志条目（后端 /api/audit-logs 返回的原始行） */

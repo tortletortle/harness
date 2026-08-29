@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`0.1-draft`
-- 状态：初版，待通过成熟开源项目源码分析验证
+- 当前版本：`0.8-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2 改造已实施
 - 最后更新：2026-08-29
 
 ## 1. 目标
@@ -291,6 +291,7 @@ Acceptance Rate
 | `python/tools` | 普通工具实现 | 统一 Tool/Agent 契约 |
 | `python/database.py` | Run、状态、事件、产物索引 | 对照 OpenHands/LangGraph |
 | `frontend` | 图预览、审批、过程和交付 | 对照 Cline/OpenHands |
+| `rust/gui` | 桌面原生控制台（egui） | 同一 Python 后端，见第 20 节 |
 
 ## 12. 待验证问题
 
@@ -550,7 +551,131 @@ PlanUpdateEvent 增加自增 version
 
 改造顺序原则：**先做 P0（审批 + blocked 结构化，改动小、收益直接），再做 P1（授权、恢复、围栏），最后做概念分层和隔离。**
 
-## 19. 版本变更规则
+> 实施状态（2026-08-29）：P0-a、P0-b、P1-a、P1-b、P2 已全部实现并通过回归测试，见第 19 节实现记录。P1 中"Runtime 签发 Grant"尚未实现（本次落地的是审批挂起），仍为待办。
+
+## 19. 实现记录（0.7-draft）
+
+### 已实现
+
+**P0-a 工具级审批**（新增 `python/api/approval.py`）
+
+- `ApprovalManager`：`create` → `wait`（asyncio.Event 挂起）→ `resolve`（单次幂等）；超时视为拒绝；`reject_all_for_plan` 在计划终止时批量释放挂起请求。
+- 配置驱动：`config/models.yaml` 顶层 `approval.required_tools`（默认空 = 全部自动执行，向后兼容）与 `approval.timeout_seconds`（默认 600）。
+- 执行协程接入：`_execute_step_with_state_machine` 在工具执行前检查审批要求；请求/决定写入 `step_events`（approval_requested / approval_approved / approval_rejected）与审计日志（actor=user）。
+- 端点：`GET /api/approvals`、`POST /api/plan/{id}/approval/{aid}/approve`、`.../reject`（401/404/409 语义完整）。
+- 前端：`ApprovalBanner.tsx` 审批卡片（WS approval_request 弹出、approval_resolved 关闭、批准/拒绝 + 备注），API client 新增 approveToolCall/rejectToolCall/getPendingApprovals。
+
+**P0-b blocked 结构化 + 双闸**
+
+- 6 个工具拦截点（command_runner×2、package_installer×2、web_fetcher×2）返回结构化 `"blocked": True`。
+- executor：`_is_blocked_result()` 字段优先 + 旧错误码回退；第二道守卫——工具声称 success 但携带 blocked 标志时强制按拦截失败处理。
+
+**P1-a 事件重放式崩溃恢复**
+
+- `recover_orphaned_executions` 升级：中断的 Running 步骤逐事件回放——事件流已有 success → 修正为 Success（状态写入丢失场景）；否则补 `interrupted` 事件并标回 Pending（下次 /execute 自动重跑）。计划仍标 Failed。
+
+**P1-b plan_update 版本围栏**
+
+- `broadcast_plan_update` 载荷新增自增 `version`；前端 `App.tsx` 丢弃 `version <= lastPlanEventVersion` 的过期推送。
+
+**P2 错误分类（retryable）**
+
+- executor 全部返回路径携带 `retryable`（超时/普通失败/异常=True；拦截/校验失败=False）。
+- 执行循环：`retryable=False` 的失败跳过重试直接进入失败路径。
+
+### 验证结果（2026-08-29）
+
+- 后端：`pytest tests/python`（除 test_exec_e2e）272 passed，含新增 `test_tool_approval.py`（17）、`test_approval_endpoints.py`（5）与重写的 `test_orphan_recovery.py`。
+- 前端：vitest 35 passed（含新增 ApprovalBanner.test.tsx 5 项）；`npm run build` 通过。
+
+### 遗留与后续
+
+- Runtime 签发临时 Grant（绑定资源/预算/过期）尚未实现——当前审批是工具级布尔判断。
+- 审批前 diff 预览、queue/steer 排队消息（Cline 已验证）未做。
+- test_exec_e2e.py（真实 LLM）未在本次验证范围。
+
+### 工具选型评测记录（2026-08-29，tests/eval/test_tool_selection.py）
+
+- 结果：工具选型 15/15（7 个工具 + manual + 2 个"无需工具"负例全对）；指令选型 87%；JSON 契约违规 1/15。
+- 发现的问题：
+  1. **指令级随机性**：temperature=0 下 git_commit 场景 1/3 输出 git_add——根因是 `git_commit` 不自动暂存，模型自行"先 add"；单步计划会因此失败。修复方向：git_commit 支持自动暂存（-am）或在工具元数据中写明前置条件。
+  2. **JSON 契约缺口**：任务引用缺失上下文（"刚才的报错"）时，模型脱离 JSON 契约用自然语言追问。修复方向：路由提示词增加显式澄清输出模式（tool_id=none + note 字段）。
+  3. **事件循环绑定 bug**：`OpenAICompatibleProvider` 的 httpx.AsyncClient 绑定首次创建的事件循环，跨 `asyncio.run()`/多循环复用报 "Event loop is closed"。FastAPI 单循环下无症状，worker 线程/脚本场景会踩。
+  4. **命名不一致**：manual_tool.py 注册 ID 为 `manual`，易误导模型与开发者。
+- 评测方式：RUN_REAL_LLM_EVAL=1 开启；离线 `_infer_instruction` 映射测试随常规 pytest 运行。
+
+## 20. 桌面控制台（Rust egui）设计
+
+### 20.1 定位与后端选择
+
+- 桌面控制台是 **Web 界面的原生补充**，不是独立产品：同一 Python FastAPI 后端
+  （`python/api/server.py`，端口 8000，Bearer token 认证），保证 Web 与桌面
+  的状态、审批、审计完全一致。
+- **明确排除 rust/server(:8090)**：axum 脚手架只有浅校验和内存工具列表，
+  无任何消费者（仅 dev 脚本启动）；GUI 直连 Python 后端，该脚手架保持
+  现状不扩展不删除。
+- 参考系：§10 "UI/审批"行（Cline、OpenHands）的桌面化对应物；
+  数据同步复用已验证的"纯推送 + 轮询兜底"模式（§16.7）。
+
+### 20.2 架构
+
+```text
+┌─ UI 线程（eframe 0.28）────────────────┐
+│ App：四面板布局                          │
+│  TopBottomPanel(上) 服务状态 / token 配置 │
+│  SidePanel(左)     计划列表              │
+│  CentralPanel      计划详情 + 控制按钮    │
+│  TopBottomPanel(下) 实时日志流            │
+└──────────▲───────────────┬──────────────┘
+           │ mpsc recv      │ 命令发送
+           │ (request_repaint)│
+┌──────────┴────────────────▼──────────────┐
+│ tokio 后台线程                            │
+│  REST（reqwest）：status/plans/plan/控制   │
+│  WS（tokio-tungstenite）：/ws/logs        │
+│   ├ type=log         → 日志通道           │
+│   ├ type=plan_update → 状态通道（带 version）│
+│   └ 30s REST 兜底轮询                     │
+└───────────────────────────────────────────┘
+```
+
+- 后台线程持有全部 IO；UI 线程只消费 channel 消息并在收到消息时
+  `ctx.request_repaint()`——egui 的即时模式不允许在 UI 线程阻塞等待网络。
+- 断线重连：WS 关闭后指数退避重连（1s→2s→…→30s 封顶），与 Web 端
+  client.ts 的"有意关闭不重连"语义一致。
+
+### 20.3 数据同步与状态
+
+- **plan_update 推送**（后端已实现 version 自增围栏）携带计划级 status 与
+  全部非废弃步骤状态；GUI 侧 reducer 只应用 `version` 严格递增的事件，
+  30s REST 兜底全量拉取作为权威校准——与 Web 端同构。
+- 计划级与步骤级状态枚举必须覆盖 Python 全集：
+  PlanStatus = Draft/Pending/Approved/Running/Paused/Completed/Failed/RolledBack；
+  StepStatus = Pending/Running/Success/Failed/Retry/Skipped/RolledBack。
+- 控制操作（execute/pause/resume/skip）为 REST POST；失败（409/404）时
+  把后端中文 detail 显示在状态栏，不弹窗打断。
+
+### 20.4 DTO 策略（fork 不复用 eas-common）
+
+`rust/common` 的枚举缺少 Approved/Retry/RolledBack，API DTO 对应的是旧
+`/api/v1` 形状而非 `python/api/server.py` 的实际 REST 契约。决策：
+**GUI 自建 `types.rs`** 精确对齐 Python API 响应（serde 默认字段名），
+不复用 eas-common；待 eas-common 与 Python 契约对齐后再评估回收。
+
+### 20.5 分期
+
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| 1 | 应用骨架 + 计划列表/详情 + 实时状态（WS 推送+兜底）+ 日志流 + execute/pause/resume/skip 控制 | 本次实现 |
+| 2 | 审批卡片（对接 ApprovalManager /api/approvals）+ 审计视图 + 回滚（含反馈） | 待做 |
+| 3 | 设计书生成 / 审阅 / 拒绝反馈（对齐 Web InputView/DesignView） | 待做 |
+
+### 20.6 依赖决策
+
+- 新增 `tokio-tungstenite`：reqwest 0.11 无稳定 WS 客户端 API。
+- `egui_extras` 暂不引入：表格用 `egui::Grid` 足够，避免拉入 table/plot 全家桶。
+
+## 21. 版本变更规则
 
 每次更新本文件时：
 
@@ -561,6 +686,12 @@ PlanUpdateEvent 增加自增 version
 - 源码分析结论必须附项目、路径或链接。
 
 ## 变更记录
+
+### 0.7-draft — 2026-08-29
+
+- 实现 P0-a 工具级审批（ApprovalManager + asyncio.Event 挂起 + approve/reject 端点 + 前端审批卡片）、P0-b blocked 结构化与双闸、P1-a 事件重放式崩溃恢复、P1-b plan_update 版本围栏、P2 retryable 错误分类。
+- 后端 272 测试、前端 35 测试、双端构建全部通过。
+- 新增第 19 节实现记录；Runtime Grant、diff 预览、排队消息列为后续项。
 
 ### 0.6-draft — 2026-08-29
 

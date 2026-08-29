@@ -1,117 +1,59 @@
-# EAS 2.0 - 项目状态
+# EAS 2.0 项目状态
 
-## ✅ 已完成
+> 本文是唯一的现状文档（2026-08-29 更新）。早期的 CURRENT_STATUS.md、MISSING_FEATURES.md
+> 与若干测试报告已移入 [archive/](archive/)，描述的是 2026-08-21~24 的状态，多数结论已过时。
 
-### 核心架构
-- [x] 项目目录结构
-- [x] 配置文件系统
-- [x] 插件化接口设计（Rust & Python）
-- [x] 数据模型定义
-- [x] JSON Schema定义
+## 一句话现状
 
-### Rust层
-- [x] Common模块（类型、错误、Trait）
-- [x] Dispatcher（调度器）
-- [x] Logger（日志系统）
-- [x] ToolManager（工具管理）
-- [x] Database（SQLite支持）
-- [x] HTTP Server（Axum）
-- [x] GUI基础（egui占位符）
+核心链路（需求 → 设计书 → 审批 → 计划 → 执行 → 日志/历史）完整可用且经过加固；
+主要短板是工具数量少（7 个）、知识库未实现、计划状态靠轮询而非推送。
 
-### Python层
-- [x] Designer AI（设计师）
-- [x] ToolManager AI（工具管理AI）
-- [x] Knowledge AI（知识助手）
-- [x] Executor（执行器）
-- [x] LLM Client（统一LLM接口）
-- [x] FastAPI服务
-- [x] 数据模型（Pydantic）
+## 已验证的数据（2026-08-29 实测）
 
-### 文档 & 工具
-- [x] README.md
-- [x] API文档
-- [x] 开发指南
-- [x] 启动脚本
-- [x] 初始化脚本
-- [x] 环境变量示例
-- [x] 示例工具
+| 项目 | 结果 |
+|------|------|
+| 后端 pytest | 244 通过 + 2 跳过，覆盖率约 48% |
+| 前端 vitest | 30 通过（5 个文件） |
+| API 端点 | 16 个（含暂停/恢复/跳步/回滚/审计/配置/重启）+ WebSocket 日志流 |
+| 前端视图 | 输入、设计书、计划、执行、历史、工具、配置、审计 8 个视图 + 全局错误提示 |
+| 内置工具 | 7 个 |
+| CI | 三任务流水线（Rust / pytest / vitest） |
 
-### 测试
-- [x] Rust单元测试示例
-- [x] Python单元测试示例
-- [x] 集成测试示例
+## 已完成
 
-## 🚧 待实现
+- **Designer 流程**：设计书生成（多提供商 fallback、缓存）、审批（批准生成计划 / 拒绝按反馈修订）
+- **执行系统**：计划执行、步骤重试与超时策略、暂停/恢复（原子断点）、跳步守卫、
+  回滚到指定步骤（克隆新分支 + 废弃旧分支）、孤儿恢复
+- **状态机加固**：原子计划认领（claim_plan_status）、Paused 不可被队列任务抢走、
+  状态与断点单条 UPDATE 落库
+- **错误处理契约**：DatabaseError / GenerationError 分层抛出，禁止假装成功；
+  前端错误/警告全局 toast。详见 [ERROR_HANDLING.md](ERROR_HANDLING.md)
+- **前端**：React 仪表盘、WebSocket 实时日志（带重连去抖）、全局错误提示（ToastHub）、审计日志视图
+- **安全**：全部 /api/* 端点 token 鉴权（Bearer / X-API-Token，常数时间比较）、
+  命令执行与网络请求工具的安全加固（有专项测试）
+- **持久化**：SQLite 全量持久化 + 审计日志
 
-### Phase 1: 核心架构（当前阶段）
-- [ ] LLM客户端实际API调用（Anthropic/OpenAI）
-- [ ] Designer AI完整prompt工程
-- [ ] ToolManager AI完整评估逻辑
-- [ ] 数据库迁移系统
-- [ ] 完整的错误处理
+## 缺失 / 待办（按优先级）
 
-### Phase 2: 执行系统
-- [ ] Executor工具调用逻辑
-- [ ] 工具实例管理（复制/删除）
-- [ ] 步骤自我检查机制
-- [ ] 动态计划插入逻辑
+1. **工具数量**（最大短板）：只有 7 个基础工具（文件、命令、装包、Git、文本编辑、
+   网络下载、人工干预）。没有数据库操作、Docker、API 测试等，很多真实任务无法自动化。
+2. **计划状态推送**：目前仅日志走 WebSocket，计划/步骤状态靠前端 2 秒轮询。
+   （工作区已有一个未提交的 `Database.get_plan_status_summary()` 草稿，是为广播准备的）
+3. **知识库**：`python/knowledge/` 为空壳，未实现任何检索/记忆能力。
+4. **架构分层与代码分布脱节**：`designer/`、`executor/`、`dispatcher/`、`toolmanager/`
+   目录只有空 `__init__.py`，真实逻辑集中在 `api/server.py`（约 1500 行）与
+   `utils/interfaces.py`。文档与目录结构反映的是设计愿景而非现实。
+5. **测试覆盖不均**：总体 48%，designer / llm_client / dispatcher 偏薄。
+6. **Rust 侧**：crates 存在（common/db/dispatcher/logger/server/tool_manager/gui），
+   但 Python 层已自成体系，Rust 部分与主链路未打通；错误处理约定未同步。
+7. **遗留清理**：`python/api/main.py`（9000 端口旧入口）与 `server.py.bak` 未删；
+   根目录 `a.txt`、`out.html`、`test.py`、`package.json`/`node_modules` 为用户文件未整理。
 
-### Phase 3: 用户交互
-- [ ] 模型管理系统
-- [ ] 模型测试套件
-- [ ] 用户介入机制（4级问题处理）
-- [ ] Knowledge AI深度集成
+## 成熟度评估
 
-### Phase 4: GUI
-- [ ] egui完整界面
-- [ ] 设计书显示和编辑
-- [ ] 实时日志显示
-- [ ] 执行控制（暂停/继续）
-
-### 插件系统
-- [ ] 插件加载器
-- [ ] 插件钩子触发器
-- [ ] 插件示例
-
-## 📝 下一步行动
-
-1. **配置真实API密钥**
-   - 编辑`.env`文件
-   - 添加Anthropic/OpenAI密钥
-
-2. **实现LLM调用**
-   - 完成`AnthropicProvider`
-   - 完成`OpenAIProvider`
-   - 测试API连接
-
-3. **完善Designer AI**
-   - 编写详细的设计书生成prompt
-   - 编写执行计划生成prompt
-   - 测试端到端流程
-
-4. **数据库集成**
-   - 运行数据库迁移
-   - 测试数据持久化
-   - 添加查询接口
-
-## 🎯 MVP目标
-
-最小可行产品应该能够：
-1. 接受用户需求
-2. 生成设计书
-3. 用户审阅设计书
-4. 生成执行计划
-5. 执行简单步骤
-6. 记录日志
-
-## 📊 当前进度
-
-- 架构设计: 100%
-- 基础代码: 80%
-- 核心功能: 30%
-- 测试覆盖: 10%
-- 文档: 70%
-
----
-
-最后更新: 2026-08-21
+| 场景 | 可用性 |
+|------|--------|
+| 单机演示 / 简单项目生成与执行 | ✅ 可用 |
+| 开发辅助（文件/命令/Git/装包类任务） | ✅ 可用 |
+| 复杂项目实施 | ⚠️ 受限于工具数量 |
+| 生产环境 / 多用户 / 企业级 | ❌ 不具备（无监控、权限、协作） |

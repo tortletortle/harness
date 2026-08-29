@@ -75,8 +75,43 @@ def test_recover_marks_running_plans_and_steps_as_failed(tmp_path):
 
     db_steps = {s["step_id"]: s["status"] for s in db.get_steps(str(running_plan_id))}
     assert db_steps[str(steps[0].step_id)] == "Success"  # 已完成的不受影响
-    assert db_steps[str(steps[1].step_id)] == "Failed"   # 中断时正在跑的被标记失败
+    assert db_steps[str(steps[1].step_id)] == "Pending"  # P1-a：中断步骤标回 Pending 可重跑
     assert db_steps[str(steps[2].step_id)] == "Pending"  # 还没开始的保持原状
+
+    # P1-a：中断步骤应补 interrupted 事件（可重跑的审计依据）
+    events = db.get_step_events(str(running_plan_id), step_id=str(steps[1].step_id))
+    assert any(e["event_type"] == "interrupted" for e in events)
+
+
+def test_recover_replays_success_event_after_lost_status_write(tmp_path):
+    """P1-a 事件重放：崩溃发生在「工具已完成、状态写入前」的窗口时，
+    事件流中的 success 事件证明步骤已执行完成，恢复应修正为 Success
+    而不是误标 Failed（避免副作用重复执行）。"""
+    db = Database(str(tmp_path / "eas.db"))
+
+    design_id = uuid.uuid4()
+    _make_design(db, design_id)
+
+    plan_id = uuid.uuid4()
+    steps = _make_plan(
+        db, plan_id, design_id, PlanStatus.RUNNING,
+        [StepStatus.RUNNING],
+    )
+    interrupted_step = steps[0]
+
+    # 模拟：状态行还是 Running，但事件流已记录 success（状态写入丢失）
+    assert db.add_step_event(str(interrupted_step.step_id), str(plan_id), "running")
+    assert db.add_step_event(str(interrupted_step.step_id), str(plan_id), "success", {"duration_ms": 100})
+
+    recovered = db.recover_orphaned_executions()
+    assert recovered == 1
+
+    db_steps = {s["step_id"]: s["status"] for s in db.get_steps(str(plan_id))}
+    assert db_steps[str(interrupted_step.step_id)] == "Success"  # 由事件重放推导
+
+    # 不应有 interrupted 事件——该步骤实际已完成
+    events = db.get_step_events(str(plan_id), step_id=str(interrupted_step.step_id))
+    assert not any(e["event_type"] == "interrupted" for e in events)
 
 
 def test_recover_does_not_touch_completed_or_pending_plans(tmp_path):

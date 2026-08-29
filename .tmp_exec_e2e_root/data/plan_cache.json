@@ -1,0 +1,76 @@
+{
+  "b89bb630302c98ccabf8c70ad17f6321": {
+    "design": {
+      "plan_id": "a4365b8e-8eb7-42d0-a83c-920a6dd104e4",
+      "design_id": "3dbf9887-a33a-47db-825c-efc8cee2e7bf",
+      "created_at": "2026-08-29T10:05:20.783674",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "7639fdf8-9af0-4109-8ad5-b3269db5ca54",
+          "description": "创建指定目录下的文件",
+          "steps": [
+            {
+              "step_id": "c20b33be-052d-47e9-8e7b-51bab2d9272a",
+              "order": 1,
+              "description": "创建a.txt文件",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-135\\verify_p1_workdir0\\a.txt",
+                "content": "hello"
+              },
+              "check_criteria": "执行成功",
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "6c1eed5b-700d-466a-9a9a-288d1e7ef720",
+              "order": 2,
+              "description": "创建b.txt文件",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-135\\verify_p1_workdir0\\b.txt",
+                "content": "world"
+              },
+              "check_criteria": "执行成功",
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-135\\verify_p1_workdir0\\a.txt",
+        "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-135\\verify_p1_workdir0\\b.txt"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1787997920.7846737,
+    "last_access": 1787997920.7846737,
+    "hits": 0,
+    "user_request": "3dbf9887-a33a-47db-825c-efc8cee2e7bf"
+  }
+}

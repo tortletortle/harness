@@ -3,7 +3,16 @@
  * 与后端 FastAPI 服务通信
  */
 
-import type { Design, ExecutionPlan, Tool, LogMessage, PlanUpdateEvent, AuditLogEntry } from '../types';
+import type {
+  Design,
+  ExecutionPlan,
+  Tool,
+  LogMessage,
+  PlanUpdateEvent,
+  ApprovalRequestEvent,
+  ApprovalResolvedEvent,
+  AuditLogEntry,
+} from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 const API_TOKEN = import.meta.env.VITE_API_TOKEN || '';
@@ -53,6 +62,8 @@ export class ApiClient {
   private ws: WebSocket | null = null;
   private logCallbacks: ((log: LogMessage) => void)[] = [];
   private planUpdateCallbacks: ((ev: PlanUpdateEvent) => void)[] = [];
+  private approvalRequestCallbacks: ((ev: ApprovalRequestEvent) => void)[] = [];
+  private approvalResolvedCallbacks: ((ev: ApprovalResolvedEvent) => void)[] = [];
   // 区分"程序性关闭"（替换连接/主动断开）与"意外断开"：
   // 前者绝不能触发自动重连，否则重连本身会再次关闭连接，形成每 5 秒的
   // 无限重连循环（StrictMode 双挂载加剧此问题，见 E2E 观察到的连接风暴）。
@@ -409,6 +420,53 @@ export class ApiClient {
   }
 
   /**
+   * 批准工具调用（P0-a）：执行协程立即恢复
+   */
+  async approveToolCall(planId: string, approvalId: string, comment?: string): Promise<void> {
+    const response = await authFetch(
+      `${API_BASE}/api/plan/${planId}/approval/${approvalId}/approve`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment }),
+      },
+    );
+    if (!response.ok) {
+      await throwResponseError(response, '批准失败');
+    }
+  }
+
+  /**
+   * 拒绝工具调用（P0-a）：执行协程收到"操作未发生"的拒绝理由
+   */
+  async rejectToolCall(planId: string, approvalId: string, comment?: string): Promise<void> {
+    const response = await authFetch(
+      `${API_BASE}/api/plan/${planId}/approval/${approvalId}/reject`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment }),
+      },
+    );
+    if (!response.ok) {
+      await throwResponseError(response, '拒绝失败');
+    }
+  }
+
+  /**
+   * 获取待审批列表（轮询兜底；主要通知走 WebSocket）
+   */
+  async getPendingApprovals(planId?: string): Promise<ApprovalRequestEvent[]> {
+    const query = planId ? `?plan_id=${encodeURIComponent(planId)}` : '';
+    const response = await authFetch(`${API_BASE}/api/approvals${query}`);
+    if (!response.ok) {
+      await throwResponseError(response, '获取审批列表失败');
+    }
+    const data = await response.json();
+    return (data.approvals || []) as ApprovalRequestEvent[];
+  }
+
+  /**
    * 连接 WebSocket 实时日志
    */
   connectLogs(onLog: (log: LogMessage) => void): void {
@@ -438,6 +496,16 @@ export class ApiClient {
       if (data?.type === 'plan_update') {
         const ev = data as PlanUpdateEvent;
         this.planUpdateCallbacks.forEach(cb => cb(ev));
+        return;
+      }
+      if (data?.type === 'approval_request') {
+        const ev = data as ApprovalRequestEvent;
+        this.approvalRequestCallbacks.forEach(cb => cb(ev));
+        return;
+      }
+      if (data?.type === 'approval_resolved') {
+        const ev = data as ApprovalResolvedEvent;
+        this.approvalResolvedCallbacks.forEach(cb => cb(ev));
         return;
       }
       const log = data as LogMessage;
@@ -479,6 +547,17 @@ export class ApiClient {
   }
 
   /**
+   * 注册工具审批请求/决定推送回调（P0-a）。注册列表跨重连保留。
+   */
+  onApprovalRequest(cb: (ev: ApprovalRequestEvent) => void): void {
+    this.approvalRequestCallbacks.push(cb);
+  }
+
+  onApprovalResolved(cb: (ev: ApprovalResolvedEvent) => void): void {
+    this.approvalResolvedCallbacks.push(cb);
+  }
+
+  /**
    * 断开 WebSocket
    */
   disconnectLogs(): void {
@@ -493,6 +572,8 @@ export class ApiClient {
     }
     this.logCallbacks = [];
     this.planUpdateCallbacks = [];
+    this.approvalRequestCallbacks = [];
+    this.approvalResolvedCallbacks = [];
   }
 }
 

@@ -36,6 +36,7 @@ from tools import ToolRegistry
 from database import Database, DatabaseError
 from models import DesignDocument, ExecutionPlan, PlanSegment, Step, StepStatus, PlanStatus
 from api.auth import load_token, require_token, verify_token
+from api.approval import ApprovalManager, ApprovalTimeout
 print("[SERVER MODULE LOADED]", __file__)
 from logging_config import get_logger
 
@@ -86,6 +87,10 @@ class AppState:
         # 重试策略（阶段3.1）：从 config 顶层 retry 字段读取，lifespan 中赋值
         self.retry_max_attempts: int = 3
         self.retry_backoff_factor: float = 2
+        # 工具级审批（P0-a）：高风险工具执行前挂起等待人工批准
+        self.approval_manager: ApprovalManager = ApprovalManager()
+        # plan_update 广播自增版本号（P1-b）：前端丢弃过期推送，防止乱序覆盖
+        self.plan_update_version: int = 0
 
 state = AppState()
 
@@ -174,13 +179,23 @@ async def lifespan(app: FastAPI):
         state.retry_max_attempts = retry_cfg.get("max_attempts", 3)
         state.retry_backoff_factor = retry_cfg.get("backoff_factor", 2)
 
+        # 工具级审批策略（P0-a）：required_tools 列出需要人工批准的工具 ID。
+        # 默认空列表 = 全部自动执行（向后兼容，现有测试/流程不变）。
+        approval_cfg = state.config.get("approval", {})
+        state.approval_manager = ApprovalManager(
+            required_tools=approval_cfg.get("required_tools", []),
+            timeout_seconds=approval_cfg.get("timeout_seconds", 600),
+        )
+
         logger.info("EAS 2.0 API 服务启动成功")
 
-        # 孤儿任务恢复：单进程部署下，进程重启意味着之前标记为 Running 的执行必然已经中断。
-        # 若不处理，这些记录会永久卡在 Running，未来的暂停/恢复逻辑也无法感知。
+        # 孤儿任务恢复（P1-a 事件重放式）：
+        # - 计划 Running → Failed（进程级中断是明确失败信号，重新执行即可从断点续跑）
+        # - 中断步骤：事件流有 success → 修正为 Success（状态写入丢失的场景）；
+        #   否则补 interrupted 事件并标回 Pending，下次执行自动重跑
         recovered = state.database.recover_orphaned_executions()
         if recovered:
-            logger.warning("检测到 {} 个重启前未完成的执行，已标记为 Failed", recovered)
+            logger.warning("检测到 {} 个重启前未完成的执行，计划已标记为 Failed（中断步骤将按事件重放恢复）", recovered)
 
         # 初始化认证 token（不存在时自动生成）
         token = load_token()
@@ -290,13 +305,34 @@ async def broadcast_plan_update(plan_id: str) -> None:
         return
     if summary is None:
         return
+    # P1-b 版本围栏：每条广播自增 version，前端只应用更大版本的事件，
+    # 防止慢速广播用旧状态覆盖新状态（参考 Cline stateVersion 语义）。
+    state.plan_update_version += 1
     payload = {
         "type": "plan_update",
         "plan_id": str(plan_id),
         "status": summary["status"],
         "steps": summary["steps"],
+        "version": state.plan_update_version,
     }
     await _send_to_clients(payload)
+
+
+async def broadcast_approval_request(approval: "object") -> None:
+    """广播待审批请求（type=approval_request），前端弹审批卡片。"""
+    await _send_to_clients({
+        "type": "approval_request",
+        **approval.to_dict(),
+    })
+
+
+async def broadcast_approval_resolved(approval_id: str, approved: bool) -> None:
+    """广播审批决定（type=approval_resolved），前端关闭对应审批卡片。"""
+    await _send_to_clients({
+        "type": "approval_resolved",
+        "approval_id": approval_id,
+        "approved": approved,
+    })
 
 # ===== 格式转换辅助函数 =====
 
@@ -822,6 +858,64 @@ async def skip_step(plan_id: str, step_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ===== P0-a 工具级审批端点 =====
+
+class ApprovalDecisionRequest(BaseModel):
+    """审批决定请求"""
+    comment: Optional[str] = None
+
+
+@app.get("/api/approvals", dependencies=[Depends(require_token)])
+async def list_pending_approvals(plan_id: Optional[str] = None):
+    """列出待审批的工具调用请求（前端轮询兜底；主要通知走 WebSocket）。"""
+    return {"success": True, "approvals": state.approval_manager.list_pending(plan_id)}
+
+
+async def _resolve_tool_approval(plan_id: str, approval_id: str, approved: bool, comment: Optional[str]):
+    """approve/reject 共用逻辑：校验归属 → resolve → 广播决定。"""
+    pending = {a["approval_id"]: a for a in state.approval_manager.list_pending()}
+    info = pending.get(approval_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="审批请求不存在或已处理")
+    if info["plan_id"] != str(plan_id):
+        raise HTTPException(status_code=409, detail="审批请求与计划不匹配")
+
+    if not state.approval_manager.resolve(approval_id, approved, comment):
+        raise HTTPException(status_code=409, detail="审批请求已被处理")
+
+    await broadcast_approval_resolved(approval_id, approved)
+    await broadcast_log(
+        f"[APPROVAL] 审批 {'通过' if approved else '拒绝'}: {approval_id}", "info",
+    )
+    return {"success": True, "approved": approved}
+
+
+@app.post("/api/plan/{plan_id}/approval/{approval_id}/approve", dependencies=[Depends(require_token)])
+async def approve_tool_call(plan_id: str, approval_id: str, request: Optional[ApprovalDecisionRequest] = None):
+    """批准一次待审批的工具调用，执行协程立即恢复。"""
+    try:
+        body = request or ApprovalDecisionRequest()
+        return await _resolve_tool_approval(plan_id, approval_id, True, body.comment)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("批准工具调用失败: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/plan/{plan_id}/approval/{approval_id}/reject", dependencies=[Depends(require_token)])
+async def reject_tool_call(plan_id: str, approval_id: str, request: Optional[ApprovalDecisionRequest] = None):
+    """拒绝一次待审批的工具调用。执行协程收到结构化拒绝理由（操作未发生）。"""
+    try:
+        body = request or ApprovalDecisionRequest()
+        return await _resolve_tool_approval(plan_id, approval_id, False, body.comment)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("拒绝工具调用失败: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def _require_write(ok: bool, what: str) -> None:
     """状态写入必须成功；False（未命中/非法状态）与异常同样致命，向上抛给外层统一清理。"""
     if not ok:
@@ -928,6 +1022,70 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
 
     if not state.database.add_step_event(step_id, plan_id, "running"):
         logger.warning("step_event running 写入失败: {}", step_id)
+
+    # ===== P0-a 工具级审批闸门 =====
+    # 高风险工具在执行前挂起等待人工批准（Cline 式 asyncio.Event 挂起，非轮询）。
+    # 拒绝/超时 → 返回结构化 blocked 结果，由调用方走 Failed 路径（重试无意义）。
+    tool_id_for_approval = str(step.get("tool", "")).split(":")[0]
+    if state.approval_manager.is_required(tool_id_for_approval):
+        approval = state.approval_manager.create(
+            plan_id=plan_id,
+            step_id=step_id,
+            tool_id=tool_id_for_approval,
+            instruction=str(step.get("description", "")),
+            inputs=step_model.inputs,
+        )
+        state.database.add_step_event(
+            step_id, plan_id, "approval_requested",
+            {"approval_id": approval.approval_id, "tool_id": tool_id_for_approval},
+        )
+        await broadcast_approval_request(approval)
+        await broadcast_log(
+            f"[APPROVAL] 步骤 {step_id} 请求使用工具 {tool_id_for_approval}，等待人工批准", "warning",
+        )
+        try:
+            decision = await state.approval_manager.wait(approval.approval_id)
+        except ApprovalTimeout:
+            decision = None
+            await broadcast_log(f"[APPROVAL] 步骤 {step_id} 审批超时，视为拒绝", "error")
+        state.database.add_step_event(
+            step_id, plan_id,
+            "approval_rejected" if (decision is None or not decision.approved) else "approval_approved",
+            {
+                "approval_id": approval.approval_id,
+                "comment": decision.comment if decision else "timeout",
+            },
+        )
+        state.database.save_audit_log(
+            tool_id=tool_id_for_approval,
+            instruction=approval.instruction,
+            inputs=step_model.inputs,
+            step_id=step_id,
+            success=False,
+            blocked=True,
+            block_reason="user_rejected" if decision is None else f"user_rejected: {decision.comment or ''}",
+            actor="user",
+        )
+        await broadcast_approval_resolved(approval.approval_id, approved=bool(decision and decision.approved))
+        state.approval_manager.cleanup(approval.approval_id)
+
+        if decision is None or not decision.approved:
+            reject_reason = (
+                f"操作被用户拒绝: {decision.comment}" if decision else "操作被用户拒绝（审批超时）"
+            )
+            logger.warning("步骤 {} 的工具 {} 被拒绝执行", step_id, tool_id_for_approval)
+            return {
+                "success": False,
+                "output": None,
+                "check_status": "unverified",
+                "check_passed": False,
+                "error": reject_reason,
+                "blocked": True,
+                "blocked_reason": "user_rejected",
+                "retryable": False,
+                "duration_ms": 0,
+            }
+        await broadcast_log(f"[APPROVAL] 步骤 {step_id} 审批通过，继续执行", "info")
 
     started = datetime.utcnow()
     result = await state.executor.execute_step(step_model)
@@ -1154,7 +1312,9 @@ async def execute_plan_background(plan, resume: bool = False):
                 if result.get("success"):
                     break
 
-                if attempt >= max_attempts - 1:
+                # P2 错误分类：executor 判定不可重试的失败（拦截/永久性错误）
+                # 直接进入失败路径，不等重试耗尽——重试只会重复同样的错误。
+                if attempt >= max_attempts - 1 or result.get("retryable") is False:
                     error = result.get("error", "retry exhausted")
                     failure_reason = error
                     check_status = result.get("check_status")
@@ -1235,6 +1395,12 @@ async def execute_plan_background(plan, resume: bool = False):
     finally:
         async with state.execution_lock:
             state.current_execution = None
+        # P0-a 安全网：计划已终止（完成/失败/异常），批量拒绝其未决审批，
+        # 防止残留的挂起请求泄漏或被后续计划误 resolve。
+        try:
+            state.approval_manager.reject_all_for_plan(str(plan.plan_id), "plan execution ended")
+        except Exception as approval_exc:
+            debug_log(f"reject_all_for_plan failed: {approval_exc}")
         debug_log(f"execute_plan_background FINISHED for plan {plan.plan_id}")
 
 

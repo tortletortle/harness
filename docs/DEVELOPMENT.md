@@ -1,219 +1,70 @@
 # EAS 2.0 开发指南
 
-## 环境设置
+## 环境要求
 
-### 1. 安装依赖
+- Python 3.10+（依赖：`pip install -r python/requirements.txt`）
+- Node.js 18+（前端；`cd frontend && npm install`）
+- Rust toolchain（仅当改 `rust/` 时需要；主链路不依赖 Rust）
 
-**Rust:**
-```bash
-# 安装Rust (如果尚未安装)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# 构建项目
-cargo build
-```
-
-**Python:**
-```bash
-cd python
-pip install -r requirements.txt
-```
-
-### 2. 配置环境变量
-
-复制 `.env.example` 为 `.env` 并填入真实API密钥:
+## 启动开发环境
 
 ```bash
-cp .env.example .env
-# 编辑 .env 文件
+# 终端 1：后端（端口 8000）
+python scripts/start_api.py
+# 或手动：
+#   PYTHONPATH=<仓库>/python python -m uvicorn api.server:app --host 127.0.0.1 --port 8000
+
+# 终端 2：前端（端口 3000，/api 与 /ws 自动代理到 8000）
+cd frontend && npm run dev
 ```
 
-### 3. 初始化数据库
+打开 http://localhost:3000。首次启动后端会自动生成 `config/api_token`。
+
+> 遗留入口 `python/api/main.py`（9000 端口）与 `scripts/dev*.bat` 不在主链路上，
+> 排查问题时不要混淆。
+
+## 测试（改代码后必须跑）
 
 ```bash
-mkdir -p data
+# 后端 pytest —— 必须在仓库根目录运行！
+#   在子目录（如 frontend/、python/）运行会静默收集 0 个用例。
+python -m pytest
+
+# 单跑某个文件/用例
+python -m pytest tests/python/test_database_errors.py -q
+
+# 前端 vitest（在 frontend/ 下）
+npm test
+npm run build        # tsc + vite，类型错误会在这里暴露
+
+# Rust
+cargo test --workspace
 ```
 
-数据库会在首次运行时自动创建。
+说明：
 
-## 开发流程
+- `pytest.ini` 配置了 `--cov=python`，每次运行输出覆盖率并写 `htmlcov/`。
+- LLM 相关测试是离线的：用 `llm_client` 里的 `DeterministicProvider`，不需要真实密钥。
+- 涉及网络的测试使用了确定性桩，不要在测试里直连外部服务。
 
-### 启动开发环境
+## 代码修改须知
 
-**Linux/Mac:**
-```bash
-chmod +x scripts/dev.sh
-./scripts/dev.sh
-```
+- **错误路径**：先读 [ERROR_HANDLING.md](ERROR_HANDLING.md)。核心契约：
+  数据库意外故障抛 `DatabaseError`（False/None 只表示"没找到"）；
+  生成失败抛 `GenerationError`；执行器所有状态写库走 `_require_write`；
+  计划状态迁移走原子 `claim_plan_status`；前端禁止只 `console.error`。
+- **状态机**：计划状态迁移规则见 [state-machine-design.md](state-machine-design.md)，
+  改暂停/恢复/回滚逻辑前必读。
+- **前端约束**：tsconfig 开启 `verbatimModuleSyntax` 与 `noUnusedLocals`，
+  import 用相对路径（无路径别名）；调试时可在控制台用 `window.__useAppStore` 直接检查 store。
+- **鉴权**：新增端点一律挂 `dependencies=[Depends(require_token)]`，
+  WebSocket 用查询参数 `?token=` 校验（见 `api/auth.py`）。
 
-**Windows:**
-```bash
-scripts\dev.bat
-```
+## CI
 
-### 单独启动服务
+`.github/workflows/ci.yml` 三个任务并行：Rust（cargo test）、后端（pytest）、
+前端（vitest + build）。提交前本地把三样都跑绿再推。
 
-**Python API:**
-```bash
-cd python
-python -m uvicorn api.main:app --host 0.0.0.0 --port 9000 --reload
-```
+## 目录速查
 
-**Rust Server:**
-```bash
-cargo run --bin eas-server
-```
-
-**GUI (未来):**
-```bash
-cargo run --bin eas-gui
-```
-
-## 项目结构
-
-```
-harness/
-├── rust/              # Rust代码
-│   ├── common/       # 通用类型和Trait
-│   ├── dispatcher/   # 调度器
-│   ├── logger/       # 日志系统
-│   ├── tool_manager/ # 工具管理
-│   ├── server/       # HTTP服务器
-│   ├── db/           # 数据库层
-│   └── gui/          # GUI (egui)
-├── python/           # Python代码
-│   ├── api/          # FastAPI服务
-│   ├── designer/     # Designer AI
-│   ├── toolmanager/  # ToolManager AI
-│   ├── knowledge/    # Knowledge AI
-│   ├── executor/     # Executor
-│   ├── llm_client/   # LLM客户端
-│   ├── models/       # 数据模型
-│   └── utils/        # 工具函数
-└── config/           # 配置文件
-```
-
-## 插件化架构
-
-### 核心接口
-
-**Rust:**
-- `AIService` - AI服务接口
-- `Dispatcher` - 调度器接口
-- `Executor` - 执行器接口
-- `ToolManager` - 工具管理器接口
-- `Logger` - 日志接口
-- `Database` - 数据库接口
-- `Plugin` - 插件接口
-
-**Python:**
-- `AIService` - AI服务基类
-- `Designer` - 设计师接口
-- `ToolManagerAI` - 工具管理AI接口
-- `KnowledgeAI` - 知识助手接口
-- `ExecutorAI` - 执行器接口
-- `Plugin` - 插件接口
-
-### 创建新的AI服务
-
-1. **实现接口**
-
-```python
-from utils.interfaces import AIService
-
-class MyService(AIService):
-    @property
-    def name(self) -> str:
-        return "my-service"
-    
-    async def process(self, request):
-        # 实现逻辑
-        pass
-```
-
-2. **注册服务**
-
-在 `python/api/main.py` 中注册:
-
-```python
-app_state["my_service"] = MyService(llm_client, config)
-```
-
-3. **添加API端点**
-
-```python
-@app.post("/api/v1/my-service")
-async def call_my_service(request: ServiceRequest):
-    service = app_state.get("my_service")
-    result = await service.process(request.data)
-    return {"success": True, "result": result}
-```
-
-## 测试
-
-**Rust测试:**
-```bash
-cargo test
-```
-
-**Python测试:**
-```bash
-cd python
-pytest
-```
-
-**集成测试:**
-```bash
-cd tests/integration
-pytest
-```
-
-## 调试
-
-**启用详细日志:**
-
-修改 `config/server.yaml`:
-```yaml
-logging:
-  level: debug
-```
-
-**查看日志:**
-```bash
-tail -f logs/server.log
-```
-
-## 常见问题
-
-### 1. 端口被占用
-
-修改 `config/server.yaml` 中的端口配置。
-
-### 2. Python依赖冲突
-
-使用虚拟环境:
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-venv\Scripts\activate     # Windows
-pip install -r requirements.txt
-```
-
-### 3. Rust编译错误
-
-确保使用最新的Rust版本:
-```bash
-rustup update
-```
-
-## 贡献指南
-
-1. Fork项目
-2. 创建特性分支
-3. 提交更改
-4. 推送到分支
-5. 创建Pull Request
-
-## License
-
-MIT
+见 [STRUCTURE.md](STRUCTURE.md)（含"哪些目录是真代码、哪些是空壳"的说明）。

@@ -3,7 +3,7 @@
  */
 
 import { create } from 'zustand';
-import type { Design, ExecutionPlan, Tool, LogMessage, Toast } from '../types';
+import type { Design, ExecutionPlan, Tool, LogMessage, Toast, ApprovalRequestEvent } from '../types';
 
 // Toast 自增 ID 计数器（模块级，保证唯一）
 let toastIdCounter = 0;
@@ -62,6 +62,10 @@ interface AppState {
   isExecuting: boolean;
   setIsExecuting: (executing: boolean) => void;
 
+  // P0-a 工具审批：当前待审批请求（同一时刻最多挂起一个——执行循环串行）
+  pendingApproval: ApprovalRequestEvent | null;
+  setPendingApproval: (approval: ApprovalRequestEvent | null) => void;
+
   // 配置
   config: any;
   setConfig: (config: any) => void;
@@ -83,6 +87,7 @@ export const useAppStore = create<AppState>((set) => ({
   logs: [],
   toasts: [],
   isExecuting: false,
+  pendingApproval: null,
   config: null,
 
   // Actions
@@ -134,6 +139,8 @@ export const useAppStore = create<AppState>((set) => ({
   })),
 
   setIsExecuting: (executing) => set({ isExecuting: executing }),
+
+  setPendingApproval: (approval) => set({ pendingApproval: approval }),
 
   setConfig: (config) => set({ config }),
 }));
