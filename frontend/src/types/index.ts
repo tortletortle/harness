@@ -144,6 +144,7 @@ export interface AuditLogEntry {
   blocked: 0 | 1;
   block_reason: string | null;
   actor: string | null;
+  grant_id: string | null;
 }
 
 export interface ApiResponse<T = any> {

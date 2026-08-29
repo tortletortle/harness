@@ -13,6 +13,8 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+// LLM 生成设计书/计划是长请求，不能复用普通 REST 的 10s 超时。
+const GENERATION_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CreateDesignRequest<'a> {
@@ -243,10 +245,21 @@ impl ApiClient {
         path: &str,
         body: &T,
     ) -> Result<reqwest::Response, ApiError> {
+        self.post_json_with_timeout(path, body, REQUEST_TIMEOUT)
+            .await
+    }
+
+    async fn post_json_with_timeout<T: serde::Serialize>(
+        &self,
+        path: &str,
+        body: &T,
+        timeout: Duration,
+    ) -> Result<reqwest::Response, ApiError> {
         let config = self.config();
         let resp = self
             .http
             .post(format!("{}{path}", config.base))
+            .timeout(timeout)
             .bearer_auth(&config.token)
             .json(body)
             .send()
@@ -271,7 +284,11 @@ impl ApiClient {
             design: Option<Design>,
         }
         let resp = self
-            .post_json("/api/design", &CreateDesignRequest { user_request })
+            .post_json_with_timeout(
+                "/api/design",
+                &CreateDesignRequest { user_request },
+                GENERATION_TIMEOUT,
+            )
             .await?;
         let w: Wrap = resp.json().await?;
         if !w.success {
@@ -335,13 +352,14 @@ impl ApiClient {
         // The backend requires the body ID and path ID to be identical.  Using
         // one borrowed argument for both makes that invariant explicit.
         let resp = self
-            .post_json(
+            .post_json_with_timeout(
                 &format!("/api/design/{design_id}/approve"),
                 &DesignApprovalRequest {
                     design_id,
                     approved,
                     feedback,
                 },
+                GENERATION_TIMEOUT,
             )
             .await?;
         resp.json::<DesignApprovalResponse>()

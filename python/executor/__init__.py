@@ -165,10 +165,14 @@ class DefaultExecutor(ExecutorAI):
             # Runtime Grant 调用前授权闸门。拒绝时不进入线程、不触发底层工具。
             effective_inputs = dict(step.inputs or {})
             grant = self.authorization_manager.get(grant_id) if self.authorization_manager and grant_id else None
-            if grant is not None and tool_id == "command_runner" and not effective_inputs.get("cwd"):
-                # 未指定 cwd 的命令固定在本次 Grant 的 workspace 中，避免工具落到
-                # API 进程当前目录；显式 cwd 仍由 Grant 资源检查约束。
-                effective_inputs["cwd"] = grant.workspace_root
+            if grant is not None:
+                if tool_id in {"command_runner", "package_installer"} and not effective_inputs.get("cwd"):
+                    # 未指定 cwd 的命令/包操作固定在本次 Grant 的 workspace 中，
+                    # 避免工具落到 API 进程当前目录；显式 cwd 仍由资源检查约束。
+                    effective_inputs["cwd"] = grant.workspace_root
+                elif tool_id == "git_operator" and not effective_inputs.get("path"):
+                    # Git 工具的默认 path="." 由工具进程解释，必须显式绑定到 Grant workspace。
+                    effective_inputs["path"] = grant.workspace_root
             if self.authorization_manager is not None and grant_id is not None:
                 decision = self.authorization_manager.authorize(
                     grant_id, tool_id, instruction, effective_inputs,

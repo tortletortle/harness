@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`1.0-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2 与 AcceptanceRunner 第一阶段已实施；工具选型评测达标；Grant/worktree 路线已定
+- 当前版本：`1.1-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段与 Runtime Grant 第一阶段已实施；工具选型评测达标；worktree 路线已定
 - 最后更新：2026-08-29
 
 ## 1. 目标
@@ -624,10 +624,12 @@ PlanUpdateEvent 增加自增 version
 - 已验证：工具自报成功但文件内容错误时，计划明确 Failed，不调用 LLM 猜测；真实 LLM E2E 已验证文件存在+内容匹配。
 - 后续：场景 YAML 与 pass^3 多次 Run 统计（需要 Run/Attempt 表）。
 
-**2. Grant YAML（授权收尾）**
+**2. Grant YAML（已完成第一阶段）**
 
 - 参考：Claude Code 权限语义（声明式 allow/deny 规则 + hooks 只收紧 + OS 沙箱是真边界）；资源级决策外置先不引 OPA，等规则复杂再挂（Vercel AI SDK 已有 OPA 接工具审批的范例；alibaba/open-agent-auth 为 agent 场景的细粒度权限框架）。
-- 落法：Grant = YAML 声明 {allow/deny 规则, 资源 glob, 预算, 过期时间}，glob 匹配用 pathlib 即可；`approval.required_tools` 给非空默认（git/web/安装类）。
+- 已落地：`python/authorization.py` 的 `CapabilityGrant/GrantLimits/GrantDecision/AuthorizationManager`；每个真实 API 步骤单独签发、调用前校验工具/路径/`.env`/`.git`/网络主机/次数/时效，执行后撤销；拒绝不进入底层 Registry；审计带 `grant_id` 和用量摘要；`audit_logs` 自动迁移。
+- 配置：`config/models.yaml` 的 `authorization` 段；默认 600 秒、每步骤 1 次工具调用、禁止 `.env`/`.git`；`allowed_hosts` 空时网络工具不自动放行。
+- 保留边界：命令内容级 allowlist 和 OS/容器沙箱尚未实现；没有传 grant_id 的直接 Executor 调用仍保持兼容旧行为。
 - 关键共识：提示词与 hook 都不是安全边界，沙箱才是。
 
 **3. worktree 并行（parallel-code 模式）—— 最后做**
@@ -719,6 +721,13 @@ PlanUpdateEvent 增加自增 version
 - 源码分析结论必须附项目、路径或链接。
 
 ## 变更记录
+
+### 1.1-draft — 2026-08-29
+
+- Runtime Grant 第一阶段完成：新增 `AuthorizationManager`，API 步骤调用前校验工具/资源/网络主机/次数/时效，工具调用后撤销；审计加入 `grant_id` 与用量摘要。
+- 新增授权测试覆盖越界、敏感路径、过期、撤销、预算和“拒绝不触发工具”；真实 LLM E2E 验证 Grant 事件与审计关联。
+- 验证结果：后端 292 passed + 1 skipped；真实 LLM E2E 2 passed；前端 35 passed；前端构建通过。
+- 明确未实现：命令内容级 allowlist、OS/容器沙箱、跨进程 Grant。
 
 ### 1.0-draft — 2026-08-29
 
