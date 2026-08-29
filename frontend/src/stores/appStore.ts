@@ -12,8 +12,14 @@ const TOAST_MAX = 5;
 
 interface AppState {
   // 当前视图
-  currentView: 'input' | 'design' | 'plan' | 'execution' | 'tools' | 'history' | 'config';
+  currentView: 'input' | 'design' | 'plan' | 'execution' | 'tools' | 'history' | 'audit' | 'config';
   setCurrentView: (view: AppState['currentView']) => void;
+
+  // plan_update 推送事件计数：usePlanPolling 订阅它以在事件到达时立即刷新。
+  // 只带 planId 与自增序号——权威状态仍由轮询 hook 的全量拉取写入，
+  // 避免本地合并造成的状态漂移。
+  planEventTick: { planId: string | null; seq: number };
+  notifyPlanEvent: (planId: string) => void;
 
   // 输入文本（跨 tab 持久化）
   inputText: string;
@@ -64,6 +70,7 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   // 初始状态
   currentView: 'input',
+  planEventTick: { planId: null, seq: 0 },
   inputText: '',
   sidebarCollapsed: false,
   logPanelCollapsed: false,
@@ -80,6 +87,10 @@ export const useAppStore = create<AppState>((set) => ({
 
   // Actions
   setCurrentView: (view) => set({ currentView: view }),
+
+  notifyPlanEvent: (planId) => set((state) => ({
+    planEventTick: { planId, seq: state.planEventTick.seq + 1 },
+  })),
 
   setInputText: (text) => set({ inputText: text }),
 

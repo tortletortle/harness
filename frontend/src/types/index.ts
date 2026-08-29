@@ -101,6 +101,29 @@ export interface LogMessage {
   timestamp?: string;
 }
 
+/** WebSocket 推送的计划状态变更事件（type=plan_update） */
+export interface PlanUpdateEvent {
+  type: 'plan_update';
+  plan_id: string;
+  status: PlanStatus;
+  steps: { step_id: string; status: StepStatus }[];
+}
+
+/** 审计日志条目（后端 /api/audit-logs 返回的原始行） */
+export interface AuditLogEntry {
+  audit_id: number;
+  timestamp: string;
+  plan_id: string;
+  step_id: string | null;
+  tool_id: string | null;
+  instruction: string | null;
+  inputs: string | null;
+  success: 0 | 1 | null;
+  blocked: 0 | 1;
+  block_reason: string | null;
+  actor: string | null;
+}
+
 export interface ApiResponse<T = any> {
   success: boolean;
   data?: T;
