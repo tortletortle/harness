@@ -79,6 +79,8 @@ class Step(BaseModel):
     tool: str
     inputs: Dict[str, Any]
     check_criteria: str
+    # 结构化确定性验收规则；为空时兼容旧版 LLM check_criteria 路径。
+    acceptance: List[Dict[str, Any]] = Field(default_factory=list)
     outputs: Optional[Dict[str, Any]] = None
     status: StepStatus = StepStatus.PENDING
     executed_at: Optional[datetime] = None

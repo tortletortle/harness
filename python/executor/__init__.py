@@ -16,6 +16,7 @@ from models import Step, StepStatus
 from utils.interfaces import ExecutorAI
 from llm_client import LLMClient, Message
 from tools import get_registry
+from acceptance_runner import AcceptanceRunner
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -60,6 +61,8 @@ class DefaultExecutor(ExecutorAI):
         # 可选：有则写入审计日志（谁/何时/哪个工具指令/结果），
         # 未传入时静静跳过，不影响现有调用方不传参的兼容性。
         self.database = database
+        # 确定性验收器：由执行器持有，结构化 acceptance 规则优先于 LLM 自检。
+        self.acceptance_runner = AcceptanceRunner()
         # 支持通过 model_config 覆盖默认超时，未配置则用类默认值。
         self.step_timeout = model_config.get("step_timeout", self.DEFAULT_STEP_TIMEOUT) if model_config else self.DEFAULT_STEP_TIMEOUT
 
@@ -79,11 +82,22 @@ class DefaultExecutor(ExecutorAI):
             result = await self.execute_step(Step(**request["step"]))
             return result
         elif action == "check_result":
-            passed = await self.check_result(
-                Step(**request["step"]),
-                request["output"],
-            )
-            return {"passed": passed}
+            step = Step(**request["step"])
+            if step.acceptance:
+                acceptance = await self._run_acceptance(step, request["output"])
+                return {
+                    "check_status": acceptance["status"],
+                    "check_passed": acceptance["passed"],
+                    "acceptance": acceptance,
+                    # 保留旧字段，但改为真正的 bool，避免名称与值语义冲突。
+                    "passed": acceptance["passed"],
+                }
+            check_status = await self.check_result(step, request["output"])
+            return {
+                "check_status": check_status,
+                "check_passed": check_status == self.CHECK_PASSED,
+                "passed": check_status == self.CHECK_PASSED,
+            }
         else:
             raise ValueError(f"Unknown action: {action}")
 
@@ -198,7 +212,42 @@ class DefaultExecutor(ExecutorAI):
             if result.get("success"):
                 logger.info("工具执行成功: {}", result.get("message"))
 
-                # 检查结果是否符合预期
+                # 结构化 acceptance 走独立确定性验收；旧版空 acceptance
+                # 继续走 LLM check_result，保持历史计划兼容。
+                if step.acceptance:
+                    acceptance = await self._run_acceptance(step, result)
+                    if not acceptance["passed"]:
+                        logger.warning("确定性验收未通过: {}", step.acceptance)
+                        return {
+                            "success": False,
+                            "output": result,
+                            "check_status": self.CHECK_FAILED,
+                            "check_passed": False,
+                            "error": "确定性验收未通过",
+                            "blocked": False,
+                            "retryable": False,
+                            "acceptance_status": acceptance["status"],
+                            "acceptance_result": acceptance,
+                            "acceptance_evidence": acceptance["evidence"],
+                            "reward": acceptance["reward"],
+                            "acceptance_failed": True,
+                        }
+                    return {
+                        "success": True,
+                        "output": result,
+                        "check_status": self.CHECK_PASSED,
+                        "check_passed": True,
+                        "error": None,
+                        "blocked": False,
+                        "retryable": False,
+                        "acceptance_status": acceptance["status"],
+                        "acceptance_result": acceptance,
+                        "acceptance_evidence": acceptance["evidence"],
+                        "reward": acceptance["reward"],
+                        "acceptance_failed": False,
+                    }
+
+                # 兼容旧版字符串 check_criteria 的 LLM 验收
                 check_status = await self.check_result(step, result)
 
                 # 校验明确失败 -> 步骤失败。
@@ -332,6 +381,15 @@ class DefaultExecutor(ExecutorAI):
         # 默认返回 None，让调用者处理
         return None
 
+
+    async def _run_acceptance(self, step: Step, tool_result: Dict[str, Any]) -> Dict[str, Any]:
+        """运行结构化确定性验收；不调用 LLM。"""
+        result = await asyncio.to_thread(
+            self.acceptance_runner.run,
+            step.acceptance,
+            tool_result,
+        )
+        return result.to_dict()
 
     async def check_result(self, step: Step, output: Dict[str, Any]) -> str:
         """

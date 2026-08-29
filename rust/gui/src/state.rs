@@ -26,6 +26,8 @@ pub struct SelectedPlan {
     pub detail: PlanDetail,
     /// 已应用的 plan_update 版本（版本围栏）
     pub last_version: u64,
+    /// 是否已经收到过该计划的 WS 运行态；用于避免 REST 刷新覆盖无版本事件。
+    has_ws_status: bool,
 }
 
 impl SelectedPlan {
@@ -36,7 +38,7 @@ impl SelectedPlan {
             .unwrap_or_else(|| parse_step_status(fallback))
     }
 
-    /// 步骤状态变更次数（Progress = 非 Pending 比例）
+    /// 步骤状态变更次数（Progress = 成功/跳过比例；回滚不算完成）
     pub fn progress(&self) -> (usize, usize) {
         let total = self.detail.steps.len();
         let done = self
@@ -46,7 +48,7 @@ impl SelectedPlan {
             .filter(|s| {
                 matches!(
                     self.step_status(&s.step_id, &s.status),
-                    StepStatus::Success | StepStatus::Skipped | StepStatus::RolledBack
+                    StepStatus::Success | StepStatus::Skipped
                 )
             })
             .count();
@@ -62,6 +64,8 @@ pub struct GuiState {
     pub service_status: Option<crate::types::ServiceStatus>,
     pub plans: Vec<PlanSummary>,
     pub selected: Option<SelectedPlan>,
+    /// 每个计划最后观察到的 WS 版本，计划切换后仍可防止旧 REST detail 清零版本。
+    pub last_versions: HashMap<String, u64>,
     pub logs: Vec<LogLine>,
     pub notice: Option<String>,
 }
@@ -82,34 +86,81 @@ impl GuiState {
         self.notice = Some(msg.into());
     }
 
-    /// 应用 plan_update：仅当选中计划匹配且 version 严格递增。
+    /// 应用 plan_update：仅当匹配计划且 version 严格递增。
     /// 返回 true 表示状态有变化（UI 需要重绘）。
-    pub fn apply_plan_update(&mut self, plan_id: &str, status: &str, steps: &[(String, String)], version: u64) -> bool {
+    pub fn apply_plan_update(
+        &mut self,
+        plan_id: &str,
+        status: &str,
+        steps: &[(String, String)],
+        version: u64,
+    ) -> bool {
+        let known_version = self.last_versions.get(plan_id).copied().unwrap_or(0);
+        if version != 0 && version <= known_version {
+            return false; // 版本围栏：过期推送丢弃
+        }
+        if version != 0 {
+            self.last_versions.insert(plan_id.to_string(), version);
+        }
+
         let Some(sel) = self.selected.as_mut() else {
             return false;
         };
         if sel.plan_id != plan_id {
             return false;
         }
-        if version != 0 && version <= sel.last_version {
-            return false; // 版本围栏：过期推送丢弃
-        }
-        sel.last_version = version;
+        sel.last_version = sel.last_version.max(version);
         sel.status = parse_plan_status(status);
+        sel.has_ws_status = true;
         for (step_id, st) in steps {
-            sel.live_status.insert(step_id.clone(), parse_step_status(st));
+            sel.live_status
+                .insert(step_id.clone(), parse_step_status(st));
         }
         true
     }
 
-    /// REST 兜底全量拉取的权威校准（整体替换选中计划）
+    /// REST 兜底全量拉取的权威校准。
+    ///
+    /// 对同一计划保留已收到的 WS live_status 和 last_version；REST detail 只更新
+    /// 静态描述/步骤，不得清掉更新鲜的运行时信息。不同计划切换时从 last_versions
+    /// 恢复版本围栏，避免旧版本事件倒灌。
     pub fn set_plan_detail(&mut self, detail: PlanDetail) {
+        let plan_id = detail.plan_id.clone();
+        if let Some(previous) = self.selected.take() {
+            if previous.plan_id == plan_id {
+                let mut live_status = previous.live_status;
+                // REST 返回的状态仅作为没有 WS 覆盖时的 fallback。
+                for step in &detail.steps {
+                    live_status.entry(step.step_id.clone()).or_insert_with(|| parse_step_status(&step.status));
+                }
+                let status = if previous.last_version > 0 {
+                    previous.status
+                } else {
+                    parse_plan_status(&detail.status)
+                };
+                let last_version = previous.last_version.max(
+                    self.last_versions.get(&plan_id).copied().unwrap_or(0),
+                );
+                self.selected = Some(SelectedPlan {
+                    plan_id,
+                    status,
+                    live_status,
+                    detail,
+                    last_version,
+                    has_ws_status: previous.has_ws_status,
+                });
+                return;
+            }
+        }
+
+        let last_version = self.last_versions.get(&plan_id).copied().unwrap_or(0);
         self.selected = Some(SelectedPlan {
-            plan_id: detail.plan_id.clone(),
+            plan_id,
             status: parse_plan_status(&detail.status),
             live_status: HashMap::new(),
             detail,
-            last_version: 0,
+            last_version,
+            has_ws_status: false,
         });
     }
 }
@@ -118,7 +169,7 @@ impl GuiState {
 mod tests {
     use super::*;
 
-    fn detail_with(plan_id: &str, steps: &[(&str, &str)]) -> PlanDetail {
+    fn detail_with(plan_id: &str, status: &str, steps: &[(&str, &str)]) -> PlanDetail {
         let raw_steps: Vec<serde_json::Value> = steps
             .iter()
             .map(|(id, st)| {
@@ -126,7 +177,7 @@ mod tests {
             })
             .collect();
         let raw = serde_json::json!({
-            "plan_id": plan_id, "design_id": "d", "status": "Pending",
+            "plan_id": plan_id, "design_id": "d", "status": status,
             "segments": [{"segment_id": "s", "description": "seg", "steps": raw_steps}],
             "steps": raw_steps,
         });
@@ -136,7 +187,7 @@ mod tests {
     #[test]
     fn plan_update_applies_and_fences_versions() {
         let mut st = GuiState::default();
-        st.set_plan_detail(detail_with("p1", &[("s1", "Pending")]));
+        st.set_plan_detail(detail_with("p1", "Pending", &[("s1", "Pending")]));
         assert_eq!(st.selected.as_ref().unwrap().status, PlanStatus::Pending);
 
         // 新版本应用
@@ -154,19 +205,32 @@ mod tests {
             StepStatus::Running
         );
 
-        // 计划不匹配则忽略
+        // 计划不匹配则忽略，但版本仍记账，切换后仍能围栏
         assert!(!st.apply_plan_update("other", "Failed", &[], 9));
+        assert_eq!(st.last_versions.get("other"), Some(&9));
     }
 
     #[test]
-    fn progress_counts_done_steps() {
+    fn detail_refresh_preserves_live_status_and_version() {
         let mut st = GuiState::default();
-        st.set_plan_detail(detail_with("p1", &[("s1", "Success"), ("s2", "Skipped"), ("s3", "Pending")]));
+        st.set_plan_detail(detail_with("p1", "Pending", &[("s1", "Pending")]));
+        assert!(st.apply_plan_update("p1", "Running", &[("s1".into(), "Running".into())], 7));
+        st.set_plan_detail(detail_with("p1", "Pending", &[("s1", "Pending")]));
+        let selected = st.selected.as_ref().unwrap();
+        assert_eq!(selected.status, PlanStatus::Running);
+        assert_eq!(selected.last_version, 7);
+        assert_eq!(selected.step_status("s1", "Pending"), StepStatus::Running);
+    }
+
+    #[test]
+    fn progress_excludes_rolled_back() {
+        let mut st = GuiState::default();
+        st.set_plan_detail(detail_with("p1", "RolledBack", &[("s1", "RolledBack"), ("s2", "Success"), ("s3", "Skipped")]));
         assert_eq!(st.selected.as_ref().unwrap().progress(), (2, 3));
     }
 
     #[test]
-    fn logs_are_capped() {
+    fn logs_are_bounded_and_keep_newest_lines() {
         let mut st = GuiState::default();
         for i in 0..1500 {
             st.push_log("info", format!("line {i}"));

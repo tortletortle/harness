@@ -46,7 +46,25 @@
                 "tool": { "type": "string" },
                 "inputs": { "type": "object" },
                 "check_criteria": { "type": "string" },
-                "outputs": { "type": ["object", "null"] },
+                "acceptance": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["type"],
+                    "properties": {
+                      "type": { "type": "string" },
+                      "path": { "type": "string" },
+                      "text": { "type": "string" },
+                      "content": { "type": "string" },
+                      "allowed": { "type": "array", "items": { "type": "string" } },
+                      "paths": { "type": "array", "items": { "type": "string" } },
+                      "equals": { "type": "integer" },
+                      "kind": { "type": "string", "enum": ["file", "directory"] }
+                    },
+                    "additionalProperties": true
+                  }
+                },
+                "outputs": { "type": ["object", "null"] }
                 "status": {
                   "type": "string",
                   "enum": ["Pending", "Running", "Success", "Failed", "Skipped"]

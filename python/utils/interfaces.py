@@ -107,8 +107,8 @@ class ExecutorAI(AIService):
         pass
     
     @abstractmethod
-    async def check_result(self, step: Step, output: Dict[str, Any]) -> bool:
-        """检查执行结果是否符合预期"""
+    async def check_result(self, step: Step, output: Dict[str, Any]) -> str:
+        """检查执行结果，返回 passed/failed/unverified 状态字符串"""
         pass
 
 

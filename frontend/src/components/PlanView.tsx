@@ -505,6 +505,26 @@ export function PlanView() {
                                   </div>
                                 </div>
                               )}
+
+                              {/* Deterministic acceptance evidence */}
+                              {step.outputs?.acceptance && (
+                                <div className="mt-2 rounded border border-zinc-800 bg-zinc-900/60 p-2">
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="text-zinc-500">验收结果</span>
+                                    <span className={step.outputs.acceptance_status === 'passed' ? 'text-emerald-400' : 'text-red-400'}>
+                                      {step.outputs.acceptance_status === 'passed' ? '通过' : '未通过'}
+                                      {typeof step.outputs.reward === 'number' ? ` · ${step.outputs.reward}` : ''}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1 space-y-0.5">
+                                    {(step.outputs.acceptance.checks || []).map((check: any, i: number) => (
+                                      <div key={i} className={`text-xs ${check.passed ? 'text-emerald-400' : 'text-red-400'}`}>
+                                        {check.passed ? '✓' : '✗'} {check.type}{check.reason ? `：${check.reason}` : ''}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>

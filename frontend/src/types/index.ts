@@ -80,6 +80,7 @@ export interface Step {
   tool: string;
   inputs: Record<string, any>;
   expected_outputs: string[];
+  acceptance?: Record<string, any>[];
   status?: StepStatus;
   outputs?: Record<string, any> | null;
   executed_at?: string | null;

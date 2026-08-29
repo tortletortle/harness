@@ -1,7 +1,7 @@
 //! EAS 2.0 桌面控制台入口（设计稿 §20）。
 //!
 //! 架构：eframe UI 线程 + tokio 后台线程（REST 轮询 / WS 订阅 / 命令执行），
-//! 两条 unbounded channel 桥接；后台线程在每次事件转发后 request_repaint。
+//! 有界 channel 桥接；后台线程在每次事件转发后 request_repaint。
 
 mod api;
 mod app;
@@ -10,11 +10,33 @@ mod types;
 mod ws;
 
 use app::{Command, GuiEvent};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch, Mutex, RwLock};
+
+const CHANNEL_CAPACITY: usize = 256;
 
 fn env_or(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.to_string())
+}
+
+/// 转发事件并唤醒 UI。日志在 UI 队列满时跳过，控制/状态/计划事件等待空间，
+/// 避免关键事件静默丢失。
+async fn forward_event(
+    events_tx: &mpsc::Sender<GuiEvent>,
+    ctx: &egui::Context,
+    event: GuiEvent,
+) -> bool {
+    let sent = if matches!(
+        event,
+        GuiEvent::Ws(ws::WsEvent::Log { .. })
+    ) {
+        events_tx.try_send(event).is_ok()
+    } else {
+        events_tx.send(event).await.is_ok()
+    };
+    ctx.request_repaint();
+    sent
 }
 
 /// 后台线程主体：WS 订阅 + 30s 兜底轮询 + 命令执行。
@@ -22,62 +44,77 @@ fn env_or(name: &str, default: &str) -> String {
 async fn supervisor(
     base: String,
     token: String,
-    events_tx: mpsc::UnboundedSender<GuiEvent>,
-    mut commands_rx: mpsc::UnboundedReceiver<Command>,
+    events_tx: mpsc::Sender<GuiEvent>,
+    mut commands_rx: mpsc::Receiver<Command>,
     ctx: egui::Context,
 ) {
-    let api = std::sync::Arc::new(api::ApiClient::new(base.clone(), token.clone()));
-
-    // WS 事件内部通道 → 统一转发到 UI（带重绘唤醒）
-    let (ws_tx, mut ws_rx) = mpsc::unbounded_channel::<ws::WsEvent>();
-    {
-        let events_tx = events_tx.clone();
-        let ctx = ctx.clone();
-        tokio::spawn(async move {
-            // run_ws 只在 UI 退出或认证被拒时返回
-            ws::run_ws(base, token, ws_tx).await;
-            drop(events_tx);
-            drop(ctx);
-        });
-    }
-
-    // 事件转发 + 重绘唤醒（所有后台事件走这里）
-    let forward = {
-        let events_tx = events_tx.clone();
-        let ctx = ctx.clone();
-        move |ev: GuiEvent| {
-            let _ = events_tx.send(ev);
-            ctx.request_repaint();
+    let api = match api::ApiClient::new(base, token) {
+        Ok(api) => Arc::new(api),
+        Err(e) => {
+            let _ = forward_event(&events_tx, &ctx, GuiEvent::Error(e.to_string())).await;
+            return;
         }
     };
 
-    // WS 事件泵
-    {
-        let forward = forward.clone();
-        let ctx = ctx.clone();
-        tokio::spawn(async move {
-            while let Some(ev) = ws_rx.recv().await {
-                forward(GuiEvent::Ws(ev));
-                let _ = ctx;
-            }
-        });
-    }
+    // 当前选择供轮询任务读取；epoch 使轮询响应也受 UI 选择围栏保护。
+    let selected = Arc::new(RwLock::new(None::<(String, u64)>));
+    // 所有详情请求共享一个锁，避免轮询、控制刷新、选择刷新并发打爆后端。
+    let detail_fetch_lock = Arc::new(Mutex::new(()));
 
-    // 30s 兜底轮询 + 启动即拉取（设计稿 §20.3）
+    // WS 事件内部通道 → 统一转发到 UI（有界，日志可跳过）。
+    // WS manager 监听运行时 config generation，在 token/base 成功变更后
+    // 取消旧连接并以新快照启动；认证拒绝则由 run_ws 终止且不重试。
+    let (ws_tx, mut ws_rx) = mpsc::channel::<ws::WsEvent>(CHANNEL_CAPACITY);
+    spawn_ws_manager(api.clone(), ws_tx);
+
+    // 事件转发 + 重绘唤醒（所有后台事件走这里）
+    let forward_tx = events_tx.clone();
+    let forward_ctx = ctx.clone();
+    tokio::spawn(async move {
+        while let Some(ev) = ws_rx.recv().await {
+            if !forward_event(&forward_tx, &forward_ctx, GuiEvent::Ws(ev)).await {
+                // UI 已退出，事件泵无需继续占用任务。
+                break;
+            }
+        }
+    });
+
+    // 30s 兜底轮询：状态、计划列表、当前选中计划详情全部刷新。
+    // fetch 顺序执行，下一轮不会在上一轮完成前启动，避免重复堆积。
     {
         let poll_api = api.clone();
-        let forward = forward.clone();
+        let poll_selected = selected.clone();
+        let poll_lock = detail_fetch_lock.clone();
+        let poll_tx = events_tx.clone();
+        let poll_ctx = ctx.clone();
         tokio::spawn(async move {
             let fetch = || async {
                 if let Ok(st) = poll_api.get_status().await {
-                    forward(GuiEvent::Status(st));
+                    forward_event(&poll_tx, &poll_ctx, GuiEvent::Status(st)).await;
                 }
                 if let Ok(plans) = poll_api.get_plans(20).await {
-                    forward(GuiEvent::Plans(plans));
+                    forward_event(&poll_tx, &poll_ctx, GuiEvent::Plans(plans)).await;
+                }
+                let current = poll_selected.read().await.clone();
+                if let Some((plan_id, epoch)) = current {
+                    let _guard = poll_lock.lock().await;
+                    if let Ok(detail) = poll_api.get_plan(&plan_id).await {
+                        forward_event(
+                            &poll_tx,
+                            &poll_ctx,
+                            GuiEvent::PlanDetail {
+                                detail: Box::new(detail),
+                                epoch,
+                            },
+                        )
+                        .await;
+                    }
                 }
             };
             fetch().await;
             let mut tick = tokio::time::interval(Duration::from_secs(30));
+            // interval 的第一次 tick 立即返回；跳过它，启动拉取已在上面完成。
+            tick.tick().await;
             loop {
                 tick.tick().await;
                 fetch().await;
@@ -85,56 +122,125 @@ async fn supervisor(
         });
     }
 
-    // 命令处理：UI 的控制/选择请求
+    // 命令处理：单一后台消费者顺序处理，避免每次刷新 spawn 无界任务。
     while let Some(cmd) = commands_rx.recv().await {
-        let api = api.clone();
-        let forward = forward.clone();
-        tokio::spawn(async move {
-            match cmd {
-                Command::RefreshStatus => {
-                    if let Ok(st) = api.get_status().await {
-                        forward(GuiEvent::Status(st));
+        match cmd {
+            Command::RefreshStatus => {
+                if let Ok(st) = api.get_status().await {
+                    forward_event(&events_tx, &ctx, GuiEvent::Status(st)).await;
+                }
+            }
+            Command::RefreshPlans => {
+                if let Ok(plans) = api.get_plans(20).await {
+                    forward_event(&events_tx, &ctx, GuiEvent::Plans(plans)).await;
+                }
+            }
+            Command::SelectPlan { plan_id, epoch } | Command::RefreshPlanDetail { plan_id, epoch } => {
+                *selected.write().await = Some((plan_id.clone(), epoch));
+                let _guard = detail_fetch_lock.lock().await;
+                match api.get_plan(&plan_id).await {
+                    Ok(detail) => {
+                        forward_event(
+                            &events_tx,
+                            &ctx,
+                            GuiEvent::PlanDetail {
+                                detail: Box::new(detail),
+                                epoch,
+                            },
+                        )
+                        .await;
                     }
-                }
-                Command::RefreshPlans => {
-                    if let Ok(plans) = api.get_plans(20).await {
-                        forward(GuiEvent::Plans(plans));
-                    }
-                }
-                Command::SelectPlan(plan_id) => match api.get_plan(&plan_id).await {
-                    Ok(detail) => forward(GuiEvent::PlanDetail(Box::new(detail))),
-                    Err(e) => forward(GuiEvent::Error(e.to_string())),
-                },
-                Command::Execute(plan_id) => {
-                    let r = api.execute_plan(&plan_id).await;
-                    forward(GuiEvent::ControlResult(r.map_err(|e| e.to_string())));
-                }
-                Command::Pause(plan_id) => {
-                    let r = api.pause_plan(&plan_id).await;
-                    forward(GuiEvent::ControlResult(r.map_err(|e| e.to_string())));
-                }
-                Command::Resume(plan_id) => {
-                    let r = api.resume_plan(&plan_id).await;
-                    forward(GuiEvent::ControlResult(r.map_err(|e| e.to_string())));
-                }
-                Command::Skip { plan_id, step_id } => {
-                    let r = api.skip_step(&plan_id, &step_id).await;
-                    forward(GuiEvent::ControlResult(r.map_err(|e| e.to_string())));
-                }
-                Command::SetToken(new_token) => {
-                    // token 变更：以新 token 校验一次并通知 UI。
-                    // WS 重连需重启 supervisor——简化为提示用户重启应用（阶段 2 改进项）。
-                    let probe = api::ApiClient::new(String::new(), new_token.clone());
-                    match probe.get_status().await {
-                        Ok(_) => forward(GuiEvent::TokenApplied),
-                        Err(e) => {
-                            forward(GuiEvent::Error(format!("token 校验失败: {e}")))
-                        }
+                    Err(e) => {
+                        forward_event(&events_tx, &ctx, GuiEvent::Error(e.to_string())).await;
                     }
                 }
             }
-        });
+            Command::Execute(plan_id) => {
+                let result = api.execute_plan(&plan_id).await.map_err(|e| e.to_string());
+                forward_event(
+                    &events_tx,
+                    &ctx,
+                    GuiEvent::ControlResult { plan_id, result },
+                )
+                .await;
+            }
+            Command::Pause(plan_id) => {
+                let result = api.pause_plan(&plan_id).await.map_err(|e| e.to_string());
+                forward_event(
+                    &events_tx,
+                    &ctx,
+                    GuiEvent::ControlResult { plan_id, result },
+                )
+                .await;
+            }
+            Command::Resume(plan_id) => {
+                let result = api.resume_plan(&plan_id).await.map_err(|e| e.to_string());
+                forward_event(
+                    &events_tx,
+                    &ctx,
+                    GuiEvent::ControlResult { plan_id, result },
+                )
+                .await;
+            }
+            Command::Skip { plan_id, step_id } => {
+                let result = api.skip_step(&plan_id, &step_id).await.map_err(|e| e.to_string());
+                forward_event(
+                    &events_tx,
+                    &ctx,
+                    GuiEvent::ControlResult { plan_id, result },
+                )
+                .await;
+            }
+            Command::SetToken(new_token) => {
+                // 校验使用现有 API base；只有成功后 REST token 才替换。
+                // WS manager 观察 generation 并负责重启连接。
+                match api.validate_and_set_token(new_token).await {
+                    Ok(config) => {
+                        forward_event(
+                            &events_tx,
+                            &ctx,
+                            GuiEvent::TokenApplied(config.token),
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        forward_event(&events_tx, &ctx, GuiEvent::Error(format!("token 校验失败: {e}"))).await;
+                    }
+                }
+            }
+        }
     }
+}
+
+/// 监听运行时 API 配置，保证同一时刻只有一个 WS 订阅任务。
+/// token/base 只有在 REST 配置变更成功后才会触发 generation 更新。
+fn spawn_ws_manager(api: Arc<api::ApiClient>, ws_tx: mpsc::Sender<ws::WsEvent>) {
+    let mut config_rx = api.subscribe_config_changes();
+    tokio::spawn(async move {
+        let mut cancel_tx = None::<watch::Sender<bool>>;
+        let mut running_generation = None::<u64>;
+        loop {
+            let config = api.config();
+            if running_generation != Some(config.generation) {
+                if let Some(previous) = cancel_tx.take() {
+                    let _ = previous.send(true);
+                }
+                let (next_cancel_tx, next_cancel_rx) = watch::channel(false);
+                cancel_tx = Some(next_cancel_tx);
+                running_generation = Some(config.generation);
+                let run_tx = ws_tx.clone();
+                tokio::spawn(async move {
+                    let _ = ws::run_ws(config.base, config.token, run_tx, next_cancel_rx).await;
+                });
+            }
+            if config_rx.changed().await.is_err() {
+                if let Some(cancel) = cancel_tx {
+                    let _ = cancel.send(true);
+                }
+                return;
+            }
+        }
+    });
 }
 
 /// 加载系统中文字体（egui 默认字体无 CJK 字形）。
@@ -170,8 +276,8 @@ fn main() -> eframe::Result<()> {
     let base = env_or("EAS_API_BASE", "http://127.0.0.1:8000");
     let token = env_or("EAS_API_TOKEN", "");
 
-    let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel::<GuiEvent>();
-    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
+    let (events_tx, events_rx) = tokio::sync::mpsc::channel::<GuiEvent>(CHANNEL_CAPACITY);
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<Command>(CHANNEL_CAPACITY);
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -191,13 +297,19 @@ fn main() -> eframe::Result<()> {
                 token: token.clone(),
                 ..Default::default()
             };
+            let thread_base = base.clone();
+            let thread_token = token.clone();
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
                     .build()
                     .expect("tokio runtime");
                 rt.block_on(supervisor(
-                    base, token, events_tx, cmd_rx, ctx,
+                    thread_base,
+                    thread_token,
+                    events_tx,
+                    cmd_rx,
+                    ctx,
                 ));
             });
 

@@ -608,12 +608,17 @@ class DefaultDesigner(Designer):
         {
           "description": "创建项目目录",
           "tool": "file_creator",
-          "inputs": {"path": "./project", "content": ""}
+          "inputs": {"path": "./project", "content": ""},
+          "acceptance": [{"type": "file_exists", "path": "./project", "kind": "directory"}]
         },
         {
           "description": "创建主程序",
           "tool": "file_creator",
-          "inputs": {"path": "./project/main.py", "content": "print('hello')"}
+          "inputs": {"path": "./project/main.py", "content": "print('hello')"},
+          "acceptance": [
+            {"type": "file_exists", "path": "./project/main.py", "kind": "file"},
+            {"type": "content_contains", "path": "./project/main.py", "text": "print('hello')"}
+          ]
         }
       ]
     }
@@ -626,7 +631,9 @@ class DefaultDesigner(Designer):
 1. 所有字符串用双引号 ""
 2. 最后一个元素后不要有逗号
 3. inputs 必须使用键 `path` 和 `content`，不要用 `file_path` / `file_content`
-4. 确保所有括号都正确闭合
+4. 每个能自动验证的步骤必须返回 `acceptance` 数组；支持 `file_exists`、`content_contains`、`exit_code`、`diff_scope`
+5. 无法自动验证的步骤返回 `acceptance: []`，并在 `check_criteria` 中说明需要人工检查
+6. 确保所有括号都正确闭合
 
 📁 路径语义（重要）：
 - 用户需求中明确给出的路径（无论绝对还是相对）必须**原样使用**，不得改写
@@ -793,13 +800,22 @@ class DefaultDesigner(Designer):
                         if not isinstance(inputs_value, dict):
                             inputs_value = {"value": str(inputs_value)}
                         
+                        raw_acceptance = step_data.get("acceptance", [])
+                        if not isinstance(raw_acceptance, list):
+                            raw_acceptance = []
+                        acceptance = [item for item in raw_acceptance if isinstance(item, dict)]
+                        check_criteria = step_data.get("check_criteria") or (
+                            "执行成功" if acceptance else "手动检查"
+                        )
+                        
                         steps.append(Step(
                             step_id=uuid4(),
                             order=len(steps) + 1,  # 自动生成序号
                             description=step_data.get("description", "未知步骤"),
-                            tool=step_data.get("tool", "manual"),
+                            tool=step_data.get("tool", "manual_tool"),
                             inputs=inputs_value,
-                            check_criteria="执行成功",  # 使用默认值
+                            check_criteria=check_criteria,
+                            acceptance=acceptance,
                             outputs=None,  # 使用默认值
                             status="Pending",
                         ))

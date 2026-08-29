@@ -87,6 +87,7 @@ class Database:
                     tool TEXT NOT NULL,
                     inputs TEXT NOT NULL,
                     check_criteria TEXT NOT NULL,
+                    acceptance_json TEXT,
                     outputs TEXT,
                     status TEXT NOT NULL,
                     executed_at TEXT,
@@ -113,6 +114,8 @@ class Database:
                 ("failure_reason", "ALTER TABLE steps ADD COLUMN failure_reason TEXT"),
                 ("is_obsolete", "ALTER TABLE steps ADD COLUMN is_obsolete INTEGER NOT NULL DEFAULT 0"),
                 ("max_retries", "ALTER TABLE steps ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 2"),
+                # 结构化验收规则（AcceptanceRunner 用）：JSON 数组，为空表示旧版字符串验收
+                ("acceptance_json", "ALTER TABLE steps ADD COLUMN acceptance_json TEXT"),
             ]:
                 if column not in existing_columns:
                     cursor.execute(ddl)
@@ -306,12 +309,12 @@ class Database:
                         cursor.execute("""
                             INSERT INTO steps (
                                 step_id, plan_id, segment_id, step_order,
-                                description, tool, inputs, check_criteria,
+                                description, tool, inputs, check_criteria, acceptance_json,
                                 outputs, status, executed_at, retry_count,
                                 parent_step_id, branch_version, state_snapshot,
                                 compressed_context, duration_ms, failure_reason, is_obsolete
                             )
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (
                             str(step.step_id),
                             str(plan.plan_id),
@@ -321,6 +324,7 @@ class Database:
                             step.tool,
                             json.dumps(step.inputs, ensure_ascii=False),
                             step.check_criteria,
+                            json.dumps(getattr(step, 'acceptance', []), ensure_ascii=False),
                             json.dumps(step.outputs, ensure_ascii=False) if step.outputs else None,
                             step_status,
                             step.executed_at.isoformat() if step.executed_at else None,
@@ -429,6 +433,7 @@ class Database:
                             'failure_reason': row['failure_reason'],
                             'compressed_context': row['compressed_context'],
                             'state_snapshot': json.loads(row['state_snapshot']) if row['state_snapshot'] else None,
+                            'acceptance': json.loads(row['acceptance_json']) if row['acceptance_json'] else [],
                             'is_obsolete': row['is_obsolete'],
                             'step_order': row['step_order'],
                             'branch_version': row['branch_version'],
@@ -446,6 +451,7 @@ class Database:
                             'outputs': json.loads(r['outputs']) if r['outputs'] else None,
                             'executed_at': r['executed_at'],
                             'retry_count': r['retry_count'],
+                            'acceptance': json.loads(r['acceptance_json']) if r['acceptance_json'] else [],
                             'is_obsolete': r['is_obsolete'],
                             'branch_version': r['branch_version'],
                         }
@@ -736,6 +742,20 @@ class Database:
             logger.exception("更新步骤状态机状态失败: {}", e)
             raise DatabaseError(f"更新步骤状态机状态失败: {e}") from e
 
+    def update_step_compressed_context(self, step_id: str, compressed_context: str) -> bool:
+        """仅更新步骤的上下文摘要，不覆盖 outputs/状态快照等已有验收证据。"""
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE steps SET compressed_context = ? WHERE step_id = ?",
+                    (compressed_context, str(step_id)),
+                )
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.exception("更新步骤上下文摘要失败: {}", e)
+            raise DatabaseError(f"更新步骤上下文摘要失败: {e}") from e
+
     def add_step_event(self, step_id: str, plan_id: str, event_type: str, event_data: Dict[str, Any] = None, branch_version: int = 1) -> bool:
         """
         记录步骤事件，用于状态机回放与时间旅行。
@@ -860,12 +880,12 @@ class Database:
                     cursor.execute("""
                         INSERT INTO steps (
                             step_id, plan_id, segment_id, step_order,
-                            description, tool, inputs, check_criteria,
+                            description, tool, inputs, check_criteria, acceptance_json,
                             outputs, status, executed_at, retry_count,
                             parent_step_id, branch_version, state_snapshot,
                             compressed_context, duration_ms, failure_reason, is_obsolete
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         str(uuid.uuid4()),
                         str(row["plan_id"]),
@@ -875,6 +895,7 @@ class Database:
                         row["tool"],
                         row["inputs"],
                         row["check_criteria"],
+                        row["acceptance_json"],
                         row["outputs"],
                         StepStatus.PENDING.value,
                         None,

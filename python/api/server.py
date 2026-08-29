@@ -423,6 +423,7 @@ def format_plan_for_frontend(plan) -> dict:
                 "tool": step.get('tool', ''),
                 "inputs": step.get('inputs', {}),
                 "expected_outputs": [step.get('check_criteria', '')] if step.get('check_criteria') else [],
+                "acceptance": step.get('acceptance') or [],
                 "status": step.get('status', 'Pending'),
                 # outputs 包含失败原因（{"error": ...}），不能丢，
                 # 否则前端只能看到 "Failed" 而无法得知原因。
@@ -974,9 +975,9 @@ async def _compress_step_context(plan_id: str, step_id: str, result: Dict[str, A
             timeout=10,
         )
         summary_text = summary.content.strip()
-        state.database.update_step_state_machine(
+        # 只更新摘要，不能用默认 outputs=None 覆盖刚保存的验收证据。
+        state.database.update_step_compressed_context(
             step_id=str(step_id),
-            status="Success",
             compressed_context=summary_text,
         )
         state.database.add_step_event(
@@ -1007,6 +1008,7 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
         tool=step.get("tool", ""),
         inputs=json.loads(step["inputs"]) if isinstance(step.get("inputs"), str) else step.get("inputs", {}),
         check_criteria=step.get("check_criteria", ""),
+        acceptance=json.loads(step["acceptance_json"]) if isinstance(step.get("acceptance_json"), str) and step.get("acceptance_json") else (step.get("acceptance") or []),
         outputs=json.loads(step["outputs"]) if isinstance(step.get("outputs"), str) and step.get("outputs") else step.get("outputs"),
         status=StepStatus(step.get("status", StepStatus.PENDING.value)),
         executed_at=datetime.fromisoformat(step["executed_at"]) if step.get("executed_at") else None,
@@ -1096,10 +1098,18 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
     blocked = bool(result.get("blocked"))
     error = result.get("error")
 
+    # acceptance 结果是独立验收证据，不信任工具自报内容。
+    acceptance_result = result.get("acceptance_result")
+    tool_output = result.get("output")
     if success and check_status != "failed":
         status = StepStatus.SUCCESS.value
-        outputs = dict(result.get("output") or {})
+        outputs = dict(tool_output) if isinstance(tool_output, dict) else {"value": tool_output}
         outputs["check_status"] = check_status
+        if acceptance_result is not None:
+            outputs["acceptance"] = acceptance_result
+            outputs["acceptance_status"] = result.get("acceptance_status")
+            outputs["acceptance_evidence"] = result.get("acceptance_evidence", [])
+            outputs["reward"] = result.get("reward")
         compressed = await _compress_step_context(plan_id, step_id, result)
         state.database.update_step_state_machine(
             step_id=str(step_id),
@@ -1109,14 +1119,28 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
             compressed_context=compressed,
             state_snapshot=result,
         )
-        if not state.database.add_step_event(step_id, plan_id, "success", {"duration_ms": duration_ms}):
+        event_data = {"duration_ms": duration_ms}
+        if acceptance_result is not None:
+            event_data.update({
+                "acceptance_status": result.get("acceptance_status"),
+                "acceptance_evidence": result.get("acceptance_evidence", []),
+                "reward": result.get("reward"),
+            })
+        if not state.database.add_step_event(step_id, plan_id, "success", event_data):
             logger.warning("step_event success 写入失败: {}", step_id)
         result["duration_ms"] = duration_ms
         return result
 
-    # 仅记录 failed 事件，不写入 Failed 状态，留给调用方在重试耗尽后统一写入
+    # 仅记录 failed 事件，不写入 Failed 状态，留给调用方在最终重试耗尽后统一写入
     failure_reason = error or check_status or "unknown"
-    if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": blocked, "duration_ms": duration_ms}):
+    event_data = {"reason": failure_reason, "blocked": blocked, "duration_ms": duration_ms}
+    if acceptance_result is not None:
+        event_data.update({
+            "acceptance_status": result.get("acceptance_status"),
+            "acceptance_evidence": result.get("acceptance_evidence", []),
+            "reward": result.get("reward"),
+        })
+    if not state.database.add_step_event(step_id, plan_id, "failed", event_data):
         logger.warning("step_event failed 写入失败: {}", step_id)
     result["duration_ms"] = duration_ms
     return result
