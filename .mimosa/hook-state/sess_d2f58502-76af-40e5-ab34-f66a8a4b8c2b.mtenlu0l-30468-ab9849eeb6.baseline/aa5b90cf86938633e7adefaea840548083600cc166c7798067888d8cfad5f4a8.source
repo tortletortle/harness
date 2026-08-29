@@ -1074,6 +1074,7 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
             tool_id=tool_id_for_approval,
             instruction=approval.instruction,
             inputs=step_model.inputs,
+            plan_id=plan_id,
             step_id=step_id,
             success=False,
             blocked=True,
@@ -1119,10 +1120,35 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
         # 兼容尚未升级 grant_id 参数的测试/第三方 Executor；正式 DefaultExecutor
         # 始终走带 Grant 的调用路径。
         execute_step = state.executor.execute_step
-        if "grant_id" in inspect.signature(execute_step).parameters:
-            result = await execute_step(step_model, grant_id=grant.grant_id)
-        else:
-            result = await execute_step(step_model)
+        signature = inspect.signature(execute_step).parameters
+        kwargs = {}
+        if "grant_id" in signature:
+            kwargs["grant_id"] = grant.grant_id
+        if "plan_id" in signature:
+            kwargs["plan_id"] = plan_id
+        result = dict(await execute_step(step_model, **kwargs))
+        result.setdefault("grant_id", grant.grant_id)
+        result.setdefault("grant_usage", grant.usage())
+        grant_denied = result.get("blocked_reason") in {
+            "grant_not_found",
+            "grant_revoked",
+            "grant_expired",
+            "tool_not_granted",
+            "resource_denied",
+            "budget_exceeded",
+            "grant_required",
+        }
+        state.database.add_step_event(
+            step_id,
+            plan_id,
+            "grant_denied" if grant_denied else "grant_allowed",
+            {
+                "grant_id": grant.grant_id,
+                "reason": result.get("blocked_reason") if grant_denied else "allowed",
+                "usage": result.get("grant_usage"),
+            },
+            branch_version=step_model.branch_version,
+        )
     finally:
         state.authorization_manager.revoke(grant.grant_id)
         state.database.add_step_event(
@@ -1131,29 +1157,6 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
             branch_version=step_model.branch_version,
         )
     duration_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
-    result = dict(result)
-    result.setdefault("grant_id", grant.grant_id)
-    result.setdefault("grant_usage", grant.usage())
-    grant_denied = result.get("blocked_reason") in {
-        "grant_not_found",
-        "grant_revoked",
-        "grant_expired",
-        "tool_not_granted",
-        "resource_denied",
-        "budget_exceeded",
-        "grant_required",
-    }
-    state.database.add_step_event(
-        step_id,
-        plan_id,
-        "grant_denied" if grant_denied else "grant_allowed",
-        {
-            "grant_id": grant.grant_id,
-            "reason": result.get("blocked_reason") if grant_denied else "allowed",
-            "usage": result.get("grant_usage"),
-        },
-        branch_version=step_model.branch_version,
-    )
 
     success = bool(result.get("success"))
     check_status = result.get("check_status")

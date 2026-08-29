@@ -191,6 +191,12 @@ def test_concurrent_execution_and_full_run(server, plan_fixture, workdir):
         for r in acceptance_results
     )
 
+    # 每次实际工具调用都应关联 Runtime 临时 Grant，审计只暴露 grant_id
+    # 与用量摘要，不暴露授权本体。
+    code, audit = _req(f"/api/audit-logs?limit=20&plan_id={plan_id}")
+    assert code == 200, f"audit logs -> {code} {audit!r}"
+    assert audit.get("logs") and all(log.get("grant_id") for log in audit["logs"])
+
     # 执行完成后可以再次执行（锁已释放）
     code3, d3 = _req(f"/api/plan/{plan_id}/execute", method="POST")
     assert code3 == 200, f"reexecute -> {code3} {d3!r}"

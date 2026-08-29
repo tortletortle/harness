@@ -27,8 +27,11 @@ async fn forward_event(
     ctx: &egui::Context,
     event: GuiEvent,
 ) -> bool {
-    let sent = if matches!(event, GuiEvent::Ws(ws::WsEvent::Log { .. })) {
-        events_tx.try_send(event).is_ok()
+    let sent = if matches!(&event, GuiEvent::Ws(ws::WsEvent::Log { .. })) {
+        match events_tx.try_send(event) {
+            Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => true,
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+        }
     } else {
         events_tx.send(event).await.is_ok()
     };

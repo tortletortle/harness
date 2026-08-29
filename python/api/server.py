@@ -39,6 +39,7 @@ from models import DesignDocument, ExecutionPlan, PlanSegment, Step, StepStatus,
 from api.auth import load_token, require_token, verify_token
 from api.approval import ApprovalManager, ApprovalTimeout
 from authorization import AuthorizationManager
+from capabilities import CapabilityRegistry, ToolCapabilityAdapter
 print("[SERVER MODULE LOADED]", __file__)
 from logging_config import get_logger
 
@@ -79,6 +80,7 @@ class AppState:
         self.designer: Optional[DefaultDesigner] = None
         self.executor: Optional[DefaultExecutor] = None
         self.tool_registry: Optional[ToolRegistry] = None
+        self.capability_registry: Optional[CapabilityRegistry] = None
         self.dispatcher = None  # Dispatcher实例
         self.database: Optional[Database] = None
         self.config: Dict[str, Any] = {}
@@ -160,6 +162,16 @@ async def lifespan(app: FastAPI):
         from tools import init_registry_with_ai
         tool_config = state.config.get("models", {}).get("designer", {})
         state.tool_registry = init_registry_with_ai(state.llm_client, tool_config)
+
+        # 普通同步工具通过 Adapter 暴露为统一 Capability；Agent Tool 以后
+        # 以同一 registry 注册，不创建层级化子 Agent。
+        state.capability_registry = CapabilityRegistry()
+        for tool_meta in state.tool_registry.list_tools():
+            tool_id = tool_meta.get("tool_id")
+            if tool_id:
+                state.capability_registry.register(
+                    ToolCapabilityAdapter(state.tool_registry, tool_id)
+                )
         
         # 初始化 Dispatcher
         from dispatcher import Dispatcher
@@ -1615,6 +1627,29 @@ async def get_tools():
     except Exception as e:
         logger.exception("查询工具列表失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/capabilities", dependencies=[Depends(require_token)])
+async def get_capabilities():
+    """获取统一 Capability 清单（普通工具 Adapter + 后续 Agent Tool）。"""
+    if state.capability_registry is None:
+        return {"success": True, "capabilities": []}
+    return {
+        "success": True,
+        "capabilities": [
+            {
+                "id": spec.id,
+                "version": spec.version,
+                "kind": spec.kind,
+                "required_permissions": list(spec.required_permissions),
+                "side_effect": spec.side_effect,
+                "idempotent": spec.idempotent,
+                "budget_spec": spec.budget_spec,
+                "can_spawn_agents": spec.can_spawn_agents,
+            }
+            for spec in state.capability_registry.list_specs()
+        ],
+    }
+
 
 @app.get("/api/config", dependencies=[Depends(require_token)])
 async def get_config():

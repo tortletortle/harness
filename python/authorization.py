@@ -75,6 +75,7 @@ class CapabilityGrant:
     denied_resources: tuple[str, ...]
     allowed_hosts: tuple[str, ...]
     workspace_root: str
+    allow_absolute_paths: bool
     limits: GrantLimits
     approval_required: bool
     issued_at: datetime
@@ -82,12 +83,16 @@ class CapabilityGrant:
     _issued_monotonic: float = field(repr=False, default_factory=time.monotonic)
     used_tool_calls: int = 0
     used_model_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
     revoked: bool = False
 
     def usage(self) -> Dict[str, Any]:
         return {
             "tool_calls": self.used_tool_calls,
             "model_calls": self.used_model_calls,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
             "max_tool_calls": self.limits.max_tool_calls,
             "max_model_calls": self.limits.max_model_calls,
             "elapsed_seconds": max(0.0, time.monotonic() - self._issued_monotonic),
@@ -110,8 +115,13 @@ class AuthorizationManager:
         deny_resources: Optional[Iterable[str]] = None,
         allowed_hosts: Optional[Iterable[str]] = None,
         workspace_root: Optional[Path | str] = None,
+        allow_absolute_paths: bool = True,
+        require_grant: bool = False,
     ) -> None:
-        self.enforce = bool(enforce)
+        self.require_grant = bool(require_grant)
+        # require_grant 是强制模式，即使调用方误配 enforce=false 也不能绕过。
+        self.enforce = bool(enforce) or self.require_grant
+        self.allow_absolute_paths = bool(allow_absolute_paths)
         self.default_ttl_seconds = max(0.01, float(default_ttl_seconds))
         self.default_limits = GrantLimits(
             max_tool_calls=max(1, int(default_max_tool_calls)),
@@ -136,6 +146,8 @@ class AuthorizationManager:
             deny_resources=config.get("deny_resources"),
             allowed_hosts=config.get("allowed_hosts"),
             workspace_root=config.get("workspace_root"),
+            allow_absolute_paths=config.get("allow_absolute_paths", True),
+            require_grant=config.get("require_grant", False),
         )
 
     def issue_for_step(
@@ -152,7 +164,10 @@ class AuthorizationManager:
         inputs = getattr(step, "inputs", {}) or {}
         # workspace 根目录是 Runtime 为命令/包/Git 工具补入的隐式 cwd/path，
         # 作为已授权资源加入；其余输入路径仍按精确资源匹配。
-        resources = list(dict.fromkeys([str(root), *self._extract_resources(inputs, root)]))
+        resources = list(dict.fromkeys([
+            str(root),
+            *self._extract_resources(inputs, root, self.allow_absolute_paths),
+        ]))
         hosts = self._extract_hosts(inputs)
         issued = datetime.utcnow()
         grant = CapabilityGrant(
@@ -165,6 +180,7 @@ class AuthorizationManager:
             denied_resources=self.deny_resources,
             allowed_hosts=self.allowed_hosts,
             workspace_root=str(root),
+            allow_absolute_paths=self.allow_absolute_paths,
             limits=self.default_limits,
             approval_required=bool(approval_required),
             issued_at=issued,
@@ -210,7 +226,7 @@ class AuthorizationManager:
             return GrantDecision(True, "allowed", "工具调用已获授权", grant_id, grant.usage())
 
     def record_model_call(self, grant_id: str) -> GrantDecision:
-        """Reserve a model-call slot for future AgentSession integration."""
+        """Reserve a model-call slot before sending a request upstream."""
         with self._lock:
             grant = self._grants.get(grant_id)
             if grant is None:
@@ -223,6 +239,20 @@ class AuthorizationManager:
                 return GrantDecision(False, "budget_exceeded", "Grant 模型调用次数已用尽", grant_id, grant.usage())
             grant.used_model_calls += 1
             return GrantDecision(True, "allowed", "模型调用已获授权", grant_id, grant.usage())
+
+    def record_model_usage(self, grant_id: str, usage: Optional[Dict[str, Any]] = None) -> GrantDecision:
+        """Record provider-reported token usage after an authorized call."""
+        with self._lock:
+            grant = self._grants.get(grant_id)
+            if grant is None:
+                return GrantDecision(False, "grant_not_found", "Grant 不存在", grant_id)
+            usage = usage or {}
+            try:
+                grant.input_tokens += int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0)
+                grant.output_tokens += int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0)
+            except (TypeError, ValueError):
+                return GrantDecision(False, "invalid_usage", "模型 usage 不是有效数字", grant_id, grant.usage())
+            return GrantDecision(True, "recorded", "模型 usage 已记录", grant_id, grant.usage())
 
     def revoke(self, grant_id: str) -> bool:
         """Revoke a grant; subsequent calls fail even before expiry."""
@@ -256,7 +286,9 @@ class AuthorizationManager:
             value = inputs.get(field_name)
             if not isinstance(value, (str, Path)) or not str(value).strip():
                 continue
-            resource = self._canonical_resource(str(value), Path(grant.workspace_root))
+            resource = self._canonical_resource(
+                str(value), Path(grant.workspace_root), grant.allow_absolute_paths
+            )
             if resource is None:
                 return f"资源路径越界: {field_name}={value!r}"
             relative = self._relative_resource(resource, Path(grant.workspace_root))
@@ -275,13 +307,18 @@ class AuthorizationManager:
         return None
 
     @classmethod
-    def _extract_resources(cls, inputs: Dict[str, Any], root: Path) -> List[str]:
+    def _extract_resources(
+        cls,
+        inputs: Dict[str, Any],
+        root: Path,
+        allow_absolute_paths: bool = True,
+    ) -> List[str]:
         resources: List[str] = []
         for field_name in _PATH_FIELDS:
             value = inputs.get(field_name)
             if not isinstance(value, (str, Path)) or not str(value).strip():
                 continue
-            canonical = cls._canonical_resource(str(value), root)
+            canonical = cls._canonical_resource(str(value), root, allow_absolute_paths)
             if canonical is not None:
                 resources.append(canonical)
         return list(dict.fromkeys(resources))
@@ -295,10 +332,16 @@ class AuthorizationManager:
         return [host] if host else []
 
     @staticmethod
-    def _canonical_resource(value: str, root: Path) -> Optional[str]:
+    def _canonical_resource(value: str, root: Path, allow_absolute_paths: bool = True) -> Optional[str]:
         raw = Path(value)
         if raw.is_absolute():
-            return str(raw.resolve())
+            candidate = raw.resolve()
+            if not allow_absolute_paths:
+                try:
+                    candidate.relative_to(root)
+                except ValueError:
+                    return None
+            return str(candidate)
         candidate = (root / raw).resolve()
         try:
             candidate.relative_to(root)

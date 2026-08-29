@@ -150,7 +150,9 @@ class AuthorizationManager:
         root = Path(workspace_root).resolve() if workspace_root else self.workspace_root
         tool = str(getattr(step, "tool", "")).split(":", 1)[0]
         inputs = getattr(step, "inputs", {}) or {}
-        resources = self._extract_resources(inputs, root)
+        # workspace 根目录是 Runtime 为命令/包/Git 工具补入的隐式 cwd/path，
+        # 作为已授权资源加入；其余输入路径仍按精确资源匹配。
+        resources = list(dict.fromkeys([str(root), *self._extract_resources(inputs, root)]))
         hosts = self._extract_hosts(inputs)
         issued = datetime.utcnow()
         grant = CapabilityGrant(
@@ -180,8 +182,8 @@ class AuthorizationManager:
         inputs: Optional[Dict[str, Any]] = None,
     ) -> GrantDecision:
         """Authorize and reserve one tool-call slot before side effects occur."""
-        if not self.enforce and not grant_id:
-            return GrantDecision(True, "enforcement_disabled", "授权检查已关闭")
+        if not self.enforce:
+            return GrantDecision(True, "enforcement_disabled", "授权检查已关闭", grant_id)
         if not grant_id:
             return GrantDecision(False, "grant_required", "Runtime 执行必须携带临时 Grant")
 
@@ -258,7 +260,7 @@ class AuthorizationManager:
             if resource is None:
                 return f"资源路径越界: {field_name}={value!r}"
             relative = self._relative_resource(resource, Path(grant.workspace_root))
-            if self._matches_any(relative, grant.denied_resources) or self._matches_any(Path(relative).name, grant.denied_resources):
+            if self._matches_denied_resource(relative, grant.denied_resources):
                 return f"资源被拒绝: {relative}"
             if grant.allowed_resources and resource not in grant.allowed_resources:
                 return f"资源不在本步骤授权范围: {relative}"
@@ -320,6 +322,25 @@ class AuthorizationManager:
             or fnmatch.fnmatchcase(value, str(pattern).replace("\\", "/").lstrip("./"))
             for pattern in patterns
         )
+
+    @classmethod
+    def _matches_denied_resource(cls, relative: str, patterns: Iterable[str]) -> bool:
+        """Match both full paths and sensitive directory/file components."""
+        relative = relative.replace("\\", "/").lstrip("./")
+        parts = relative.split("/")
+        for pattern in patterns:
+            normalised = str(pattern).replace("\\", "/").lstrip("./")
+            if cls._matches_any(relative, (normalised,)):
+                return True
+            # A bare .env pattern denies .env at any depth; .git/** denies
+            # the .git component and everything below it.
+            if "/" not in normalised and any(fnmatch.fnmatchcase(part, normalised) for part in parts):
+                return True
+            if normalised.endswith("/**"):
+                prefix = normalised[:-3].rstrip("/")
+                if prefix and prefix in parts:
+                    return True
+        return False
 
     @staticmethod
     def _normalise_host(host: str) -> str:

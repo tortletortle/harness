@@ -1,276 +1,209 @@
-## Runtime 临时 Grant 第一阶段实施计划
+## 下一阶段：Grant 强制化 + Agent 即工具
 
 ### 目标
-把现有“按工具 ID 判断是否审批”升级为真正的调用前授权：
+在当前唯一设计稿 `docs/AGENT_HARNESS_DESIGN.md` 的 1.1-draft 基础上继续迭代，不新建平行方案：
 
 ```text
-步骤开始
-  ↓
-Runtime 签发一次性 Grant
-  ↓
-校验工具、资源、预算、时效、撤销状态
-  ↓
-必要时复用现有审批等待
-  ↓
-允许执行或结构化拒绝
-  ↓
-步骤结束立即撤销 Grant
+API/Runtime 步骤
+  → 系统签发 Grant
+  → 调用前校验
+  → 工具执行
+  → 用量记录
+  → 自动撤销
+
+Agent Tool
+  = 一个受 Grant 约束的异步 Capability
+  ≠ 可以自由创建子 Agent 的管理者
 ```
 
-Agent 只收到可执行结果，不持有 Grant 管理器，也不能自己创建、复制或扩大授权。
+## 阶段 A：Grant 强制化
 
-## 1. 新增授权模块
+### 1. 统一授权入口
+
+修改：
+
+- `python/authorization.py`
+- `python/executor/__init__.py`
+- `python/api/server.py`
+
+改动：
+
+- 增加 `require_grant` 运行模式；真实 API/状态机路径开启，直接使用 Executor 的旧单测路径保留显式 legacy 兼容模式。
+- `DefaultExecutor.execute_step()` 在执行前必须验证：Grant 存在、未撤销、未过期、工具匹配、资源匹配、调用次数未超限。
+- 将 `grant_id` 和授权决定写入工具审计及步骤事件。
+- 工具拒绝时保证不进入 `ToolRegistry.execute_tool()`。
+- 所有异常、超时、取消路径都在 `finally` 撤销 Grant。
+
+### 2. 收紧资源策略但保留现有 E2E 语义
+
+修改：
+
+- `python/authorization.py`
+- `config/models.yaml`
+- `tests/python/test_authorization.py`
+
+规则：
+
+- 相对路径必须位于 Grant 的 workspace root 内。
+- 绝对路径不再获得“整个外部目录”权限，只授权当前步骤明确声明的精确路径；`.env`、`.git/**` 等敏感路径始终拒绝。
+- 增加 `allow_absolute_paths` 配置项：兼容模式允许“明确声明的绝对路径”，严格模式拒绝 workspace 外绝对路径。默认先使用兼容模式，以保证当前真实 E2E 不回归。
+- 命令、包安装和 Git 未指定 cwd/path 时继续强制绑定 Grant workspace。
+- 网络 URL 只有在 `allowed_hosts` 明确配置时才允许；现有 WebFetcher URL 校验保留为第二层。
+
+### 3. 真正启用模型调用预算
+
+新增/修改：
+
+- `python/authorization.py`
+- `python/llm_client/__init__.py`
+- 必要时新增 `python/grant_llm_client.py`
+
+采用显式绑定方式，不用全局隐式变量：
+
+```python
+await grant_llm_client.chat(grant_id, ...)
+```
+
+规则：
+
+- 每次 Agent Tool 的模型调用先调用 `record_model_call(grant_id)`。
+- 超过 `max_model_calls` 返回 `budget_exceeded`，不请求上游模型。
+- 记录 input/output token（Provider 返回 usage 时）和调用次数；当前 Designer 顶层生成仍属于系统操作，不占步骤 Grant 预算。
+- 不把 Grant 内容或授权规则注入模型上下文，只向模型提供任务数据和必要工具 Schema。
+
+## 阶段 B：Agent 作为统一 Capability
+
+### 4. 新增异步 Capability/Agent Tool 契约
 
 新增：
 
-- `python/authorization.py`
+- `python/capabilities.py`
 
 定义：
 
 ```python
-CapabilityGrant
-GrantLimits
-GrantDecision
-AuthorizationManager
+CapabilitySpec
+  id / version / kind
+  input_schema / output_schema
+  required_permissions
+  side_effect / idempotent
+  budget_spec / acceptance_spec
+
+CapabilityRequest
+  work_item_id / goal / inputs / artifact_refs
+  allowed_tools / acceptance / grant_id
+
+CapabilityResult
+  status / output / artifacts / facts
+  acceptance_evidence / usage
+  error
+
+AgentTool(Protocol)
+  spec()
+  async run(request, runtime_context) -> CapabilityResult
 ```
 
-Grant 至少包含：
+约束：
 
-```text
-grant_id
-plan_id
-step_id
-subject
-allowed_tools
-allowed_resources
- denied_resources
-approval_required
-expires_at
-max_tool_calls
-max_model_calls
-max_elapsed_seconds
-used_tool_calls
-used_model_calls
-revoked
-```
+- `kind` 支持 `deterministic_tool`、`agent_tool`、`human_tool`。
+- `AgentTool` 默认 `can_spawn_agents = false`、`max_nested_depth = 0`。
+- Runtime 传入 Grant，Agent Tool 不能签发、复制或扩大 Grant。
+- Agent 之间只传 `artifact_refs` 和结构化 facts，不传完整思考历史。
 
-`AuthorizationManager` 提供：
-
-```text
-issue_for_step(plan_id, step, workspace_root)
-authorize(grant_id, tool_id, instruction, inputs)
-record_usage(grant_id, ...)
-revoke(grant_id)
-```
-
-Grant 只保存在服务进程内存中；数据库和模型上下文只记录 `grant_id`、决定和用量摘要，不保存授权本体。
-
-## 2. 资源匹配策略
-
-第一版不引入 OPA，也不执行任意动态策略代码，使用固定类型规则 + glob 匹配：
-
-### 文件资源
-
-从步骤输入提取已知路径字段：
-
-```text
-path
-file_path
-cwd
-requirements_file
-package_json
-output
-save_to
-```
-
-相对路径相对当前 workspace 解析；路径先 `resolve()` 后做 workspace 边界检查；直接拒绝：
-
-```text
-.env
-.env.*
-.git/**
-```
-
-### 网络资源
-
-从 `url` 提取主机名，按 Grant 的 `allowed_hosts` 匹配；没有允许列表时不因 Grant 自动放行新的网络目标，仍保留现有 WebFetcher URL 校验。
-
-### 命令资源
-
-第一版只约束 command_runner 的 `cwd` 和调用次数/时限，不把 shell 字符串伪装成完整沙箱；现有危险命令拦截继续作为第二层防护。命令内容 allowlist 和 OS/容器沙箱列为后续阶段。
-
-## 3. Grant 默认策略与配置
-
-在 `config/models.yaml` 增加可选的 `authorization` 配置读取（不修改现有密钥配置）：
-
-```yaml
-authorization:
-  enforce: true
-  default_ttl_seconds: 600
-  default_max_tool_calls: 1
-  default_max_model_calls: 3
-  default_max_elapsed_seconds: 600
-  deny_resources:
-    - .env
-    - .env.*
-    - .git/**
-```
-
-未配置时使用同样的安全默认值；对没有可识别资源的旧步骤，Grant 允许其声明的工具在当前 workspace 内运行，继续兼容旧计划。
-
-现有 `approval.required_tools` 仍独立生效：
-
-```text
-Grant：系统范围限制
-Approval：用户是否批准这一次操作
-```
-
-本阶段不强行把审批列表改成非空，避免旧任务自动卡在等待状态；高风险工具由用户显式配置审批，Grant 本身仍会限制工具、路径、次数和时效。
-
-## 4. 接入 Executor 和状态机
+### 5. 与现有 ToolRegistry 分层兼容
 
 修改：
 
+- `python/tools/__init__.py`
 - `python/executor/__init__.py`
-- `python/api/server.py`
+- 新增 `python/capabilities.py` 的 registry/adapter
 
-### Executor
-
-把 `execute_step` 扩展为兼容形式：
-
-```python
-execute_step(step, grant_id=None)
-```
-
-在调用 `ToolRegistry.execute_tool()` 之前：
+不把异步 Agent 硬改成同步 `ToolRegistry.execute_tool()`；采用：
 
 ```text
-校验 grant 存在
-  → 未撤销
-  → 未过期
-  → 工具匹配
-  → 输入资源匹配
-  → 用量/时间未超限
-  → 消耗一次 tool call
-  → 通过才执行工具
+ToolRegistry.execute_tool()       → 保留现有同步普通工具
+CapabilityRegistry.run()          → 新增异步 Agent/人工 Capability
+Runtime.dispatch_capability()     → 统一 Grant、事件、预算、验收
 ```
 
-拒绝时返回现有结果协议兼容的结构化结果：
+增加一个 `ToolCapabilityAdapter`，让现有普通工具也能以 Capability 方式被 Designer 调度；这样普通工具和 Agent Tool 最终共享同一份输入/输出/权限/验收协议。
 
-```json
-{
-  "success": false,
-  "blocked": true,
-  "blocked_reason": "resource_denied | tool_not_granted | grant_expired | budget_exceeded | grant_revoked",
-  "retryable": false,
-  "grant_id": "..."
-}
-```
-
-绝不调用底层工具；这成为现有工具内部安全检查之外的 Runtime 第二道授权闸门。
-
-没有传 `grant_id` 的直接 Executor 调用保留旧行为，避免破坏现有单元测试；真实 API 状态机路径始终签发并传入 Grant。
-
-### Server
-
-在 `_execute_step_with_state_machine()` 中：
-
-1. 从当前 step 生成临时 Grant；
-2. 将 `grant_id` 写入 `running`/审批相关事件；
-3. 先执行现有工具审批等待；
-4. 调用 `state.executor.execute_step(step_model, grant_id=grant_id)`；
-5. 在成功、失败、异常、取消路径统一 `finally: revoke(grant_id)`；
-6. 将授权决定、拒绝原因和使用次数写入 step event/state snapshot。
-
-在 `AppState` 和 lifespan 中初始化 `AuthorizationManager`，读取可选 `authorization` 配置。
-
-## 5. 审计和可观测性
-
-修改：
-
-- `python/database.py`
-- 必要的审计测试
-
-给 `audit_logs` 增加可选 `grant_id` 列并自动迁移；保留旧数据库兼容。
-
-每次授权事件至少记录：
-
-```text
-grant_issued
-grant_allowed
-grant_denied
-grant_revoked
-```
-
-审计中保存：
-
-```text
-grant_id
-plan_id
-step_id
-tool_id
-资源判断结果
-拒绝原因
-used_tool_calls
-created_at / expires_at
-```
-
-不记录完整授权秘密或模型思考内容。
-
-## 6. 回归测试
+### 6. 先实现可测试的 Agent Tool 骨架
 
 新增：
 
-- `tests/python/test_authorization.py`
+- `python/agent_tools.py`
+- `tests/python/test_agent_tools.py`
 
-覆盖：
+第一版不做复杂 Coding Agent，而实现：
 
-1. Grant 签发字段完整；
-2. 正确工具允许，错误工具拒绝；
-3. workspace 内路径允许；
-4. workspace 外相对路径拒绝；
-5. `.env`、`.git/**` 拒绝；
-6. 允许的绝对路径按现有 EAS 语义工作；
-7. 过期 Grant 拒绝；
-8. revoke 后拒绝；
-9. `max_tool_calls` 超限拒绝；
-10. 时间预算超限拒绝；
-11. 拒绝时底层 Registry 不被调用；
-12. 拒绝结果 `blocked_reason` 和 `retryable` 正确。
+- `BaseAgentTool`：统一读取 WorkItem、Grant 和 Artifact 引用。
+- `SingleTurnAgentTool`：一次模型调用，返回结构化 `CapabilityResult`；不能调用未列入 Grant 的工具，不能创建子 Agent。
+- `FakeAgentTool`：测试用实现，用于验证 Runtime 调度、预算和拒绝语义。
 
-扩展：
+先用 FakeAgentTool 验证协议，再把现有 Designer/Executor 接入；Coding/Test/Review Agent 作为后续具体实现，不在这一轮伪装成已经完成。
 
-- `tests/python/test_audit_log.py`：grant_id 落库；
-- `tests/python/test_tool_approval.py`：审批与 Grant 同时存在时，先审批再授权执行；
-- 新增 Executor 集成用例：授权拒绝不会产生工具副作用；
-- `tests/python/test_exec_e2e.py`：真实 API E2E 验证正常文件创建仍通过，并检查审计中有 grant 事件。
+### 7. Runtime 调度与验收
 
-## 7. 验证命令
+修改：
 
-```bash
-python -m pytest tests/python/test_authorization.py -q --no-cov
-python -m pytest tests/python -q --no-cov --ignore=tests/python/test_exec_e2e.py
-python -m pytest tests/python/test_exec_e2e.py -q --no-cov
-cd frontend && npm run test
-cd frontend && npm run build
+- `python/api/server.py`
+- `python/acceptance_runner.py`（仅在需要时扩展结果类型）
+- `python/database.py`（必要的事件/审计字段复用现有 JSON 容器）
+
+Agent Tool 执行流程：
+
+```text
+Designer WorkItem
+  → Runtime issue Grant
+  → CapabilityRegistry.run
+  → grant_llm_client.record_model_call
+  → Agent 返回 ToolCall/Final/NeedsInput
+  → Runtime 再次校验每个内部工具调用
+  → 写 Artifact/Event/Usage
+  → AcceptanceRunner 验收
+  → revoke Grant
 ```
 
-成功标准：
+本轮只允许单轮 Agent Tool，不实现 Agent 内部任意多轮工具循环；这样先验证“Agent 是工具”的边界和成本，而不是重新造一个失控 Agent Loop。
 
-- 越权工具/路径/过期/超预算均在工具调用前被拒绝；
-- 被拒绝时底层工具没有运行；
-- Grant 在所有终止路径撤销；
-- 旧测试和真实 LLM E2E 不回归；
-- 审计可按 grant_id 追溯，但模型拿不到授权本体。
+### 8. 测试覆盖
 
-## 8. 明确边界
+新增/扩展：
 
-本阶段不实现：
+- `tests/python/test_authorization.py`
+  - API 强制 Grant；无 Grant、错误工具、越界资源、敏感资源、过期、撤销、次数/模型预算拒绝。
+- `tests/python/test_grant_llm_client.py`
+  - 模型预算在上游请求前扣减；超限不发请求；usage 记录。
+- `tests/python/test_agent_tools.py`
+  - Agent Tool 只收到受限 WorkItem；不能 spawn；Grant 不可扩大；结构化结果和 Artifact 引用。
+- `tests/python/test_capabilities.py`
+  - 普通 Tool Adapter 与 Agent Tool 共用 Capability 契约。
+- `tests/python/test_exec_e2e.py`
+  - 真实 LLM 文件创建仍成功；Grant issued/allowed/revoked 事件和审计可查。
 
-- OPA/Cerbos 外置策略服务；
-- shell 命令内容级完整安全分析；
-- Docker/Firecracker/Windows Job Object 等真正 OS 沙箱；
-- 跨进程/分布式 Grant；
-- pass^3 和 Run/Attempt 统计。
+验证命令：
 
-因此第一阶段的安全承诺是：**调用前的工具、路径、次数、时效和撤销控制**；不是完整的宿主机沙箱。
+```bash
+python -m pytest tests/python/test_authorization.py tests/python/test_grant_llm_client.py tests/python/test_agent_tools.py tests/python/test_capabilities.py -q --no-cov
+python -m pytest tests/python -q --no-cov --ignore=tests/python/test_exec_e2e.py
+python -m pytest tests/python/test_exec_e2e.py -q --no-cov
+cd frontend && npm run test && npm run build
+```
+
+### 9. 不在本轮实现
+
+- OPA/Cerbos 外置策略服务。
+- Docker/Firecracker/OS 级沙箱。
+- Agent 任意多轮工具循环。
+- Agent 动态创建 Agent 或递归子图。
+- 多写 Agent worktree 并行。
+- `pass^3` 多 Run 统计。
+
+### 10. 设计稿更新
+
+完成后只更新：
+
+- `docs/AGENT_HARNESS_DESIGN.md`：新增 Grant 强制化和 Agent Tool 实施记录、版本号和遗留边界。
+
+保留已验证事实：当前 EAS 的 DB 状态机、AcceptanceRunner、血缘回滚和普通 ToolRegistry 不推翻；新增 Capability 层作为兼容适配层。

@@ -102,6 +102,24 @@ def test_absolute_path_keeps_existing_explicit_path_semantics(tmp_path):
     assert result.allowed
 
 
+def test_require_grant_mode_rejects_missing_id(tmp_path):
+    manager = _manager(tmp_path, require_grant=True)
+    result = manager.authorize(None, "file_creator", "create_file", {"path": "a.txt"})
+    assert not result.allowed
+    assert result.reason == "grant_required"
+
+
+def test_strict_mode_rejects_explicit_external_absolute_path(tmp_path):
+    manager = _manager(tmp_path, allow_absolute_paths=False)
+    external = tmp_path.parent / "external.txt"
+    grant = manager.issue_for_step("p", _step(path=str(external)))
+    result = manager.authorize(
+        grant.grant_id, "file_creator", "create_file", {"path": str(external)}
+    )
+    assert not result.allowed
+    assert result.reason == "resource_denied"
+
+
 def test_expired_and_revoked_grants_are_denied(tmp_path):
     manager = _manager(tmp_path, default_ttl_seconds=0.01)
     grant = manager.issue_for_step("p", _step())

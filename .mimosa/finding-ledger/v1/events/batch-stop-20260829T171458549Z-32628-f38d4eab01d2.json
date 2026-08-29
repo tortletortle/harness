@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20260829T171458549Z-32628-f38d4eab01d2",
+  "runId": "20260829T171458549Z-32628-f38d4eab01d2",
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "707df878f28b49c3fde27e366b609d67a6a3bd17",
+  "diffHash": "34944af72bf4bf5b4423ddb6addc6a79501f9a192f1ad26dda0eee1816a18c3a",
+  "rulesVersion": "unavailable",
+  "sessionHash": "e66d9d3f708deee70d6a7941d9f1cf026edcc809b6bf1dcb0021121f3a55c0d5",
+  "reportRef": ".mimosa/reports/task-review-sess_d2f58502-76af-40e5-ab34-f66a8a4b8c2b-20260829T171458549Z-32628-f38d4eab01d2.json",
+  "events": [],
+  "observedFindingIds": [
+    "mimosa-f11d8ea2e24b69bb446b1ee5",
+    "mimosa-516ea854ab13aa4cb9c372d0",
+    "mimosa-0335e0e518fb48ffcd058b7b",
+    "mimosa-4d3378778468d4dac06e361f",
+    "mimosa-772eb18aa4d775cb23aee9e8"
+  ],
+  "verifiedFiles": [
+    {
+      "file": "tests/python/test_authorization.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "python/authorization.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "tests/python/test_exec_e2e.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "python/executor/__init__.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "python/api/server.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    }
+  ],
+  "recordedAt": "2026-08-29T17:14:59.288Z"
+}

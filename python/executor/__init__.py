@@ -173,7 +173,9 @@ class DefaultExecutor(ExecutorAI):
                 elif tool_id == "git_operator" and not effective_inputs.get("path"):
                     # Git 工具的默认 path="." 由工具进程解释，必须显式绑定到 Grant workspace。
                     effective_inputs["path"] = grant.workspace_root
-            if self.authorization_manager is not None and grant_id is not None:
+            if self.authorization_manager is not None and (
+                grant_id is not None or self.authorization_manager.require_grant
+            ):
                 decision = self.authorization_manager.authorize(
                     grant_id, tool_id, instruction, effective_inputs,
                 )
