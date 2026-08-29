@@ -133,3 +133,16 @@ retry:
   backoff_factor: 2
   max_attempts: 3
   timeout: 60
+# Runtime 临时授权：每个 API 步骤单独签发，执行后撤销。
+# allowed_hosts 留空表示网络工具必须显式配置目标主机，不会被 Grant 默认放行。
+authorization:
+  enforce: true
+  default_ttl_seconds: 600
+  default_max_tool_calls: 1
+  default_max_model_calls: 3
+  default_max_elapsed_seconds: 600
+  deny_resources:
+    - .env
+    - .env.*
+    - .git/**
+  allowed_hosts: []

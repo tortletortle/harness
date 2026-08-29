@@ -83,7 +83,11 @@ class DefaultExecutor(ExecutorAI):
         action = request.get("action")
 
         if action == "execute_step":
-            result = await self.execute_step(Step(**request["step"]))
+            result = await self.execute_step(
+                Step(**request["step"]),
+                grant_id=request.get("grant_id"),
+                plan_id=request.get("plan_id"),
+            )
             return result
         elif action == "check_result":
             step = Step(**request["step"])
@@ -108,7 +112,7 @@ class DefaultExecutor(ExecutorAI):
     async def health_check(self) -> bool:
         return True
 
-    def _audit(self, tool_id: str, instruction: str, inputs: Dict[str, Any], success, blocked: bool, block_reason: str = None, step: Step = None, grant_id: str = None):
+    def _audit(self, tool_id: str, instruction: str, inputs: Dict[str, Any], success, blocked: bool, block_reason: str = None, step: Step = None, grant_id: str = None, plan_id: str = None):
         """写入审计日志，失败不影响主流程"""
         if not self.database:
             return
@@ -117,6 +121,7 @@ class DefaultExecutor(ExecutorAI):
                 tool_id=tool_id,
                 instruction=instruction,
                 inputs=inputs,
+                plan_id=plan_id,
                 step_id=str(step.step_id) if step else None,
                 success=success,
                 blocked=blocked,
@@ -127,7 +132,7 @@ class DefaultExecutor(ExecutorAI):
         except Exception as e:
             logger.warning("审计日志写入失败: {}", e)
 
-    async def execute_step(self, step: Step, grant_id: str = None) -> Dict[str, Any]:
+    async def execute_step(self, step: Step, grant_id: str = None, plan_id: str = None) -> Dict[str, Any]:
         """执行单个步骤；grant_id 存在时先经过 Runtime 授权。"""
 
         logger.info("执行步骤 {}: {}", step.order, step.description)
@@ -178,6 +183,7 @@ class DefaultExecutor(ExecutorAI):
                         block_reason=decision.reason,
                         step=step,
                         grant_id=grant_id,
+                        plan_id=plan_id,
                     )
                     return {
                         "success": False,
@@ -215,6 +221,7 @@ class DefaultExecutor(ExecutorAI):
                     block_reason="Step execution timeout",
                     step=step,
                     grant_id=grant_id,
+                    plan_id=plan_id,
                 )
                 return {
                     "success": False,
@@ -243,6 +250,7 @@ class DefaultExecutor(ExecutorAI):
                 block_reason=error_code if blocked else None,
                 step=step,
                 grant_id=grant_id,
+                plan_id=plan_id,
             )
 
             # P0-b 第二道守卫（OpenHands run_action 双闸思路）：
