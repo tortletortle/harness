@@ -141,6 +141,20 @@ class DesignCache:
         
         self._save_cache()
     
+    def remove(self, key: str) -> bool:
+        """
+        移除指定键的缓存条目。
+
+        Returns:
+            True 表示命中并移除；False 表示键不存在。
+        """
+        k = self._make_key(key)
+        if k in self.cache:
+            del self.cache[k]
+            self._save_cache()
+            return True
+        return False
+
     def clear(self):
         """清空所有缓存"""
         self.cache = {}

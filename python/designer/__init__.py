@@ -571,6 +571,11 @@ class DefaultDesigner(Designer):
             )
             
             logger.info("设计书修订完成")
+            # 反馈必须跟随修订后的设计书进入计划生成，否则用户在拒绝时
+            # 给出的具体要求（如文件名、路径）会在下一环节丢失。
+            revised_design.user_comments = feedback
+            # 同 design_id 的旧计划缓存作废：反馈改变了计划应当遵守的约束
+            self.plan_cache.remove(str(original_design.design_id))
             return revised_design
             
         except Exception as e:
@@ -658,6 +663,10 @@ class DefaultDesigner(Designer):
 
 **所需工具：**
 {[tool.tool_id for tool in design.part2_tool_assessment.required_tools]}
+{f'''
+
+**用户审批反馈（必须遵守）：**
+{design.user_comments}''' if getattr(design, 'user_comments', None) else ''}
 
 请生成详细的执行计划。"""
         
