@@ -12,13 +12,13 @@ models:
   codegen:
     fallback:
       max_tokens: 4000
-      model: gpt-5.6-terra
-      provider: hejuapi
+      model: claude-sonnet-5
+      provider: bbapi
       temperature: 0.2
     primary:
       max_tokens: 4000
-      model: gpt-5.6-sol
-      provider: hejuapi
+      model: claude-haiku-4.5-20251001
+      provider: newapi
       temperature: 0.2
   designer:
     fallback:

@@ -370,9 +370,7 @@ class ToolRegistry:
         self.register_tool("web_fetcher", WebFetcher)
         self.register_tool("super_search", SuperSearch)
         self.register_tool("code_context", CodeContext)
-        self.register_tool("code_context", CodeContext)
-        self.register_tool("code_context", CodeContext)
-        # 测试运行：白名单模板执行器（设计稿 §23.2，补全 test 位）
+                        # 测试运行：白名单模板执行器（设计稿 §23.2，补全 test 位）
         self.register_tool("test_runner", TestRunner)
     
     def register_tool(self, tool_id: str, tool_class, aliases: List[str] = None):

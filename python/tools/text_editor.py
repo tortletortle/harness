@@ -44,7 +44,16 @@ class TextEditor:
             "capabilities": {
                 "instructions": [
                     {
-                        "name": "read_file",
+                        "name": "write_file",
+            "description": "写入文件（创建或覆盖，coding_agent 受权写回也走此指令）",
+            "parameters": {
+                "path": "目标路径（相对路径基于工作区根）",
+                "content": "完整文件内容",
+                "encoding": "编码（默认 utf-8）"
+            }
+        },
+        {
+            "name": "read_file",
                         "description": "读取文件内容",
                         "parameters": {
                             "path": "文件路径",

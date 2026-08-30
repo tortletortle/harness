@@ -72,7 +72,7 @@ class TestRunner:
                 "instructions": [
                     {
                         "name": "run",
-                        "description": "运行指定测试模板",
+                        "description": "运行指定测试模板（run_tests / execute 为同义别名，executor 未指定 instruction 时默认 execute）",
                         "parameters": {
                             "suite": "模板名（必填，如 pytest / npm）",
                             "test_path": "测试文件或目录（相对工作区根，可选）",
