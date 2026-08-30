@@ -174,9 +174,10 @@ async def lifespan(app: FastAPI):
                     ToolCapabilityAdapter(state.tool_registry, tool_id)
                 )
         
-        # 初始化 Dispatcher
+        # 初始化 Dispatcher（携带 CapabilityRegistry：工具目录合并 agent_tool，
+        # Designer 的设计书/计划生成因此能看到 coding_agent）
         from dispatcher import Dispatcher
-        state.dispatcher = Dispatcher(state.tool_registry)
+        state.dispatcher = Dispatcher(state.tool_registry, state.capability_registry)
         
         # 初始化 Designer（传入dispatcher）
         designer_config = state.config.get("models", {}).get("designer", {})

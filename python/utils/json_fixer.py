@@ -5,7 +5,7 @@ JSON 修复工具
 
 import json
 import re
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 
 class JSONFixer:
@@ -217,3 +217,63 @@ def fix_and_validate_plan_json(text: str) -> Tuple[Optional[dict], Optional[str]
         return None, error
     
     return data, None
+
+
+# agent_tool 步骤的计划期契约（fail-closed）。
+# 新增 agent 工具时在此登记契约；执行期边界仍由 Grant 独立强制。
+AGENT_TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
+    "coding_agent": {
+        "required_inputs": ("path", "instruction", "allowed_tools"),
+        "allowed_tools": {"text_editor"},
+        "require_acceptance": True,
+    },
+}
+
+ACCEPTANCE_TYPES = {"file_exists", "content_contains", "exit_code", "diff_scope"}
+
+
+def validate_agent_steps(data: dict) -> Tuple[bool, Optional[str]]:
+    """计划期校验 agent_tool 步骤契约；普通步骤不受影响。
+
+    设计期拒绝比执行期拒绝便宜：缺 path、allowed_tools 越权、
+    无 acceptance 的 agent 步骤在这里直接打回重试，不进入执行。
+    执行期的 Grant 资源/预算边界与此独立存在（双保险）。
+    """
+    for i, segment in enumerate(data.get("segments") or []):
+        if not isinstance(segment, dict):
+            continue
+        for j, step in enumerate(segment.get("steps") or []):
+            if not isinstance(step, dict):
+                continue
+            tool = str(step.get("tool", ""))
+            contract = AGENT_TOOL_CONTRACTS.get(tool)
+            if contract is None:
+                continue
+            label = f"segment[{i}].steps[{j}] ({tool})"
+            inputs = step.get("inputs")
+            if not isinstance(inputs, dict):
+                return False, f"{label}: inputs 必须是对象"
+            for field in contract["required_inputs"]:
+                value = inputs.get(field)
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    return False, f"{label}: 缺少 inputs.{field}"
+            allowed = inputs.get("allowed_tools")
+            if (
+                not isinstance(allowed, list)
+                or not allowed
+                or any(str(t) not in contract["allowed_tools"] for t in allowed)
+            ):
+                return False, (
+                    f"{label}: inputs.allowed_tools 只能包含 "
+                    f"{sorted(contract['allowed_tools'])}，收到: {allowed!r}"
+                )
+            if str(inputs.get("path", "")).endswith("/"):
+                return False, f"{label}: path 必须是文件（不能是目录）"
+            if contract.get("require_acceptance"):
+                acceptance = step.get("acceptance")
+                if not isinstance(acceptance, list) or len(acceptance) == 0:
+                    return False, f"{label}: 必须携带非空 acceptance（确定性验收）"
+                for rule in acceptance:
+                    if not isinstance(rule, dict) or str(rule.get("type", "")) not in ACCEPTANCE_TYPES:
+                        return False, f"{label}: acceptance 规则非法: {rule!r}"
+    return True, None

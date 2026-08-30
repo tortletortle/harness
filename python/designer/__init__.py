@@ -641,7 +641,16 @@ class DefaultDesigner(Designer):
   相对路径将自动解析到工作区根目录
 - 目录路径以 / 结尾（如 "output/"），文件路径带扩展名
 
-⚠️ 约束：只使用 file_creator，不要执行任何 shell 命令，不要使用 command_runner / package_installer / git_operator / text_editor / web_fetcher。
+⚠️ 约束（重要）：
+- 允许使用的工具：file_creator（创建新文件/目录）与 coding_agent（修改已存在的代码文件）。不要执行任何 shell 命令，不要使用 command_runner / package_installer / git_operator / text_editor / web_fetcher。
+- 创建新文件用 file_creator；修改已存在文件的内容用 coding_agent（它能先读原文再做受控修改）。
+
+🔧 coding_agent 步骤契约（必须全部满足，否则计划会被拒绝）：
+1. inputs 必须包含：path（要修改的单个文件，相对路径）、instruction（一句话修改指令）、allowed_tools 固定为 ["text_editor"]
+2. 一个 coding_agent 步骤只修改一个文件；多个文件拆成多个步骤
+3. 必须携带非空 acceptance（content_contains / file_exists），不依赖人工检查
+4. 示例：
+   {"description": "修改 greet 返回值", "tool": "coding_agent", "inputs": {"path": "src/app.py", "instruction": "把 return 1 改成 return 'hello, world'", "allowed_tools": ["text_editor"]}, "acceptance": [{"type": "content_contains", "path": "src/app.py", "text": "hello, world"}]}
 
 🎯 注意事项（重要）：
 - description 要简洁（10-20字），不要冗余
@@ -685,6 +694,7 @@ class DefaultDesigner(Designer):
         # 重试机制：最多尝试 4 次，使用多层 fallback
         max_retries = 4
         last_error = None
+        agent_contract_error = None
         
         # 定义 fallback 策略（按优先级）
         fallback_strategy = [
@@ -779,6 +789,17 @@ class DefaultDesigner(Designer):
                         logger.debug("API 返回内容: {}", response_text)
                     continue  # 重试
                 
+                # agent_tool 步骤契约校验（fail-closed）：
+                # 缺 path / allowed_tools 越权 / 无 acceptance 的 agent 步骤
+                # 在设计期直接打回重试，不进入执行期。
+                from utils.json_fixer import validate_agent_steps
+                agent_ok, agent_error = validate_agent_steps(plan_data)
+                if not agent_ok:
+                    last_error = f"agent 步骤契约校验失败: {agent_error}"
+                    agent_contract_error = agent_error
+                    logger.error("{}", last_error)
+                    continue  # 重试
+                
                 # 成功解析，构建 ExecutionPlan
                 from uuid import uuid4
                 from datetime import datetime
@@ -855,8 +876,16 @@ class DefaultDesigner(Designer):
         logger.error("执行计划生成失败，已重试 {} 次", max_retries)
         logger.error("最后错误: {}", last_error)
 
+        # 重试换 provider 会稀释根因；agent 契约错误必须随异常暴露，
+        # 否则用户只看到“Provider not found”而不知道计划到底违反了什么。
+        agent_suffix = (
+            f"（期间 agent 契约校验失败: {agent_contract_error}）"
+            if agent_contract_error
+            else ""
+        )
+
         raise GenerationError(
-            f"执行计划生成失败（已重试 {max_retries} 次）: {last_error}"
+            f"执行计划生成失败（已重试 {max_retries} 次）: {last_error}{agent_suffix}"
         )
     
     async def assess_severity(self, issue: str, context: Dict[str, Any]) -> int:

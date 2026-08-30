@@ -14,24 +14,49 @@ from tools import ToolRegistry
 class Dispatcher:
     """调度器 - 负责转发请求到工具库"""
     
-    def __init__(self, tool_registry: ToolRegistry):
+    def __init__(self, tool_registry: ToolRegistry, capability_registry=None):
         """
         初始化调度器
         
         Args:
             tool_registry: 工具注册表实例
+            capability_registry: 可选，统一 Capability 注册表。
+                kind=agent_tool 的能力会合并进工具目录（request_tool_info），
+                让 Designer/前端能发现 Agent 工具；不传时仅暴露普通工具。
         """
         self.tool_registry = tool_registry
+        self.capability_registry = capability_registry
     
     async def request_tool_info(self) -> List[Dict[str, Any]]:
         """
-        请求工具库信息
+        请求工具库信息（普通工具 + agent_tool 能力合并目录）
         
         Returns:
             工具列表
         """
         # 转发请求到工具库
-        return await self.tool_registry.get_tool_info()
+        items: List[Dict[str, Any]] = list(await self.tool_registry.get_tool_info())
+        # Agent 即工具：把 kind=agent_tool 的 Capability 拼进目录，
+        # 让 Designer 的工具评估与计划生成能看到 Agent 工具。
+        if self.capability_registry is not None:
+            try:
+                known = {item.get("tool_id") for item in items}
+                for spec in self.capability_registry.list_specs():
+                    if spec.kind != "agent_tool" or spec.id in known:
+                        continue
+                    description = spec.description or "Agent 工具（单轮、Grant 受限）"
+                    items.append({
+                        "tool_id": spec.id,
+                        "name": spec.id,
+                        "description": f"[agent_tool] {description}",
+                        "category": "agent",
+                        "kind": "agent_tool",
+                        "capabilities": {"instructions": []},
+                    })
+            except Exception:
+                # 目录聚合失败不阻断普通工具信息。
+                pass
+        return items
     
     async def request_search(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """

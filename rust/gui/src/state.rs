@@ -170,6 +170,11 @@ impl GuiState {
         self.notice = Some(msg.into());
     }
 
+    /// 手动关闭底部通知条（仅 UI 呈现，不改任何业务状态）。
+    pub fn clear_notice(&mut self) {
+        self.notice = None;
+    }
+
     pub fn set_designs(&mut self, designs: Vec<Design>) {
         self.designs = designs;
     }

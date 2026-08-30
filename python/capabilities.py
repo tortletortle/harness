@@ -22,6 +22,8 @@ class CapabilitySpec:
     budget_spec: Dict[str, Any] = field(default_factory=dict)
     acceptance_spec: List[Dict[str, Any]] = field(default_factory=list)
     can_spawn_agents: bool = False
+    # 面向 Designer/前端的人类可读描述（工具目录聚合时使用）。
+    description: str = ""
 
 
 @dataclass

@@ -6,6 +6,7 @@
 mod api;
 mod app;
 mod state;
+mod theme;
 mod types;
 mod ws;
 
@@ -526,6 +527,7 @@ fn main() -> eframe::Result<()> {
             // 后台线程 + tokio 运行时（cc 提供 UI Context 用于重绘唤醒）
             let ctx = cc.egui_ctx.clone();
             load_cjk_font(&ctx);
+            theme::install(&ctx);
             let initial_state = state::GuiState {
                 token: token.clone(),
                 ..Default::default()

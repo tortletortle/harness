@@ -75,6 +75,7 @@ class CodingAgentTool(BaseAgentTool):
                 "inner_tools": list(self.inner_tools),
             },
             can_spawn_agents=False,
+            description=self.description,
         )
 
     async def run(self, request: CapabilityRequest, context: AgentRuntimeContext) -> CapabilityResult:
