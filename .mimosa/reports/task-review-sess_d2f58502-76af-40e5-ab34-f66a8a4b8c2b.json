@@ -1,6 +1,6 @@
 {
   "schema_version": "mimosa-task-review/v2",
-  "run_id": "20260829T171458549Z-32628-f38d4eab01d2",
+  "run_id": "20260829T180226819Z-19156-b89eebef92e3",
   "run_status": "completed",
   "errors": [],
   "coverage": {
@@ -9,16 +9,16 @@
     "scope": "hook_observed_diff",
     "baseline": {
       "complete": true,
-      "captured_files": 161,
+      "captured_files": 167,
       "candidate_limit": 5000,
       "truncated": false,
       "enumeration_error_count": 0,
       "snapshot_error_count": 0,
-      "compensated_target_count": 5
+      "compensated_target_count": 10
     },
     "change_tracking": {
-      "touched_observed": 5,
-      "touched_retained": 5,
+      "touched_observed": 10,
+      "touched_retained": 10,
       "truncated": false,
       "bash_mutation": false,
       "bash_discovered": 0,
@@ -26,14 +26,14 @@
       "bash_discovery_truncated": false
     },
     "candidates": {
-      "eligible_files": 5,
-      "selected_files": 5,
+      "eligible_files": 10,
+      "selected_files": 10,
       "limit": 20,
       "truncated": false
     },
     "scanning": {
-      "required_files": 5,
-      "scanned_files": 5,
+      "required_files": 10,
+      "scanned_files": 10,
       "skipped_files": 0,
       "failed_files": 0,
       "project_checks_required": 0,
@@ -49,121 +49,200 @@
     "reasons": [],
     "reasons_truncated": false
   },
-  "generated_at": "2026-08-29T17:14:58.549Z",
+  "generated_at": "2026-08-29T18:02:26.819Z",
   "session_id": "sess_d2f58502-76af-40e5-ab34-f66a8a4b8c2b",
   "target": ".",
-  "revision": "707df878f28b49c3fde27e366b609d67a6a3bd17",
+  "revision": "746b59ae7e0e8f8970a55dc7fd67541f4c0bcdb7",
   "rules_version": "unavailable",
-  "diff_hash": "34944af72bf4bf5b4423ddb6addc6a79501f9a192f1ad26dda0eee1816a18c3a",
+  "diff_hash": "234da9ae7253d7da509e5cb006d724a27fbc4d522ceacf8a1199976186197453",
   "diff": {
     "algorithm": "sha256",
-    "changed_file_count": 5,
+    "changed_file_count": 10,
     "changed_files": [
+      {
+        "file": "python/agent_tools.py",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 207
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "8226020483162893e5a7562c93ad108f7a7b96a3ded55a633230886ddb95c43c"
+      },
       {
         "file": "python/api/server.py",
         "ranges": [
           {
-            "start": 1077,
-            "end": 1077
+            "start": 42,
+            "end": 42
           },
           {
-            "start": 1123,
-            "end": 1151
+            "start": 83,
+            "end": 83
+          },
+          {
+            "start": 165,
+            "end": 174
+          },
+          {
+            "start": 1631,
+            "end": 1653
           }
         ],
-        "before_hash": "e47e033f9c088b63c9255442818fa6e1c05f43f1b37a48c945b0d6122836e792",
-        "after_hash": "d589279db2ec46fa18ff652912223d226cd94aa4b298a69e6e520d0c67fe6737"
+        "before_hash": "d589279db2ec46fa18ff652912223d226cd94aa4b298a69e6e520d0c67fe6737",
+        "after_hash": "134cc5915be257a4fecb499a56cf45ae1f958eb317166f746a4d0ca1c9e55c07"
       },
       {
         "file": "python/authorization.py",
         "ranges": [
           {
-            "start": 153,
-            "end": 155
+            "start": 78,
+            "end": 78
           },
           {
-            "start": 185,
-            "end": 186
+            "start": 86,
+            "end": 87
           },
           {
-            "start": 263,
-            "end": 263
+            "start": 94,
+            "end": 95
           },
           {
-            "start": 326,
+            "start": 118,
+            "end": 119
+          },
+          {
+            "start": 121,
+            "end": 124
+          },
+          {
+            "start": 149,
+            "end": 150
+          },
+          {
+            "start": 167,
+            "end": 170
+          },
+          {
+            "start": 183,
+            "end": 183
+          },
+          {
+            "start": 229,
+            "end": 229
+          },
+          {
+            "start": 243,
+            "end": 256
+          },
+          {
+            "start": 289,
+            "end": 291
+          },
+          {
+            "start": 310,
+            "end": 315
+          },
+          {
+            "start": 321,
+            "end": 321
+          },
+          {
+            "start": 335,
+            "end": 335
+          },
+          {
+            "start": 338,
             "end": 344
           }
         ],
-        "before_hash": "9fd5b8fb317b91323dd3e7282b570501bb9501ca7c41085e86eb8daef2b75475",
-        "after_hash": "19bcce527d35f1f2a15c8dd5eb3acbae53a0becb91f133a0ec395fa307b7af42"
+        "before_hash": "19bcce527d35f1f2a15c8dd5eb3acbae53a0becb91f133a0ec395fa307b7af42",
+        "after_hash": "cb7d674696d924fb3e5722bf039c4c01f07525dd7bf266c1f27801812557abd1"
+      },
+      {
+        "file": "python/capabilities.py",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 152
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "354d2f767c622e3524e51f34ddaf9a971d94e1c128229d75e1bd0cd30e94860c"
       },
       {
         "file": "python/executor/__init__.py",
         "ranges": [
           {
-            "start": 86,
-            "end": 90
-          },
-          {
-            "start": 115,
-            "end": 115
-          },
-          {
-            "start": 124,
-            "end": 124
-          },
-          {
-            "start": 135,
-            "end": 135
-          },
-          {
-            "start": 168,
-            "end": 175
-          },
-          {
-            "start": 190,
-            "end": 190
-          },
-          {
-            "start": 228,
-            "end": 228
-          },
-          {
-            "start": 257,
-            "end": 257
+            "start": 176,
+            "end": 178
           }
         ],
-        "before_hash": "2b23396c41888b499f6c725d6e7d70e00c0381eadf614e197c0cc3535145d780",
-        "after_hash": "0f8ba995086877f795c677db166c386ee1c30e120a029ca79c37aeb0f3cd2d06"
+        "before_hash": "0f8ba995086877f795c677db166c386ee1c30e120a029ca79c37aeb0f3cd2d06",
+        "after_hash": "7debb527ac2ab3b57d62b42b1251d94219d1662643684222eafad1df0f8812da"
+      },
+      {
+        "file": "python/grant_llm_client.py",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 56
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "b811fa81358068ab6f44f7b47f2b4e2510299b67a3fded76bf48801332483eaa"
+      },
+      {
+        "file": "tests/python/test_agent_tools.py",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 106
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "4d176fbac2ec809d08a96045fad4cb805898a0628e4afd6dd5e16052d7e72246"
       },
       {
         "file": "tests/python/test_authorization.py",
         "ranges": [
           {
+            "start": 105,
+            "end": 122
+          }
+        ],
+        "before_hash": "81040cd7adec698db064f35c1b8eb655b9785c664fba9a35d1c093efba236c73",
+        "after_hash": "e0aee36fce4058e137fa19b48e702ef9b5c995a582b2495de7522b6de4eaf013"
+      },
+      {
+        "file": "tests/python/test_capabilities.py",
+        "ranges": [
+          {
             "start": 1,
-            "end": 189
+            "end": 94
           }
         ],
         "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "after_hash": "81040cd7adec698db064f35c1b8eb655b9785c664fba9a35d1c093efba236c73"
+        "after_hash": "91a87fd0387922488b6fb9dce7bee89bbcb11ba02d1999ef2466141e18e2364a"
       },
       {
-        "file": "tests/python/test_exec_e2e.py",
+        "file": "tests/python/test_grant_llm_client.py",
         "ranges": [
           {
-            "start": 194,
-            "end": 199
+            "start": 1,
+            "end": 84
           }
         ],
-        "before_hash": "5a6e388d8c77bf8bb540fdc639cff88ff00b6b2496b96bb112814b8c29dea3f1",
-        "after_hash": "87c47289267a58fcbbefd828d16d2b9b31acf659a8b6a580a371f6767719735a"
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "b48ee7f66fb1760c565525306591297c617869886a75b8b23bcf0595184d805c"
       }
     ]
   },
   "timing": {
-    "started_at": "2026-08-29T17:14:56.538Z",
-    "completed_at": "2026-08-29T17:14:58.549Z",
-    "duration_ms": 2011,
+    "started_at": "2026-08-29T18:02:24.131Z",
+    "completed_at": "2026-08-29T18:02:26.819Z",
+    "duration_ms": 2688,
     "measurement": "hook_wall_clock"
   },
   "tokens": {
@@ -178,10 +257,10 @@
     "profile": "gate",
     "operation": "Stop",
     "outcome": "complete",
-    "latencyMs": 2011,
-    "peakMemoryBytes": 127987712,
+    "latencyMs": 2688,
+    "peakMemoryBytes": 128036864,
     "memoryMeasurement": "max-observed-process-rss",
-    "scannedFiles": 5,
+    "scannedFiles": 10,
     "cache": {
       "hits": 0,
       "misses": 0,
@@ -206,8 +285,8 @@
   "finding_events": [],
   "findings": [],
   "artifacts": {
-    "immutable_report": ".mimosa/reports/task-review-sess_d2f58502-76af-40e5-ab34-f66a8a4b8c2b-20260829T171458549Z-32628-f38d4eab01d2.json",
+    "immutable_report": ".mimosa/reports/task-review-sess_d2f58502-76af-40e5-ab34-f66a8a4b8c2b-20260829T180226819Z-19156-b89eebef92e3.json",
     "latest_report": ".mimosa/reports/task-review-sess_d2f58502-76af-40e5-ab34-f66a8a4b8c2b.json",
-    "history_summary": ".mimosa/history/run-20260829T171458549Z-32628-f38d4eab01d2.json"
+    "history_summary": ".mimosa/history/run-20260829T180226819Z-19156-b89eebef92e3.json"
   }
 }

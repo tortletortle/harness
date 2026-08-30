@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20260829T180226819Z-19156-b89eebef92e3",
+  "runId": "20260829T180226819Z-19156-b89eebef92e3",
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "746b59ae7e0e8f8970a55dc7fd67541f4c0bcdb7",
+  "diffHash": "234da9ae7253d7da509e5cb006d724a27fbc4d522ceacf8a1199976186197453",
+  "rulesVersion": "unavailable",
+  "sessionHash": "e66d9d3f708deee70d6a7941d9f1cf026edcc809b6bf1dcb0021121f3a55c0d5",
+  "reportRef": ".mimosa/reports/task-review-sess_d2f58502-76af-40e5-ab34-f66a8a4b8c2b-20260829T180226819Z-19156-b89eebef92e3.json",
+  "events": [],
+  "observedFindingIds": [
+    "mimosa-4d3378778468d4dac06e361f",
+    "mimosa-772eb18aa4d775cb23aee9e8"
+  ],
+  "verifiedFiles": [
+    {
+      "file": "python/authorization.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "python/executor/__init__.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "python/grant_llm_client.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "python/capabilities.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "python/agent_tools.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "python/api/server.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "tests/python/test_grant_llm_client.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "tests/python/test_capabilities.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "tests/python/test_agent_tools.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "tests/python/test_authorization.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    }
+  ],
+  "recordedAt": "2026-08-29T18:02:27.535Z"
+}
