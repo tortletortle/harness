@@ -48,6 +48,21 @@
 - **fail-closed**：启用沙箱但 Docker 不可用 → 直接拒绝执行（`blocked: true`），不静默回退宿主机。
 - 未启用时行为与历史完全一致（默认关闭，向后兼容）。
 
+## P2 上下文编排（2026-08-30 下午追加落地）
+
+- 新增 `python/knowledge/injection.py`：
+  - `build_design_memory_block(user_request)`：需求关键词 → code_context 检索（FTS5/LIKE）
+    + 最近知识笔记 → ≤2000 字符记忆块；
+  - `build_repo_map_block()`：仓库地图 ≤2500 字符（Aider repo map 模式）。
+- **Designer.generate_design**：系统提示词在工具目录后注入【相关历史经验与代码检索】
+  （无命中整段省略；`asyncio.to_thread` 防阻塞；fail-open 任何失败只降级）。
+- **CodingAgentTool._build_prompt**：单轮修改提示词注入【仓库地图】——
+  coding_agent 首次"看得到全仓库签名"，减少盲改（Aider 核心收益）。
+- 安全口径：进程内纯读、无网络、排除 .env*/api_token；注入与 code_context 一致
+  排除 data/**（笔记目录除外）。
+- 验证：tests/python/test_knowledge_injection.py 11 个离线用例
+  （记忆块/地图块/fail-open/Designer 提示词接线/coding_agent 提示词接线）。
+
 ## 未落地（后续路线图）
 
 - **P2 记忆编排**：Designer 生成设计书前注入 `code_context` 检索结果与最近 remember 笔记
