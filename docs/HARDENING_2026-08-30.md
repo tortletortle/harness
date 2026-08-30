@@ -63,6 +63,27 @@
 - 验证：tests/python/test_knowledge_injection.py 11 个离线用例
   （记忆块/地图块/fail-open/Designer 提示词接线/coding_agent 提示词接线）。
 
+## 用量记账吞吐优化（2026-08-30 晚间追加）
+
+强度测试暴露：并发记账 1000 行耗时 ~15s（每笔开新 SQLite 连接 + 全局锁 + 每提交 fsync）。
+按开源标准打法重写 `utils/usage_tracker.py`（v2）：
+
+- **WAL**（`PRAGMA journal_mode=WAL`）：写不阻塞读、提交不做全库 fsync
+  （sqlite.org/wal.html；PowerSync/better-sqlite3 生产配置同款）；
+- **synchronous=NORMAL + busy_timeout=5000**：WAL 推荐档位，并发写等锁而非报 BUSY；
+- **线程本地连接复用**：省掉每笔记账的建连开销，按库路径切换自动重连（测试隔离安全）；
+- 参考模式：OpenTelemetry BatchSpanProcessor（后台缓冲/定量刷写）——若未来需要
+  更高吞吐可再加队列化批量落盘，当前 WAL+复用已足够。
+
+强度对比（同一测试、同机）：
+
+| 指标 | v1 | v2 |
+|---|---|---|
+| 并发记账 1000 行 / 20 线程 | 14.98s | **0.18s（83x）** |
+| 垃圾输入风暴 120 次 | 1.52s | **0.02s（76x）** |
+| 31 查询并发检索 / 8 线程 | 1.60s | **0.45s（3.5x）** |
+| 强度套件总耗时 | 23.2s | **4.5s** |
+
 ## 未落地（后续路线图）
 
 - **P2 记忆编排**：Designer 生成设计书前注入 `code_context` 检索结果与最近 remember 笔记
