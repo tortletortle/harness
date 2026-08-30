@@ -18,6 +18,7 @@ from .code_context import CodeContext
 from .test_runner import TestRunner
 from .lint_gate import LintGateTool
 from .github_operator import GitHubOperator
+from .http_api import HttpApi
 from .project_memory import ProjectMemory
 
 from logging_config import get_logger
@@ -377,6 +378,8 @@ class ToolRegistry:
         self.register_tool("lint_gate", LintGateTool)
         # GitHub 操作：gh CLI 白名单动作（PR 查询/创建），对外副作用不进计划白名单
         self.register_tool("github_operator", GitHubOperator)
+        # HTTP API 调用：方法白名单 + SSRF 防护，对外副作用不进计划白名单
+        self.register_tool("http_api", HttpApi)
         # 项目工作记忆：执行状态持久化到工作区，让后续任务"接着干"（用户定位：只服务完成项目）
         self.register_tool("project_memory", ProjectMemory)
     
