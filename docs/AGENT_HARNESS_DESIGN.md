@@ -904,6 +904,7 @@ Playwright 无头浏览器**一次性无状态页面检查**（`check_page`：ex
 - test_runner.execute 接受 execute 指令别名（executor 对未指定 instruction 的步骤推断为 execute）。
 - 新增多轮确定性测试：两轮自测闭环（第 1 轮改错→自测失败→反馈→第 2 轮改对→自测通过）、预算耗尽（3 轮全部失败→completed+facts 记录 last_test_exit，交外层验收）、跨 segment step_order 全局唯一回归。
 - 已知边界：多轮自测的测试发现依赖 inputs.test_path 精确指向测试文件；真实 E2E 曾暴露 step_order 全局唯一 bug（同日修复）。完整 AgentSession/Turn/Attempt 分层仍为后续。
+- 跨次续作实证（1.8 补充）：上一期失败留下的半成品，经 PROJECT_MEMORY.md 记忆注入 → 计划自动生成 2 步续作 → AI 一轮改对 test_users.py → pytest 全绿收敛（118.9 秒）。同日 executor 从 newapi（503 账号池耗尽）切换到阶跃星辰 step-3.7-flash。已知轻微瑕疵：AI 修改 service.py 时参数名义顺序与 models.py 不一致（位置兼容、测试通过）——多文件一致性仍是后续课题。
 
 ### 1.6-draft — 2026-08-30
 
