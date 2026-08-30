@@ -855,6 +855,7 @@ PlanUpdateEvent 增加自增 version
 - §23 三项修正全部落地：P1-B human_tool（HumanCapabilityAdapter + ApprovalManager.is_required_for_step + manual_tool 挂审批，`approval.human_steps` 开关默认 true）；P1-C test_runner（白名单命令模板、config `test_runner.commands` 注入、argv 无 shell、计划白名单扩三工具 + TOOL_CONTRACTS 契约校验）；P1-A 搜索收编（AuthorizationManager.issue_grant 通用签发、design_search Grant 每次设计书生成签发/撤销、ToolRegistryAgent 走授权+审计、无 Grant fail-closed）。
 - 新增 tests/python/test_toolmgmt.py 13 项确定性测试；真实全流程 E2E 扩展 test_runner 步骤。
 - 计划提示词新增用户约束优先级规则：用户需求/审批反馈明确限定可用工具时，限定优先于白名单（修复 test_exec_e2e 偶发计划偏移）。
+- 修复 step_order 全局唯一性：designer 原按 segment 内编号，多 segment 计划全部平局 → get_next_runnable_step 执行顺序随机、回滚 step_order > X 语义失效；改为全计划递增并加跨 segment 回归测试（真实 E2E 曾因此把 test_runner 排到测试文件创建之前）。
 - 工具管理合并说明：另一会话引入 super_search（多引擎搜索）后，design_search Grant 白名单覆盖 web_fetcher + super_search，搜索 Agent 的两条抓取路径统一走授权 + 审计（_authorized_search）。
 
 ### 1.5-draft — 2026-08-30
