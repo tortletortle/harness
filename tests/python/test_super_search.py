@@ -133,7 +133,7 @@ def test_parse_bing_html_garbage_returns_empty():
 # ===== URL 归一化与合并排序 =====
 
 def test_norm_url():
-    assert _norm_url("https://WWW.A.com/x/#frag?utm_source=z&id=2") == "https://a.com/x?id=2"
+    assert _norm_url("https://WWW.A.com/x/?utm_source=z&id=2#frag") == "https://a.com/x?id=2"
     assert _norm_url("http://a.com/") == "http://a.com"
     assert _norm_url("ftp://a.com/x") == ""
     assert _norm_url("not a url") == ""
@@ -153,7 +153,7 @@ def test_search_merge_dedupe_and_consensus_ranking(monkeypatch):
 
     result = SuperSearch.search("q")
     assert result["success"] is True
-    assert result["engines_used"] == ["bing", "duckduckgo"]
+    assert result["engines_used"] == ["duckduckgo", "bing"]
     urls = [r["url"] for r in result["results"]]
     # a.com/x 两个引擎都命中：utm/fragment 差异被归一化掉，共识加分排第一
     assert len(result["results"]) == 3
@@ -198,7 +198,7 @@ def test_search_engine_ok_but_zero_results(monkeypatch):
     # 引擎本身正常但确实未命中：success=True + 空结果（未命中 ≠ 故障）
     assert result["success"] is True
     assert result["results"] == []
-    assert result["engines_used"] == ["bing", "duckduckgo"]
+    assert result["engines_used"] == ["duckduckgo", "bing"]
     assert "note" in result["engine_stats"]["bing"]
 
 

@@ -65,7 +65,7 @@ harness/
 ├── python/            # 后端核心
 │   ├── api/server.py  # FastAPI 服务（核心逻辑所在）
 │   ├── database.py    # SQLite 持久化
-│   ├── tools/         # 8 个内置工具
+│   ├── tools/         # 9 个内置工具
 │   ├── llm_client/    # 多提供商 LLM 客户端
 │   └── ...
 ├── frontend/          # React 18 + Vite + Tailwind + Zustand

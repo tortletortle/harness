@@ -44,7 +44,7 @@ token 来源优先级：环境变量 `EAS_API_TOKEN` → `config/api_token` 文�
 | POST | `/api/plan/{id}/skip-step/{step_id}` | 跳过步骤；终态计划或非 Pending/Retry 步骤返回 409 |
 | POST | `/api/plan/{id}/rollback` | 回滚到指定步骤，body: `{"step_id": "...", "strategy": "retry"}`；克隆出新分支并废弃旧分支步骤 |
 | GET | `/api/audit-logs?limit=100&plan_id=` | 审计日志（工具调用记录，含被安全拦截的调用） |
-| GET | `/api/tools` | 工具列表（8 个内置工具及能力） |
+| GET | `/api/tools` | 工具列表（9 个内置工具及能力） |
 | GET | `/api/config` | 配置（密钥只返回是否已配置，不回显明文） |
 | POST | `/api/config` | 保存密钥/地址到 `config/models.yaml`，重启后生效 |
 | POST | `/api/chat` | AI 助手对话，body: `{"message": "...", "history": [{"role","content"}]}` |

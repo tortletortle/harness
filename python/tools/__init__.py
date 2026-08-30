@@ -105,8 +105,8 @@ class ToolRegistryAgent:
             for tool in available_tools if tool.get('category') == 'search'
         ])
         
-        # 构建搜索请求
-        system_prompt = f"{context}\n\n可用的搜索工具：\n{tools_info}"
+        # 构建搜索请求（优先 super_search：真正的多引擎搜索；无则退回 web_fetcher）
+        has_super_search = any(t.get("tool_id") == "super_search" for t in available_tools)
         search_tool_name = "super_search" if has_super_search else "web_fetcher"
         user_prompt = f"请帮我搜索以下信息：\n{query}\n\n请调用{search_tool_name}工具搜索信息。"
         
@@ -116,8 +116,6 @@ class ToolRegistryAgent:
         ]
         
         # 定义可用的工具（只允许search类）
-        # 优先暴露 super_search（真正的多引擎搜索）；无 super_search 的环境退回 web_fetcher
-        has_super_search = any(t.get("tool_id") == "super_search" for t in available_tools)
         if has_super_search:
             tools_for_llm = [{
                 "type": "function",
