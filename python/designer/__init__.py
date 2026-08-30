@@ -1,4 +1,4 @@
-"""
+﻿"""
 Designer AI - 设计师
 
 职责：
@@ -8,7 +8,7 @@ Designer AI - 设计师
 4. 生成总结报告
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from models import (
     Architecture,
@@ -90,11 +90,14 @@ class DefaultDesigner(Designer):
     async def health_check(self) -> bool:
         return True
     
-    async def generate_design(self, user_request: str) -> DesignDocument:
+    async def generate_design(self, user_request: str, search_grant_id: Optional[str] = None) -> DesignDocument:
         """
         Phase 1: 生成设计书
         
         通过dispatcher访问工具库获取工具信息。
+
+        search_grant_id: Runtime 签发的 design_search Grant（§23.3）。
+        缺省（None）且 enforce=true 时，搜索请求会被结构化拒绝（fail-closed）。
         """
         
         # 检查缓存
@@ -256,8 +259,11 @@ class DefaultDesigner(Designer):
                             query = args.get('query', '')
                             logger.debug("搜索: {}", query)
                             
-                            # 通过dispatcher请求搜索
-                            result = await self.dispatcher.request_search(query)
+                            # 通过dispatcher请求搜索（context 携带 design_search Grant）
+                            result = await self.dispatcher.request_search(
+                                query,
+                                context={"grant_id": search_grant_id} if search_grant_id else None,
+                            )
                             
                             # 添加工具结果到消息历史
                             tool_result_content = json.dumps(result, ensure_ascii=False)
@@ -642,8 +648,9 @@ class DefaultDesigner(Designer):
 - 目录路径以 / 结尾（如 "output/"），文件路径带扩展名
 
 ⚠️ 约束（重要）：
-- 允许使用的工具：file_creator（创建新文件/目录）与 coding_agent（修改已存在的代码文件）。不要执行任何 shell 命令，不要使用 command_runner / package_installer / git_operator / text_editor / web_fetcher。
-- 创建新文件用 file_creator；修改已存在文件的内容用 coding_agent（它能先读原文再做受控修改）。
+- 允许使用的工具：file_creator（创建新文件/目录）、coding_agent（修改已存在的代码文件）、test_runner（运行登记过的测试模板验证代码）。不要执行任何 shell 命令，不要使用 command_runner / package_installer / git_operator / text_editor / web_fetcher。
+- 创建新文件用 file_creator；修改已存在文件的内容用 coding_agent（它能先读原文再做受控修改）；代码改完后可用 test_runner 跑测试验证。
+- test_runner 步骤契约：inputs 必含 suite（已登记模板名，如 "pytest"，可用 test_path 指定测试文件或目录）；acceptance 必含 {"type":"exit_code","equals":0}；不要用 test_runner 执行非测试命令。
 
 🔧 coding_agent 步骤契约（必须全部满足，否则计划会被拒绝）：
 1. inputs 必须包含：path（要修改的单个文件，相对路径）、instruction（一句话修改指令）、allowed_tools 固定为 ["text_editor"]
@@ -789,14 +796,19 @@ class DefaultDesigner(Designer):
                         logger.debug("API 返回内容: {}", response_text)
                     continue  # 重试
                 
-                # agent_tool 步骤契约校验（fail-closed）：
-                # 缺 path / allowed_tools 越权 / 无 acceptance 的 agent 步骤
-                # 在设计期直接打回重试，不进入执行期。
-                from utils.json_fixer import validate_agent_steps
+                # 步骤契约校验（fail-closed）：agent_tool 步骤与轻契约普通工具
+                # （test_runner）的非法计划在设计期直接打回重试，不进入执行期。
+                from utils.json_fixer import validate_agent_steps, validate_tool_contracts
                 agent_ok, agent_error = validate_agent_steps(plan_data)
                 if not agent_ok:
                     last_error = f"agent 步骤契约校验失败: {agent_error}"
                     agent_contract_error = agent_error
+                    logger.error("{}", last_error)
+                    continue  # 重试
+                tool_ok, tool_error = validate_tool_contracts(plan_data)
+                if not tool_ok:
+                    last_error = f"工具步骤契约校验失败: {tool_error}"
+                    agent_contract_error = tool_error
                     logger.error("{}", last_error)
                     continue  # 重试
                 
@@ -879,7 +891,7 @@ class DefaultDesigner(Designer):
         # 重试换 provider 会稀释根因；agent 契约错误必须随异常暴露，
         # 否则用户只看到“Provider not found”而不知道计划到底违反了什么。
         agent_suffix = (
-            f"（期间 agent 契约校验失败: {agent_contract_error}）"
+            f"（期间步骤契约校验失败: {agent_contract_error}）"
             if agent_contract_error
             else ""
         )

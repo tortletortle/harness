@@ -81,6 +81,12 @@ pub struct PlanSummary {
     pub design_id: String,
     #[serde(default)]
     pub created_at: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub archived: bool,
 }
 
 /// POST/GET /api/design and GET /api/design/{id} formatted design.
@@ -338,6 +344,36 @@ pub struct RollbackResult {
     pub resume_from: String,
     pub strategy: String,
     pub marked_obsolete: i64,
+}
+
+/// GET /api/tools 单条工具摘要。
+#[derive(Debug, Clone, Deserialize)]
+pub struct ToolInfo {
+    #[serde(default)]
+    pub tool_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+}
+
+/// GET /api/capabilities 单条能力声明（字段宽松：缺失/空值降级默认）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct CapabilitySpec {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub side_effect: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub idempotent: bool,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub required_permissions: Vec<String>,
 }
 
 #[cfg(test)]

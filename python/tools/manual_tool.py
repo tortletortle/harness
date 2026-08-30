@@ -33,7 +33,7 @@ class ManualTool:
         return {
             "tool_id": "manual_tool",
             "name": "手动工具",
-            "description": "需要人工干预的步骤",
+            "description": "需要人工确认后执行的步骤（执行前挂起等待人工审批）",
             "category": "other",
             "version": "1.0.0",
             "capabilities": {

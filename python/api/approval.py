@@ -64,14 +64,32 @@ class ApprovalRequest:
 class ApprovalManager:
     """内存中的工具审批队列：创建 → 等待 → resolve（一次）。"""
 
-    def __init__(self, required_tools: Optional[List[str]] = None, timeout_seconds: float = 600.0) -> None:
+    def __init__(
+        self,
+        required_tools: Optional[List[str]] = None,
+        timeout_seconds: float = 600.0,
+        human_steps: bool = True,
+    ) -> None:
         self.required_tools: set = set(required_tools or [])
         self.timeout_seconds = float(timeout_seconds)
+        # 人工步骤（kind=human_tool，如 manual_tool）是否强制挂审批。
+        # 默认开启：设计稿 §3 Human Tool 是正式控制流，人工步骤必须真确认。
+        self.human_steps = bool(human_steps)
         self._pending: Dict[str, ApprovalRequest] = {}
 
     def is_required(self, tool_id: str) -> bool:
         """该工具是否需要人工审批。"""
         return tool_id in self.required_tools
+
+    def is_required_for_step(self, tool_id: str, capability_kind: Optional[str] = None) -> bool:
+        """步骤级审批判定：配置的高风险工具，或 human_tool 步骤（§23.1）。
+
+        capability_kind 来自 CapabilityRegistry；不传或非 human_tool 时
+        退化为原有 is_required 行为。
+        """
+        if self.is_required(tool_id):
+            return True
+        return bool(self.human_steps) and capability_kind == "human_tool"
 
     def create(
         self,

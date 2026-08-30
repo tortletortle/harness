@@ -271,6 +271,108 @@ impl ApiClient {
         check(resp, "请求失败").await
     }
 
+    pub async fn get_tools(&self) -> Result<Vec<crate::types::ToolInfo>, ApiError> {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            tools: Vec<crate::types::ToolInfo>,
+        }
+        let resp = self.get("/api/tools").await?;
+        let w: Wrap = resp.json().await?;
+        Ok(w.tools)
+    }
+
+    pub async fn get_capabilities(&self) -> Result<Vec<crate::types::CapabilitySpec>, ApiError> {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            capabilities: Vec<crate::types::CapabilitySpec>,
+        }
+        let resp = self.get("/api/capabilities").await?;
+        let w: Wrap = resp.json().await?;
+        Ok(w.capabilities)
+    }
+
+    pub async fn get_config(&self) -> Result<serde_json::Value, ApiError> {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            config: serde_json::Value,
+        }
+        let resp = self.get("/api/config").await?;
+        let w: Wrap = resp.json().await?;
+        Ok(w.config)
+    }
+
+    pub async fn restart_server(&self) -> ControlResult {
+        let resp = self.post("/api/restart").await?;
+        let v: serde_json::Value = resp.json().await?;
+        Ok(v.get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("服务正在重启")
+            .to_string())
+    }
+
+    async fn delete_request(&self, path: &str) -> Result<reqwest::Response, ApiError> {
+        let config = self.config();
+        let resp = self
+            .http
+            .delete(format!("{}{path}", config.base))
+            .timeout(REQUEST_TIMEOUT)
+            .bearer_auth(&config.token)
+            .send()
+            .await
+            .map_err(|e| ApiError {
+                status: 0,
+                message: format!("连接失败: {e}"),
+            })?;
+        check(resp, "请求失败").await
+    }
+
+    pub async fn archive_plan(&self, plan_id: &str, archived: bool) -> ControlResult {
+        #[derive(serde::Serialize)]
+        struct Body {
+            archived: bool,
+        }
+        let fallback = if archived {
+            "已归档"
+        } else {
+            "已取消归档"
+        };
+        let resp = self
+            .post_json(&format!("/api/plan/{plan_id}/archive"), &Body { archived })
+            .await?;
+        let v: serde_json::Value = resp.json().await?;
+        Ok(v.get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or(fallback)
+            .to_string())
+    }
+
+    pub async fn rename_plan(&self, plan_id: &str, name: &str) -> ControlResult {
+        #[derive(serde::Serialize)]
+        struct Body<'a> {
+            name: &'a str,
+        }
+        let resp = self
+            .post_json(&format!("/api/plan/{plan_id}/rename"), &Body { name })
+            .await?;
+        let v: serde_json::Value = resp.json().await?;
+        Ok(v.get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("已重命名")
+            .to_string())
+    }
+
+    pub async fn delete_plan(&self, plan_id: &str) -> ControlResult {
+        let resp = self.delete_request(&format!("/api/plan/{plan_id}")).await?;
+        let v: serde_json::Value = resp.json().await?;
+        Ok(v.get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("项目已删除")
+            .to_string())
+    }
+
     pub async fn get_status(&self) -> Result<ServiceStatus, ApiError> {
         let resp = self.get("/api/status").await?;
         Ok(resp.json().await?)

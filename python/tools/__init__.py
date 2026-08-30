@@ -4,6 +4,7 @@
 """
 
 from typing import Dict, Any, List, Optional
+import asyncio
 import json
 from .file_creator import FileCreator
 from .command_runner import CommandRunner
@@ -12,6 +13,7 @@ from .manual_tool import ManualTool
 from .git_operator import GitOperator
 from .text_editor import TextEditor
 from .web_fetcher import WebFetcher
+from .test_runner import TestRunner
 
 from logging_config import get_logger
 
@@ -26,16 +28,18 @@ class ToolRegistryAgent:
     根据任务类型使用不同的上下文。
     """
     
-    def __init__(self, llm_client, model_config: Dict[str, Any]):
+    def __init__(self, llm_client, model_config: Dict[str, Any], registry=None):
         """
         初始化工具库AI Agent
         
         Args:
             llm_client: LLM客户端
             model_config: 模型配置
+            registry: 所属 ToolRegistry（回引，用于授权/审计；设计稿 §23.3）
         """
         self.llm_client = llm_client
         self.model_config = model_config
+        self.registry = registry
         
         # 上下文配置
         self.contexts = {
@@ -70,7 +74,12 @@ class ToolRegistryAgent:
         """
         return self.contexts.get(task_type, self.contexts["tool_manager"])
     
-    async def handle_search_request(self, query: str, available_tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def handle_search_request(
+        self,
+        query: str,
+        available_tools: List[Dict[str, Any]],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """
         处理搜索请求
         
@@ -79,6 +88,7 @@ class ToolRegistryAgent:
         Args:
             query: 搜索查询
             available_tools: 可用的搜索工具列表
+            context: 可选上下文（design_search Grant 由 Runtime 签发后经此传入）
         
         Returns:
             整理后的搜索结果
@@ -158,9 +168,10 @@ class ToolRegistryAgent:
                             url = args.get('url', '')
                             logger.debug("访问: {}", url)
                             
-                            # 调用web_fetcher
-                            from .web_fetcher import WebFetcher
-                            result = WebFetcher.execute('fetch_content', {'url': url})
+                            # 授权化抓取（设计稿 §23.3）：enforce 模式下
+                            # 无 design_search Grant 或主机不在 allowlist →
+                            # 结构化拒绝回喂 LLM，不触达网络。
+                            result = await self._authorized_fetch(url, context)
                             search_results.append(result)
                             
                             # 添加到消息历史
@@ -201,6 +212,55 @@ class ToolRegistryAgent:
             }
 
 
+    async def _authorized_fetch(self, url: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """授权化抓取（设计稿 §23.3）。
+
+        - enforce 模式：无 Grant / 主机不在 allowlist / 预算耗尽 →
+          结构化拒绝，不触达网络；每次调用（含拒绝）写审计。
+        - enforce=false 或未接授权管理器 → authorize 内部直接放行，
+          保持旧行为（兼容）。
+        """
+        from .web_fetcher import WebFetcher
+
+        registry = self.registry
+        manager = getattr(registry, "authorization_manager", None) if registry is not None else None
+        database = getattr(registry, "database", None) if registry is not None else None
+        grant_id = (context or {}).get("grant_id")
+        inputs = {"url": url}
+
+        if manager is not None:
+            decision = manager.authorize(grant_id, "web_fetcher", "fetch_content", inputs)
+            self._audit(database, url, decision.allowed, decision.reason if not decision.allowed else None, grant_id)
+            if not decision.allowed:
+                return {
+                    "success": False,
+                    "blocked": True,
+                    "error": f"search_denied: {decision.reason}",
+                    "message": f"搜索未获授权: {decision.message}（可继续生成设计书，但无法联网检索）",
+                    "url": url,
+                }
+
+        result = await asyncio.to_thread(WebFetcher.execute, "fetch_content", inputs)
+        return result
+
+    def _audit(self, database, url: str, success: bool, block_reason: Optional[str], grant_id: Optional[str]) -> None:
+        if database is None:
+            return
+        try:
+            database.save_audit_log(
+                tool_id="web_fetcher",
+                instruction="design_search:fetch_content",
+                inputs={"url": url},
+                success=success,
+                blocked=block_reason is not None,
+                block_reason=block_reason,
+                actor="designer_search",
+                grant_id=grant_id,
+            )
+        except Exception:
+            pass
+
+
 class ToolRegistry:
     """工具注册表"""
     
@@ -215,11 +275,14 @@ class ToolRegistry:
         self.tools = {}
         self.aliases = {}  # 别名 -> 主 ID（兼容旧数据中的历史工具名）
         self._register_default_tools()
+        # 运行时注入（server lifespan）：设计期搜索的授权与审计（§23.3）。
+        self.authorization_manager = None
+        self.database = None
         
         # 初始化AI agent（如果提供了llm_client）
         self.agent = None
         if llm_client and model_config:
-            self.agent = ToolRegistryAgent(llm_client, model_config)
+            self.agent = ToolRegistryAgent(llm_client, model_config, registry=self)
     
     def _register_default_tools(self):
         """注册默认工具"""
@@ -232,6 +295,8 @@ class ToolRegistry:
         self.register_tool("git_operator", GitOperator)
         self.register_tool("text_editor", TextEditor)
         self.register_tool("web_fetcher", WebFetcher)
+        # 测试运行：白名单模板执行器（设计稿 §23.2，补全 test 位）
+        self.register_tool("test_runner", TestRunner)
     
     def register_tool(self, tool_id: str, tool_class, aliases: List[str] = None):
         """注册工具。aliases 中的旧名可继续被 get_tool/execute_tool 解析。"""
@@ -315,8 +380,8 @@ class ToolRegistry:
         # 获取所有工具信息
         available_tools = self.list_tools()
         
-        # 使用AI agent处理搜索请求
-        return await self.agent.handle_search_request(query, available_tools)
+        # 使用AI agent处理搜索请求（context 携带 design_search Grant id）
+        return await self.agent.handle_search_request(query, available_tools, context)
 
 
 # 全局工具注册表实例（初始化时不带AI agent）

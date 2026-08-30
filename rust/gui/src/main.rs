@@ -405,6 +405,107 @@ async fn supervisor(
                 )
                 .await;
             }
+            Command::RefreshSettingsData => {
+                let tools = api.get_tools().await.map_err(|e| e.to_string());
+                let capabilities = api.get_capabilities().await.map_err(|e| e.to_string());
+                let config = api.get_config().await.map_err(|e| e.to_string());
+                match (tools, capabilities, config) {
+                    (Ok(tools), Ok(capabilities), Ok(config)) => {
+                        forward_event(
+                            &events_tx,
+                            &ctx,
+                            GuiEvent::SettingsData {
+                                tools,
+                                capabilities,
+                                config,
+                            },
+                        )
+                        .await;
+                    }
+                    (Err(e), ..) | (_, Err(e), _) | (.., Err(e)) => {
+                        forward_event(&events_tx, &ctx, GuiEvent::Error(e)).await;
+                    }
+                }
+            }
+            Command::RestartServer => {
+                let result = api.restart_server().await.map_err(|e| e.to_string());
+                forward_event(
+                    &events_tx,
+                    &ctx,
+                    GuiEvent::ControlResult {
+                        plan_id: "restart".to_string(),
+                        result,
+                    },
+                )
+                .await;
+            }
+            Command::ArchivePlan { plan_id, archived } => {
+                let result = api
+                    .archive_plan(&plan_id, archived)
+                    .await
+                    .map_err(|e| e.to_string());
+                forward_event(
+                    &events_tx,
+                    &ctx,
+                    GuiEvent::ControlResult { plan_id, result },
+                )
+                .await;
+            }
+            Command::RenamePlan { plan_id, name } => {
+                let result = api
+                    .rename_plan(&plan_id, &name)
+                    .await
+                    .map_err(|e| e.to_string());
+                forward_event(
+                    &events_tx,
+                    &ctx,
+                    GuiEvent::ControlResult { plan_id, result },
+                )
+                .await;
+            }
+            Command::DeletePlan { plan_id } => {
+                let result = api.delete_plan(&plan_id).await.map_err(|e| e.to_string());
+                forward_event(
+                    &events_tx,
+                    &ctx,
+                    GuiEvent::ControlResult { plan_id, result },
+                )
+                .await;
+            }
+            Command::RefreshSettingsData => {
+                let tools = api.get_tools().await.map_err(|e| e.to_string());
+                let capabilities = api.get_capabilities().await.map_err(|e| e.to_string());
+                let config = api.get_config().await.map_err(|e| e.to_string());
+                match (tools, capabilities, config) {
+                    (Ok(tools), Ok(capabilities), Ok(config)) => {
+                        forward_event(
+                            &events_tx,
+                            &ctx,
+                            GuiEvent::SettingsData {
+                                tools,
+                                capabilities,
+                                config,
+                            },
+                        )
+                        .await;
+                    }
+                    (Err(e), ..) | (_, Err(e), _) | (.., Err(e)) => {
+                        forward_event(&events_tx, &ctx, GuiEvent::Error(e)).await;
+                    }
+                }
+            }
+            Command::RestartServer => {
+                let result = api.restart_server().await.map_err(|e| e.to_string());
+                forward_event(
+                    &events_tx,
+                    &ctx,
+                    GuiEvent::ControlResult {
+                        plan_id: "restart".to_string(),
+                        result,
+                    },
+                )
+                .await;
+            }
             Command::Resume(plan_id) => {
                 let result = api.resume_plan(&plan_id).await.map_err(|e| e.to_string());
                 forward_event(

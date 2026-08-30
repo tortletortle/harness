@@ -1,9 +1,9 @@
-"""Common Capability contracts for deterministic tools and Agent tools."""
+﻿"""Common Capability contracts for deterministic tools and Agent tools."""
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterable, List, Optional, Protocol
 
 from authorization import AuthorizationManager
@@ -138,6 +138,30 @@ class ToolCapabilityAdapter:
         )
 
 
+class HumanCapabilityAdapter(ToolCapabilityAdapter):
+    """把人工步骤工具以 kind=human_tool 暴露给 Capability 目录。
+
+    设计稿 §3/§6：Human Tool（approval/input）是正式的第三类 Capability。
+    执行逻辑与普通工具相同，但 Runtime 状态机会对 human_tool 步骤
+    强制挂审批（ApprovalManager），实现"人工步骤真确认"。
+    """
+
+    def spec(self) -> CapabilitySpec:
+        base = super().spec()
+        metadata = next(
+            (item for item in self.tool_registry.list_tools() if item.get("tool_id") == self.tool_id),
+            {},
+        )
+        return replace(
+            base,
+            kind="human_tool",
+            required_permissions=(f"human:{self.tool_id}",),
+            side_effect="none",
+            idempotent=True,
+            description=str(metadata.get("description", "")),
+        )
+
+
 def _context_value(context: Any, name: str, default: Any = None) -> Any:
     if isinstance(context, dict):
         return context.get(name, default)
@@ -151,4 +175,5 @@ __all__ = [
     "CapabilityResult",
     "CapabilitySpec",
     "ToolCapabilityAdapter",
+    "HumanCapabilityAdapter",
 ]

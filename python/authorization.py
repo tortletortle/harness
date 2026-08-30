@@ -202,6 +202,47 @@ class AuthorizationManager:
             self._grants[grant.grant_id] = grant
         return grant
 
+    def issue_grant(
+        self,
+        subject: str,
+        allowed_tools: Iterable[str],
+        limits: Optional[GrantLimits] = None,
+        ttl_seconds: Optional[float] = None,
+        allowed_hosts: Optional[Iterable[str]] = None,
+    ) -> CapabilityGrant:
+        """无 step 的通用签发（设计稿 §23.3）：用于设计期搜索等非步骤场景。
+
+        - 资源为空（不授权文件写入）；URL 检查走 allowed_hosts
+          （缺省继承全局配置，为空则一律拒绝——fail-closed）。
+        - 生命周期同步骤 Grant：到期/撤销/预算耗尽即失效。
+        """
+        issued = datetime.utcnow()
+        ttl = self.default_ttl_seconds if ttl_seconds is None else max(0.01, float(ttl_seconds))
+        hosts = (
+            self.allowed_hosts
+            if allowed_hosts is None
+            else tuple(self._normalise_host(h) for h in allowed_hosts if str(h).strip())
+        )
+        grant = CapabilityGrant(
+            grant_id=uuid.uuid4().hex,
+            plan_id="",
+            step_id="",
+            subject=str(subject),
+            allowed_tools=frozenset(str(t) for t in allowed_tools if str(t).strip()),
+            allowed_resources=(),
+            denied_resources=self.deny_resources,
+            allowed_hosts=hosts,
+            workspace_root=str(self.workspace_root),
+            allow_absolute_paths=self.allow_absolute_paths,
+            limits=limits or self.default_limits,
+            approval_required=False,
+            issued_at=issued,
+            expires_at=issued + timedelta(seconds=ttl),
+        )
+        with self._lock:
+            self._grants[grant.grant_id] = grant
+        return grant
+
     def authorize(
         self,
         grant_id: Optional[str],

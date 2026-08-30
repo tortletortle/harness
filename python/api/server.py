@@ -38,8 +38,8 @@ from database import Database, DatabaseError
 from models import DesignDocument, ExecutionPlan, PlanSegment, Step, StepStatus, PlanStatus
 from api.auth import load_token, require_token, verify_token
 from api.approval import ApprovalManager, ApprovalTimeout
-from authorization import AuthorizationManager, agent_step_grant_params
-from capabilities import CapabilityRegistry, ToolCapabilityAdapter
+from authorization import AuthorizationManager, GrantLimits, agent_step_grant_params
+from capabilities import CapabilityRegistry, HumanCapabilityAdapter, ToolCapabilityAdapter
 from coding_agent import CodingAgentTool
 print("[SERVER MODULE LOADED]", __file__)
 from logging_config import get_logger
@@ -169,10 +169,17 @@ async def lifespan(app: FastAPI):
         state.capability_registry = CapabilityRegistry()
         for tool_meta in state.tool_registry.list_tools():
             tool_id = tool_meta.get("tool_id")
-            if tool_id:
+            # manual_tool 不进 deterministic 清单：它以 human_tool 第三类
+            # 注册（见下），对应设计稿 §3 Human Tool。
+            if tool_id and tool_id != "manual_tool":
                 state.capability_registry.register(
                     ToolCapabilityAdapter(state.tool_registry, tool_id)
                 )
+        # 人工步骤第三类（§23.1）：状态机对 human_tool 步骤强制挂审批，
+        # 修复"manual 步骤自动通过"的偏离。
+        state.capability_registry.register(
+            HumanCapabilityAdapter(state.tool_registry, "manual_tool")
+        )
         
         # 初始化 Dispatcher（携带 CapabilityRegistry：工具目录合并 agent_tool，
         # Designer 的设计书/计划生成因此能看到 coding_agent）
@@ -203,6 +210,7 @@ async def lifespan(app: FastAPI):
         state.approval_manager = ApprovalManager(
             required_tools=approval_cfg.get("required_tools", []),
             timeout_seconds=approval_cfg.get("timeout_seconds", 600),
+            human_steps=approval_cfg.get("human_steps", True),
         )
 
         # Runtime 临时授权：每个步骤单独签发，默认限制一次工具调用、
@@ -212,6 +220,16 @@ async def lifespan(app: FastAPI):
         )
         # Executor 通过同一个 manager 执行调用前授权检查。
         state.executor.authorization_manager = state.authorization_manager
+
+        # 设计期搜索授权与审计（§23.3）：ToolRegistryAgent 的网络抓取
+        # 走 design_search Grant，不再旁路授权体系。
+        state.tool_registry.authorization_manager = state.authorization_manager
+        state.tool_registry.database = state.database
+
+        # 测试模板白名单：config test_runner.commands 覆盖内置模板（§23.2）。
+        # 模板只能来自服务端配置，不来自步骤输入。
+        from tools.test_runner import configure_templates
+        configure_templates((state.config.get("test_runner", {}) or {}).get("commands") or {})
 
         # Agent 即工具（第二阶段第一步）：把 coding_agent 注册进统一
         # Capability 清单。必须在 authorization_manager 定稿后构建，
@@ -538,8 +556,21 @@ async def create_design(request: DesignRequest):
     try:
         await broadcast_log(f"收到设计书生成请求: {request.user_request[:50]}...")
         
-        # 调用 Designer 生成设计书
-        design = await state.designer.generate_design(request.user_request)
+        # 设计期搜索 Grant（§23.3）：只读网络、预算 6 次、TTL 600s、
+        # allowed_hosts 继承配置；用后撤销。未配置 allowlist 时搜索
+        # 会被结构化拒绝（fail-closed），设计书照常生成。
+        search_grant = state.authorization_manager.issue_grant(
+            subject="design_search",
+            allowed_tools=["web_fetcher"],
+            limits=GrantLimits(max_tool_calls=6, max_model_calls=0, max_elapsed_seconds=600),
+        )
+        try:
+            # 调用 Designer 生成设计书
+            design = await state.designer.generate_design(
+                request.user_request, search_grant_id=search_grant.grant_id
+            )
+        finally:
+            state.authorization_manager.revoke(search_grant.grant_id)
         
         # 保存到数据库
         state.database.save_design(design)
@@ -669,8 +700,6 @@ async def get_plans(limit: int = 10):
             plans.append({
                 "plan_id": p.get("plan_id", ""),
                 "design_id": p.get("design_id", ""),
-                "segments": [],
-                "created_at": p.get("created_at", ""),
                 "status": p.get("status", ""),
                 "display_name": p.get("display_name") or "",
                 "archived": bool(p.get("archived", 0)),
@@ -1074,7 +1103,15 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
     # 高风险工具在执行前挂起等待人工批准（Cline 式 asyncio.Event 挂起，非轮询）。
     # 拒绝/超时 → 返回结构化 blocked 结果，由调用方走 Failed 路径（重试无意义）。
     tool_id_for_approval = str(step.get("tool", "")).split(":")[0]
-    if state.approval_manager.is_required(tool_id_for_approval):
+    step_capability = (
+        state.capability_registry.get(tool_id_for_approval)
+        if state.capability_registry is not None
+        else None
+    )
+    step_capability_kind = (
+        getattr(step_capability.spec(), "kind", None) if step_capability is not None else None
+    )
+    if state.approval_manager.is_required_for_step(tool_id_for_approval, step_capability_kind):
         approval = state.approval_manager.create(
             plan_id=plan_id,
             step_id=step_id,

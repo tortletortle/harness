@@ -229,7 +229,55 @@ AGENT_TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+# 普通工具轻契约（设计稿 §23.2）：不涉及 Grant 白名单，只校验必填输入与验收。
+TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
+    "test_runner": {
+        "required_inputs": ("suite",),
+        "require_acceptance": True,
+        "required_acceptance_types": {"exit_code"},
+    },
+}
+
 ACCEPTANCE_TYPES = {"file_exists", "content_contains", "exit_code", "diff_scope"}
+
+
+def validate_tool_contracts(data: dict) -> Tuple[bool, Optional[str]]:
+    """普通工具轻契约校验（当前仅 test_runner，§23.2）。
+
+    缺必填输入 / acceptance 缺失 / acceptance 不含要求类型 → 计划打回。
+    """
+    for i, segment in enumerate(data.get("segments") or []):
+        if not isinstance(segment, dict):
+            continue
+        for j, step in enumerate(segment.get("steps") or []):
+            if not isinstance(step, dict):
+                continue
+            tool = str(step.get("tool", ""))
+            contract = TOOL_CONTRACTS.get(tool)
+            if contract is None:
+                continue
+            label = f"segment[{i}].steps[{j}] ({tool})"
+            inputs = step.get("inputs")
+            if not isinstance(inputs, dict):
+                return False, f"{label}: inputs 必须是对象"
+            for field in contract["required_inputs"]:
+                value = inputs.get(field)
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    return False, f"{label}: 缺少 inputs.{field}"
+            if contract.get("require_acceptance"):
+                acceptance = step.get("acceptance")
+                if not isinstance(acceptance, list) or len(acceptance) == 0:
+                    return False, f"{label}: 必须携带非空 acceptance（确定性验收）"
+                required_types = contract.get("required_acceptance_types") or set()
+                if required_types and not any(
+                    isinstance(rule, dict) and str(rule.get("type", "")) in required_types
+                    for rule in acceptance
+                ):
+                    return False, (
+                        f"{label}: acceptance 必须包含 "
+                        f"{sorted(required_types)} 类型规则"
+                    )
+    return True, None
 
 
 def validate_agent_steps(data: dict) -> Tuple[bool, Optional[str]]:
