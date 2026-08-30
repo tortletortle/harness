@@ -63,6 +63,9 @@ def server():
 
     env = dict(os.environ)
     env["EAS_API_TOKEN"] = TOKEN
+    # 工作区根必须显式绑定到隔离目录，否则相对路径会落到仓库根
+    # （tools/workspace.py 的回退语义是仓库根，历史 E2E 用绝对路径从未暴露）。
+    env["EAS_WORKSPACE_ROOT"] = str(root)
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONPATH"] = str(PYTHON_DIR) + os.pathsep + env.get("PYTHONPATH", "")
@@ -166,10 +169,13 @@ def test_full_flow_agent_step_outputs_and_acceptance(executed_plan):
     assert agent_steps
     for s in agent_steps:
         outputs = s.get("outputs") or {}
-        assert outputs.get("check_passed") is True, str(outputs)[:500]
-        assert outputs.get("acceptance_status") == "passed"
-        agent_output = outputs.get("output", {}).get("output", {})
-        assert agent_output.get("agent_status") == "completed"
+        # 落库的 outputs 即 agent 结果字典：output 内层是 agent 负载。
+        assert outputs.get("check_status") == "passed", str(outputs)[:500]
+        acceptance = outputs.get("acceptance") or {}
+        assert acceptance.get("status") == "passed"
+        assert outputs.get("output", {}).get("agent_status") == "completed"
+        facts = {f.get("key"): f.get("value") for f in outputs.get("agent_facts", [])}
+        assert facts.get("coding_agent_file_exists") == "true"
 
 
 def test_full_flow_final_file_content_via_agent_edit(executed_plan, tmp_path_factory):

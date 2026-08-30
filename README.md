@@ -6,9 +6,9 @@ AI 任务编排与执行系统：用户提出需求 → Designer（LLM）生成�
 
 核心链路完整可用：设计书生成与审批、执行计划生成、计划执行与实时日志、执行控制（暂停/恢复/跳步/回滚）、审计日志、配置管理。错误处理遵循明确契约（见 [docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md)）。
 
-- 后端测试：`pytest` 317 通过 + 2 跳过（真实 LLM 用例用 `RUN_REAL_LLM_EVAL=1` 开启）
+- 后端测试：`pytest` 329 通过 + 6 跳过（真实 LLM 用例用 `RUN_REAL_LLM_EVAL=1` 开启）
 - 前端测试：`vitest` 35 通过
-- Agent 即工具：`coding_agent`（单轮、Grant 受限）已接入执行链路，见 [docs/AGENT_HARNESS_DESIGN.md](docs/AGENT_HARNESS_DESIGN.md) §19
+- Agent 即工具：`coding_agent`（单轮、Grant 受限）已贯通设计与执行链路，见 [docs/AGENT_HARNESS_DESIGN.md](docs/AGENT_HARNESS_DESIGN.md) §19/§22
 - CI：三任务流水线（Rust / pytest / vitest）
 
 详细完成度与遗留事项见 [docs/STATUS.md](docs/STATUS.md)。

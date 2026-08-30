@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`1.3-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架与 coding_agent 最小闭环（agent_tool 接入 WorkGraph 执行）已实施；工具选型评测达标；worktree 路线已定
+- 当前版本：`1.4-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 最小闭环与全流程贯通（工具目录→设计→计划→契约校验→执行→验收→审计）已实施；工具选型评测达标；worktree 路线已定
 - 最后更新：2026-08-30
 
 ## 1. 目标
@@ -738,7 +738,65 @@ PlanUpdateEvent 增加自增 version
 - 将被否定的设计标记为“已废弃”，不要静默删除。
 - 源码分析结论必须附项目、路径或链接。
 
+## 22. coding_agent 全流程设计（1.4 已实施）
+
+目标：让 coding_agent 从“测试直连可跑”变成“用户从 UI 发起即可达”——补齐工具目录、计划生成、设计期校验三段，执行层（1.3）与展示层契约不变。
+
+### 22.1 全链路与各层职责
+
+```text
+用户需求
+  → Designer 生成设计书（工具目录含 agent_tool，见 22.2）
+  → 用户审批/反馈
+  → Designer 生成计划（分级白名单 + coding_agent 契约示例，见 22.3）
+  → 设计期契约校验 validate_agent_steps（fail-closed，见 22.4）
+  → 执行：Grant 签发（agent_step_grant_params）→ agent_tool 分发 →
+     受权读写 → AcceptanceRunner（1.3 已完成，不变）
+  → 展示：/api/plan 步骤 outputs 携带 agent_status/facts/acceptance
+     （数据已带齐，UI 呈现归前端会话，见 22.6）
+```
+
+### 22.2 工具目录层（Designer 看得到 agent）
+
+- `CapabilitySpec` 新增 `description` 字段；`CodingAgentTool.spec()` 携带人类可读描述。
+- `Dispatcher(tool_registry, capability_registry=None)`：`request_tool_info()` 把 kind=agent_tool 的能力合并进工具目录（`category=agent`、`kind=agent_tool`），普通工具行为不变；Designer 的设计书生成由此能看到 coding_agent 并将其纳入 required_tools 评估。
+
+### 22.3 计划生成层（Designer 敢用、用对）
+
+- 原约束“只使用 file_creator”改为分级白名单：允许 file_creator（创建新文件）与 coding_agent（修改已存在文件）；shell 类工具禁令不变。
+- 计划提示词新增 coding_agent 步骤契约与示例：inputs 必含 path（单文件）/instruction/allowed_tools=["text_editor"]；一步一文件；acceptance 必填。
+- 已知限制：设计书→计划之间没有单独的 agent 步骤规划器，是否使用 coding_agent 依赖计划 LLM 对提示词的遵守；真实 E2E 在 user_request 中显式提及 coding_agent 以施加确定性压力。
+
+### 22.4 设计期校验（fail-closed，比执行期拒绝便宜）
+
+- `utils/json_fixer.py` 新增 `AGENT_TOOL_CONTRACTS` 与 `validate_agent_steps(plan_data)`：coding_agent 步骤缺 path/instruction/allowed_tools、allowed_tools 越权（非 text_editor）、acceptance 缺失或类型非法、path 为目录 → 计划打回重试。
+- 挂载点：`generate_plan` 在 JSON 修复后、构建 ExecutionPlan 前；普通步骤不受影响。
+- `generate_plan` 重试策略会硬编码补位 stepfun/hejuapi 等 fallback，会把根因稀释成 “Provider not found”；现 agent 契约错误随 GenerationError 附加暴露（`期间 agent 契约校验失败: ...`）。
+- 双保险口径：设计期校验管“计划写得对不对”，执行期 Grant 管运行时边界；两层独立，不因前者存在而放松后者。
+
+### 22.5 验证
+
+- `tests/python/test_full_flow_design.py` 12 项：目录聚合（含无 capability_registry 回归）、契约校验矩阵（缺 path/越权/缺 allowed_tools/无 acceptance/非法类型/目录 path）、提示词含契约且旧一刀切白名单已替换、非法 agent 计划设计期打回且根因随异常暴露。
+- `tests/python/test_fullflow_e2e.py`（RUN_REAL_LLM_EVAL=1）：真实服务全链路——设计书含 coding_agent 评估 → 计划产出 coding_agent 步骤 → 执行 Success → 文件真实修改（return 0 → return 1）→ 验收通过 → 审计 grant_id 关联。
+
+### 22.6 展示层契约（前端会话实施）
+
+- API 无需改动：`/api/plan/{id}` 步骤 outputs 已含 `output.agent_status`、`agent_facts`、`agent_artifacts`、`acceptance*`；`/api/capabilities` 暴露 kind 供徽标分类。
+- 建议呈现：agent_tool 步骤独立徽标（单轮/Grant 受限）、facts 列表（目标文件、写入字节数）、验收证据展开；与 Rust egui 阶段 2 的审批卡片同批。
+
+### 22.7 后续阶段（不在 1.4）
+
+- 多轮 Agent Loop（AgentSession，§13/§14 概念已定）：CodingAgentTool v2 带界内 turn 预算与 stop policy；Grant 预算从“单次模型调用”升级为“session 预算”。
+- Artifact Store 引用落地；worktree 并行（§19 顺序不变，最后做）。
+
 ## 变更记录
+
+### 1.4-draft — 2026-08-30
+
+- coding_agent 全流程贯通：工具目录聚合（Dispatcher 合并 agent_tool）、计划提示词分级白名单 + 契约示例、设计期 `validate_agent_steps` fail-closed 校验（含越权/缺验收拒绝）、agent 契约根因随 GenerationError 暴露。
+- `CapabilitySpec` 新增 description；执行层（1.3）与展示 API 契约不变。
+- 新增 `test_full_flow_design.py`（12 项）与 `test_fullflow_e2e.py`（真实 LLM 全链路，RUN_REAL_LLM_EVAL=1 门控）。
+- 明确未实现：多轮 Agent Loop、Artifact Store 引用、worktree 并行、前端/egui 的 agent 步骤专属呈现（归前端会话）。
 
 ### 1.3-draft — 2026-08-30
 

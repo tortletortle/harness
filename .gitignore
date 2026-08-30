@@ -76,3 +76,6 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# full-flow e2e isolated workspace
+.tmp_fullflow_e2e_root/
