@@ -324,4 +324,35 @@ def validate_agent_steps(data: dict) -> Tuple[bool, Optional[str]]:
                 for rule in acceptance:
                     if not isinstance(rule, dict) or str(rule.get("type", "")) not in ACCEPTANCE_TYPES:
                         return False, f"{label}: acceptance 规则非法: {rule!r}"
+                # 验收-指令一致性（治本：防"验收词凭空捏造"——真实首跑 step20/22 因此失败）。
+                # content_contains 的 text 必须至少有一条与 instruction/description 有交集；
+                # 零交集 = 模型不可能知道要产出该标识符，计划期直接打回。
+                cc_texts = [
+                    str(rule.get("text", "")).strip()
+                    for rule in acceptance
+                    if isinstance(rule, dict) and str(rule.get("type", "")) == "content_contains"
+                ]
+                cc_texts = [s for s in cc_texts if s]
+                if cc_texts:
+                    instruction = str(inputs.get("instruction", ""))
+                    description = str(step.get("description", ""))
+                    hay = f"{instruction} {description}".lower()
+
+                    def _text_matches(s: str) -> bool:
+                        # 宽松验收（规则 5）：def/class 前缀文本剥出标识符后匹配，
+                        # "def load_knowledge" 只要求 instruction 里有 "load_knowledge"。
+                        s_low = s.lower()
+                        if s_low in hay:
+                            return True
+                        m = re.match(r"^(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)", s_low)
+                        if m:
+                            return m.group(1) in hay
+                        return False
+
+                    if not any(_text_matches(s) for s in cc_texts):
+                        return False, (
+                            f"{label}: 验收与指令零交集——content_contains 检查的 "
+                            f"{cc_texts[:3]} 未在 instruction/description 中出现；"
+                            "请在 instruction 中显式写出这些标识符，或改用指令中已有的标识符/宽松验收"
+                        )
     return True, None

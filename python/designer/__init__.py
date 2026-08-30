@@ -656,7 +656,7 @@ class DefaultDesigner(Designer):
 }
 ```
 
-[OK] JSON 规则：
+【JSON 规则】
 1. 所有字符串用双引号 ""
 2. 最后一个元素后不要有逗号
 3. inputs 必须使用键 `path` 和 `content`，不要用 `file_path` / `file_content`
@@ -664,35 +664,40 @@ class DefaultDesigner(Designer):
 5. 无法自动验证的步骤返回 `acceptance: []`，并在 `check_criteria` 中说明需要人工检查
 6. 确保所有括号都正确闭合
 
-📁 路径语义（重要）：
+【路径语义（重要）】
 - 用户需求中明确给出的路径（无论绝对还是相对）必须**原样使用**，不得改写
 - 用户未指定路径时，使用相对路径（如 "output/report.txt"），
   相对路径将自动解析到工作区根目录
 - 目录路径以 / 结尾（如 "output/"），文件路径带扩展名
 
-⚠️ 约束（重要）：
+【约束（重要）】
 - 允许使用的工具：file_creator（创建新文件/目录）、coding_agent（修改已存在的代码文件）、test_runner（运行登记过的测试模板验证代码）。不要执行任何 shell 命令，不要使用 command_runner / package_installer / git_operator / text_editor / web_fetcher。
 - 创建新文件用 file_creator；修改已存在文件的内容用 coding_agent（它能先读原文再做受控修改）；代码改完后可用 test_runner 跑测试验证。
 - test_runner 步骤契约：inputs 必含 suite（已登记模板名，如 "pytest"，可用 test_path 指定测试文件或目录）；acceptance 必含 {"type":"exit_code","equals":0}；不要用 test_runner 执行非测试命令。
 - 用户需求或审批反馈中明确限定了可用工具时（如"只使用 file_creator"），该限定优先级最高：白名单只是上限，不得额外引入其他工具。
 - 步骤顺序必须尊重依赖关系：先创建被后续步骤使用的文件，再修改它，最后运行验证它的测试；test_runner 步骤必须排在其验证对象的创建/修改步骤之后。
 
-🔧 coding_agent 步骤契约（必须全部满足，否则计划会被拒绝）：
+【coding_agent 步骤契约（必须全部满足，否则计划会被拒绝）】
 1. inputs 必须包含：path（要修改的单个文件，相对路径）、instruction（一句话修改指令）、allowed_tools 固定为 ["text_editor"]
 2. 一个 coding_agent 步骤只修改一个文件；多个文件拆成多个步骤
 3. 必须携带非空 acceptance（content_contains / file_exists），不依赖人工检查
-4. 示例：
+4. 验收-指令一致性（强约束，计划期会被校验拒绝）：
+   - 每个 content_contains 的 text 必须逐字出现在该步骤的 instruction 或 description 中
+   - 不得凭空捏造指令中不存在的标识符（例如指令写"组件列表"而验收检查 component_list——零交集会被直接打回）
+   - 若要检查特定函数/字段名，先在 instruction 里显式写出英文标识符（如"实现 load_knowledge 方法"）
+5. 宽松验收优先：检查 def/class/函数名（如 "def load_knowledge"）比检查大段实现文本更稳定；只有当内容逐字已知时才检查大段文本
+6. 语言统一：instruction 用中文描述行为 + 显式英文标识符；acceptance.text 只允许使用 instruction 中出现过的英文标识符，不要中文长句、不要新造词
+7. 示例（注意 text "hello, world" 来自 instruction 逐字内容）：
    {"description": "修改 greet 返回值", "tool": "coding_agent", "inputs": {"path": "src/app.py", "instruction": "把 return 1 改成 return 'hello, world'", "allowed_tools": ["text_editor"]}, "acceptance": [{"type": "content_contains", "path": "src/app.py", "text": "hello, world"}]}
 
-🎯 注意事项（重要）：
+【注意事项】
 - description 要简洁（10-20字），不要冗余
 - 不要在 description 中重复 inputs 的信息
 - 去掉"用于"、"包括"等冗余词汇
 - 每个步骤必须指定 tool
 - 按照逻辑顺序组织步骤
 
-[WARN] 只返回 JSON，不要添加任何解释文字或 markdown 标记！
-[WARN] 保持简洁，避免冗长的描述！
+【输出要求】只返回 JSON，不要添加任何解释文字或 markdown 标记；保持简洁，避免冗长的描述。
 """
         
         user_content = f"""设计书：
@@ -792,7 +797,7 @@ class DefaultDesigner(Designer):
                     messages=messages,
                     model=model,
                     temperature=temperature,
-                    max_tokens=4000,  # 限制响应长度，提高稳定性和速度
+                    max_tokens=16000,  # 16 段计划 JSON 体积大，4000 曾导致截断（真实首跑实测）
                 )
                 
                 # 使用 JSON 修复工具

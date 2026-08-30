@@ -1483,7 +1483,7 @@ async def execute_plan_background(plan, resume: bool = False):
                         failure_reason=failure_reason,
                         state_snapshot=result,
                     )
-                    if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": True, "duration_ms": result.get("duration_ms")}):
+                    if not state.database.add_step_event(step_id, str(plan.plan_id), "failed", {"reason": failure_reason, "blocked": True, "duration_ms": result.get("duration_ms")}):
                         logger.warning("step_event failed 写入失败: {}", step_id)
                     _require_write(
                         state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
@@ -1512,7 +1512,7 @@ async def execute_plan_background(plan, resume: bool = False):
                         failure_reason=failure_reason,
                         state_snapshot=result,
                     )
-                    if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms")}):
+                    if not state.database.add_step_event(step_id, str(plan.plan_id), "failed", {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms")}):
                         logger.warning("step_event failed 写入失败: {}", step_id)
                     _require_write(
                         state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
@@ -1549,7 +1549,7 @@ async def execute_plan_background(plan, resume: bool = False):
                             retry_count=attempt,
                             state_snapshot=result,
                         )
-                        if not state.database.add_step_event(step_id, plan_id, "failed", {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms"), "attempt": attempt}):
+                        if not state.database.add_step_event(step_id, str(plan.plan_id), "failed", {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms"), "attempt": attempt}):
                             logger.warning("step_event failed 写入失败: {}", step_id)
                         _require_write(
                             state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
@@ -1566,7 +1566,7 @@ async def execute_plan_background(plan, resume: bool = False):
                         duration_ms=result.get("duration_ms"),
                         state_snapshot=result,
                     )
-                    if not state.database.add_step_event(step_id, plan_id, "success", {"duration_ms": result.get("duration_ms"), "note": "unverified treated as success"}):
+                    if not state.database.add_step_event(step_id, str(plan.plan_id), "success", {"duration_ms": result.get("duration_ms"), "note": "unverified treated as success"}):
                         logger.warning("step_event success 写入失败: {}", step_id)
                     await broadcast_plan_update(str(plan.plan_id))
                     break
