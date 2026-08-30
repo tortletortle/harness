@@ -12,6 +12,7 @@ AI 任务编排与执行系统：用户提出需求 → Designer（LLM）生成�
 - CI：三任务流水线（Rust / pytest / vitest）
 
 - 超级搜索工具：super_search（多引擎聚合搜索 + 深度检索 + 正文抽取；无 Key 可用，可选 Tavily/Brave/Serper 增强）
+- 代码上下文工具：code_context（Aider 式仓库地图 + SQLite FTS5 全文检索 + 知识笔记长期记忆，参考 docs/CODE_CONTEXT.md）
 详细完成度与遗留事项见 [docs/STATUS.md](docs/STATUS.md)。
 
 ## 快速开始
@@ -65,7 +66,7 @@ harness/
 ├── python/            # 后端核心
 │   ├── api/server.py  # FastAPI 服务（核心逻辑所在）
 │   ├── database.py    # SQLite 持久化
-│   ├── tools/         # 9 个内置工具
+│   ├── tools/         # 10 个内置工具
 │   ├── llm_client/    # 多提供商 LLM 客户端
 │   └── ...
 ├── frontend/          # React 18 + Vite + Tailwind + Zustand

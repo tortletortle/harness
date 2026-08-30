@@ -14,6 +14,9 @@ from .git_operator import GitOperator
 from .text_editor import TextEditor
 from .web_fetcher import WebFetcher
 from .super_search import SuperSearch
+from .code_context import CodeContext
+from .code_context import CodeContext
+from .code_context import CodeContext
 from .test_runner import TestRunner
 
 from logging_config import get_logger
@@ -366,6 +369,9 @@ class ToolRegistry:
         self.register_tool("text_editor", TextEditor)
         self.register_tool("web_fetcher", WebFetcher)
         self.register_tool("super_search", SuperSearch)
+        self.register_tool("code_context", CodeContext)
+        self.register_tool("code_context", CodeContext)
+        self.register_tool("code_context", CodeContext)
         # 测试运行：白名单模板执行器（设计稿 §23.2，补全 test 位）
         self.register_tool("test_runner", TestRunner)
     

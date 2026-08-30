@@ -549,6 +549,36 @@ class DefaultExecutor(ExecutorAI):
                 return "deep_search"
             return "search"
 
+        # code_context 的映射
+        elif tool_id == "code_context":
+            if "note" in inputs or "content" in inputs:
+                return "remember"
+            if inputs.get("force") or inputs.get("reindex"):
+                return "reindex"
+            if "query" in inputs:
+                return "search"
+            return "repo_map"
+
+        # code_context 的映射
+        elif tool_id == "code_context":
+            if "note" in inputs or "content" in inputs:
+                return "remember"
+            if inputs.get("force") or inputs.get("reindex"):
+                return "reindex"
+            if "query" in inputs:
+                return "search"
+            return "repo_map"
+
+        # code_context 的映射
+        elif tool_id == "code_context":
+            if "note" in inputs or "content" in inputs:
+                return "remember"
+            if inputs.get("force") or inputs.get("reindex"):
+                return "reindex"
+            if "query" in inputs:
+                return "search"
+            return "repo_map"
+
         # 默认返回 None，让调用者处理
         return None
 
