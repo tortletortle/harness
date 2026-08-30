@@ -170,7 +170,9 @@ class TextEditor:
     @staticmethod
     def append_to_file(path: str, content: str, encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT, force_write: bool = False) -> Dict[str, Any]:
         """追加内容到文件（带超时）"""
-        return _run_with_timeout(TextEditor._append_to_file_impl, timeout, path, content, encoding, force_write)
+        if force_write:
+            return _run_with_timeout(TextEditor._append_to_file_impl, timeout, path, content, encoding, True)
+        return _run_with_timeout(TextEditor._append_to_file_impl, timeout, path, content, encoding)
 
     @staticmethod
     def _replace_in_file_impl(path: str, old_text: str, new_text: str, encoding: str = "utf-8", force_write: bool = False) -> Dict[str, Any]:
@@ -229,10 +231,12 @@ class TextEditor:
     @staticmethod
     def replace_in_file(path: str, old_text: str, new_text: str, encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT, force_write: bool = False) -> Dict[str, Any]:
         """替换文件中的文本（带超时）"""
-        return _run_with_timeout(TextEditor._replace_in_file_impl, timeout, path, old_text, new_text, encoding, force_write)
+        if force_write:
+            return _run_with_timeout(TextEditor._replace_in_file_impl, timeout, path, old_text, new_text, encoding, True)
+        return _run_with_timeout(TextEditor._replace_in_file_impl, timeout, path, old_text, new_text, encoding)
 
     @staticmethod
-    def _insert_at_line_impl(path: str, line_number: int, content: str, encoding: str = "utf-8") -> Dict[str, Any]:
+    def _insert_at_line_impl(path: str, line_number: int, content: str, encoding: str = "utf-8", force_write: bool = False) -> Dict[str, Any]:
         """在指定行插入内容"""
         try:
             file_path = Path(path)
@@ -290,7 +294,9 @@ class TextEditor:
     @staticmethod
     def insert_at_line(path: str, line_number: int, content: str, encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT, force_write: bool = False) -> Dict[str, Any]:
         """在指定行插入内容（带超时）"""
-        return _run_with_timeout(TextEditor._insert_at_line_impl, timeout, path, line_number, content, encoding, force_write)
+        if force_write:
+            return _run_with_timeout(TextEditor._insert_at_line_impl, timeout, path, line_number, content, encoding, True)
+        return _run_with_timeout(TextEditor._insert_at_line_impl, timeout, path, line_number, content, encoding)
 
     @staticmethod
     def _write_file_impl(path: str, content: str, encoding: str = "utf-8", force_write: bool = False) -> Dict[str, Any]:
@@ -335,7 +341,9 @@ class TextEditor:
     @staticmethod
     def write_file(path: str, content: str, encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT, force_write: bool = False) -> Dict[str, Any]:
         """写入文件（创建或覆盖，带超时）"""
-        return _run_with_timeout(TextEditor._write_file_impl, timeout, path, content, encoding, force_write)
+        if force_write:
+            return _run_with_timeout(TextEditor._write_file_impl, timeout, path, content, encoding, True)
+        return _run_with_timeout(TextEditor._write_file_impl, timeout, path, content, encoding)
 
     @staticmethod
     def execute(instruction: str, inputs: Dict[str, Any]) -> Dict[str, Any]:

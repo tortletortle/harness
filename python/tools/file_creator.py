@@ -108,7 +108,9 @@ class FileCreator:
     @staticmethod
     def create_file(path: str, content: str = "", encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT, force_write: bool = False) -> Dict[str, Any]:
         """创建文件（带超时）"""
-        return _run_with_timeout(FileCreator._create_file_impl, timeout, path, content, encoding, force_write)
+        if force_write:
+            return _run_with_timeout(FileCreator._create_file_impl, timeout, path, content, encoding, True)
+        return _run_with_timeout(FileCreator._create_file_impl, timeout, path, content, encoding)
 
     @staticmethod
     def _create_directory_impl(path: str, parents: bool = True) -> Dict[str, Any]:
