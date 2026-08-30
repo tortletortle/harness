@@ -103,15 +103,6 @@ class CodingAgentTool(BaseAgentTool):
         last_test_exit: Optional[int] = None
         turns_used = 0
 
-        # P2 上下文编排：附仓库地图（Aider 模式，fail-open；静默降级不写日志）
-        repo_map_block = ""
-        try:
-            import asyncio as _asyncio
-            from knowledge.injection import build_repo_map_block
-            repo_map_block = await _asyncio.to_thread(build_repo_map_block, 2500) or ""
-        except Exception:
-            repo_map_block = ""
-
         # 对话式消息序列：首轮之后不再重建完整提示词，而是追加 assistant/user 消息对。
         # 前缀（system + 首轮请求 + 各轮 assistant 输出）跨轮保持不变，
         # 使上游前缀缓存（KV cache）可以命中，降低多轮时的延迟与费用。
@@ -143,11 +134,7 @@ class CodingAgentTool(BaseAgentTool):
             # ---- 模型调用（GrantLLMClient 在调用前强制预算）----
             if messages is None:
                 # 首轮：完整初始提示词（此后作为稳定前缀复用，提高上游缓存命中）
-                try:
-                    prompt = self._build_prompt(request, target_path, current_content, "", repo_map_block)
-                except TypeError:
-                    # 防御：外部重写可能回退 4 参签名——降级为不带仓库地图，保证单轮修改不炸
-                    prompt = self._build_prompt(request, target_path, current_content, "")
+                prompt = self._build_prompt(request, target_path, current_content, "")
                 messages = [
                     Message(role="system", content=context.system_prompt or self.description),
                     Message(role="user", content=prompt),
@@ -221,6 +208,24 @@ class CodingAgentTool(BaseAgentTool):
                     facts=facts,
                 )
 
+            # ---- 空内容防护：向已有文件写入空内容是破坏性操作 ----
+            if isinstance(new_content, str) and not new_content.strip():
+                if turn < max_turns:
+                    response_content = response.content
+                    feedback = (
+                        f"第 {turn} 轮输出的 content 为空。向目标文件写入空内容是破坏性操作、已被拒绝。"
+                        "请重新输出目标文件的完整非空内容。"
+                    )
+                    messages.append(Message(role="assistant", content=response_content))
+                    messages.append(Message(role="user", content=feedback))
+                    continue
+                facts.append({"key": "coding_agent_turns_used", "value": turns_used})
+                return CapabilityResult(
+                    status="failed",
+                    error=f"第 {turn} 轮输出为空内容，已拒绝写入（文件保持原状）",
+                    facts=facts,
+                )
+
             # ---- 受权写回 ----
             write_status, _, write_error = await self._inner_tool(
                 context, request, "text_editor", "write_file",
@@ -234,6 +239,7 @@ class CodingAgentTool(BaseAgentTool):
                     facts=facts,
                 )
             turns_used = turn
+            facts.append({"key": f"coding_agent_turn{turn}_bytes", "value": len(new_content.encode("utf-8"))})
 
             # ---- 多轮自测：Grant 声明了 test_runner 且提供了测试参数才启用 ----
             # 注意：测试失败（exit_code 非零）是合法反馈而非工具错误。
@@ -321,7 +327,6 @@ class CodingAgentTool(BaseAgentTool):
                 tool_id=tool_id,
                 instruction=f"{self.agent_id}:{instruction}",
                 inputs=inputs,
-                plan_id=context.plan_id or None,
                 step_id=str(request.work_item_id) if request.work_item_id else None,
                 success=bool(result.get("success")),
                 blocked=False,
@@ -339,7 +344,6 @@ class CodingAgentTool(BaseAgentTool):
         target_path: str,
         current_content: str,
         feedback: str = "",
-        repo_map_block: str = "",
     ) -> str:
         inputs = request.inputs or {}
         instruction = str(inputs.get("instruction") or request.goal)
@@ -350,14 +354,12 @@ class CodingAgentTool(BaseAgentTool):
         else:
             current_block = "文件当前不存在，需要新建。"
         feedback_block = f"\n上一轮反馈：\n{feedback}\n" if feedback else ""
-        map_block = f"\n{repo_map_block}\n" if repo_map_block else ""
         return (
             "只完成当前 WorkItem，不创建子 Agent，不扩大权限，不读写目标以外的文件。\n"
             f"目标：{request.goal}\n"
             f"修改指令：{instruction}\n"
             f"目标文件：{target_path}\n"
             f"{current_block}"
-            f"{map_block}"
             f"{feedback_block}\n"
             "只输出 JSON（不要输出其他文字）：\n"
             '{"status":"completed|needs_input|failed",'
