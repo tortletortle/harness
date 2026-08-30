@@ -4,7 +4,7 @@
 > 回答一个问题：**给这个应用新增一个工具，代码要长什么样、怎么注册、怎么被授权、怎么被测试。**
 > 架构决策仍以主设计稿为准；本文与其冲突时，以主设计稿为准并回改本文。
 >
-> 版本：0.1（2026-08-30，基于 1.8-draft 代码现状：ToolRegistry 内置 10 工具）
+> 版本：0.2（2026-08-30，基于 1.8-draft 代码现状：ToolRegistry 注册 10 个工具 + 1 个未注册存根 lint_gate.py；本次修正附录 A 与 metadata 缺口，见变更记录）
 
 ## 1. 现状与范围
 
@@ -233,14 +233,19 @@ self.register_tool("my_tool", MyTool)
 | tool_id | 模块 | category | instructions | side_effect | idempotent |
 |---|---|---|---|---|---|
 | file_creator | file_creator.py | generation | create_file, create_directory | reversible | 是 |
-| text_editor | text_editor.py | generation | read_file, append_to_file, replace_in_file, insert_at_line | reversible | 是 |
+| text_editor | text_editor.py | generation | read_file, write_file, append_to_file, replace_in_file, insert_at_line（write 曾缺失，0.2 已补入 metadata） | reversible | 是 |
 | git_operator | git_operator.py | other | git_init, git_add, git_commit, git_clone | reversible | 否 |
 | package_installer | package_installer.py | generation | install_pip, install_npm | none | 否 |
 | command_runner | command_runner.py | other | run_command | none | 是 |
-| test_runner | test_runner.py | test | run | none | 是 |
+| test_runner | test_runner.py | test | run（run_tests / execute 为同义别名） | none | 是 |
 | web_fetcher | web_fetcher.py | search | download_file, fetch_content | none | 是 |
 | super_search | super_search.py | search | search, deep_search, extract_text | none | 是 |
 | code_context | code_context.py | search | repo_map, search, reindex, remember | none | 是 |
 | manual_tool | manual_tool.py（别名 `manual`） | other | manual_step | none（human_tool，强制挂审批） | 是 |
 
 > 注：side_effect/idempotent 两列来自 `ToolCapabilityAdapter.spec` 的现行硬编码集合（§4.2），非工具声明。
+>
+> **0.2 勘误（2026-08-30）**：
+> 1. `code_context` 曾在 `_register_default_tools` 中被重复注册 3 次（多会话同文件合并残留），已去重——运行时无影响（dict 覆盖），但属必须清理的合并残留；
+> 2. `python/tools/lint_gate.py`（约 50 行）是**未注册的存根**（无 get_metadata/execute），不计入上表——要么补全注册、要么归档，避免长期滞留；
+> 3. `text_editor` 的 metadata 原先漏声明 `write_file`/`write` 指令（违反本文 §6 必测第 3 条），而 `coding_agent` 的受权写回正依赖它——0.2 已补入 metadata。**教训：新增指令时必须同步 metadata。**
