@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`1.7-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）与多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）已实施；工具选型评测达标；worktree 路线已定
+- 当前版本：`1.8-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；worktree 路线已定
 - 最后更新：2026-08-30
 
 ## 1. 目标
@@ -787,6 +787,7 @@ PlanUpdateEvent 增加自增 version
 ### 22.7 后续阶段（不在 1.4）
 
 - 多轮 Agent Loop 第一阶段（1.7 已落地）：CodingAgentTool v2 支持有界自测迭代——inputs.max_turns>1 时每轮写回后用 test_runner 自测（须在 allowed_tools 声明），测试输出作为结构化反馈进入下一轮提示词，通过即提前结束；Grant 预算按轮扩展（max_model_calls=turns、max_tool_calls=1+3*turns，见 agent_step_grant_params）。最终验收仍归 AcceptanceRunner。默认 max_turns=1 与单轮行为完全兼容。完整 AgentSession/Turn/Attempt 分层（§15）仍为后续。
+- 上下文缓存命中优化（1.8 已落地）：多轮改为对话式消息序列（system + 首轮请求 + 各轮 assistant 输出 + 反馈追加），前缀跨轮不变 → 上游前缀缓存（KV cache）可命中，降低多轮延迟与费用；设计书缓存增加工具目录/模型指纹校验（目录或模型变化即淘汰陈旧条目，防止错误命中）与 lookups/hit_rate 观测。默认行为向后兼容。
 - Artifact Store 引用落地；worktree 并行（§19 顺序不变，最后做）。
 
 ## 23. 工具管理修正计划（1.5 · 已定，待实施）
@@ -849,6 +850,13 @@ PlanUpdateEvent 增加自增 version
 三项完成的标志均已达成：`/api/capabilities` 出现三种 kind；搜索受 Grant/allowlist/审计约束；真实 E2E 计划包含 test_runner 步骤（见 test_fullflow_e2e.py）。
 
 ## 变更记录
+
+### 1.8-draft — 2026-08-30
+
+- 上下文缓存命中优化：CodingAgentTool 多轮改为对话式消息序列（每轮只追加 assistant 输出 + 反馈 user 消息，不重建完整提示词），轮间前缀保持稳定以命中上游 KV 前缀缓存（有确定性断言：第 2 轮 messages 完整复用第 1 轮前缀）。
+- DesignCache/PlanCache：get/set 支持 fingerprint（工具目录+模型指纹，不一致即淘汰陈旧条目，防止错误命中）；stats() 新增 lookups/process_hits/hit_rate 观测。
+- 新增 tests/python/test_cache.py 7 项（命中/未命中计数、key 规范化、指纹失效、TTL 过期、PlanCache 继承）。
+- 已知边界：指纹校验当前只保护设计书缓存（计划缓存以 design_id 为键，天然隔离）；上游前缀缓存是否生效取决于 provider 实现。
 
 ### 1.7-draft — 2026-08-30
 
