@@ -17,9 +17,10 @@ async def test_save_plan_idempotent_after_step_events(tmp_path):
     """失败后重新审批：计划重存前必须先清 step_events，否则 FK 冲突 500。"""
     db = Database(str(tmp_path / "db.sqlite"))
     designer, _ = _make_designer(_VALID_PLAN_JSON)
-    plan = await designer.generate_plan(_design_document())
+    design = _design_document()  # 同一个 design 对象：设计与计划必须引用同一 design_id
+    plan = await designer.generate_plan(design)
 
-    db.save_design(_design_document())
+    db.save_design(design)
     db.save_plan(plan)
 
     # 模拟一次失败执行：给每个步骤留下事件（step_events 同时 FK 引用 plans 和 steps）

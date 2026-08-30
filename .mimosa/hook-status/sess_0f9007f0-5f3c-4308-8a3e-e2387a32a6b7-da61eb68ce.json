@@ -1,14 +1,14 @@
 {
   "schemaVersion": "mimosa-hook-status/v1",
-  "recordedAt": "2026-08-30T16:55:41.117Z",
+  "recordedAt": "2026-08-30T17:00:00.709Z",
   "sessionId": "sess_0f9007f0-5f3c-4308-8a3e-e2387a32a6b7",
   "event": "PostToolUse",
-  "toolName": "Edit",
-  "file": "python/tools/lint_gate.py",
+  "toolName": "Write",
+  "file": "tests/python/test_github_operator.py",
   "outcome": "clear",
   "coverage": "complete",
   "findingCount": 0,
-  "durationMs": 36,
+  "durationMs": 30,
   "hostState": "hook_complete",
   "reportHint": ".mimosa/reports/"
 }

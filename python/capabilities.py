@@ -97,6 +97,13 @@ class CapabilityRegistry:
 class ToolCapabilityAdapter:
     """Expose an existing synchronous ToolRegistry tool as an async Capability."""
 
+    # 副作用分类（docs/TOOL_INTERFACE_DESIGN.md §4.2）：新工具有副作用时在此登记。
+    # reversible：文件写入/git 本地操作，可回退；external：对外发送（PR/HTTP），
+    # 不可回退，目录层展示给 Designer 前应审慎；其余视为 none。
+    _REVERSIBLE_TOOLS = {"file_creator", "text_editor", "git_operator"}
+    _EXTERNAL_TOOLS = {"github_operator", "http_api"}
+    _NON_IDEMPOTENT_TOOLS = {"git_operator", "package_installer", "github_operator", "http_api"}
+
     def __init__(self, tool_registry: Any, tool_id: str, version: str = "1.0.0") -> None:
         self.tool_registry = tool_registry
         self.tool_id = tool_id
@@ -107,13 +114,19 @@ class ToolCapabilityAdapter:
             (item for item in self.tool_registry.list_tools() if item.get("tool_id") == self.tool_id),
             {},
         )
+        if self.tool_id in self._EXTERNAL_TOOLS:
+            side_effect = "external"
+        elif self.tool_id in self._REVERSIBLE_TOOLS:
+            side_effect = "reversible"
+        else:
+            side_effect = "none"
         return CapabilitySpec(
             id=self.tool_id,
             version=metadata.get("version", self.version),
             kind="deterministic_tool",
             required_permissions=(f"tool:{self.tool_id}",),
-            side_effect="reversible" if self.tool_id in {"file_creator", "text_editor", "git_operator"} else "none",
-            idempotent=self.tool_id not in {"git_operator", "package_installer"},
+            side_effect=side_effect,
+            idempotent=self.tool_id not in self._NON_IDEMPOTENT_TOOLS,
         )
 
     async def run(self, request: CapabilityRequest, runtime_context: Any) -> CapabilityResult:
