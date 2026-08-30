@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`1.4-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 最小闭环与全流程贯通（工具目录→设计→计划→契约校验→执行→验收→审计）已实施；工具选型评测达标；worktree 路线已定
+- 当前版本：`1.5-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 最小闭环与全流程贯通已实施；工具管理审计完成（§6 对照），三项实质偏离的修正计划已定（§23），待实施；worktree 路线已定
 - 最后更新：2026-08-30
 
 ## 1. 目标
@@ -789,7 +789,68 @@ PlanUpdateEvent 增加自增 version
 - 多轮 Agent Loop（AgentSession，§13/§14 概念已定）：CodingAgentTool v2 带界内 turn 预算与 stop policy；Grant 预算从“单次模型调用”升级为“session 预算”。
 - Artifact Store 引用落地；worktree 并行（§19 顺序不变，最后做）。
 
+## 23. 工具管理修正计划（1.5 · 已定，待实施）
+
+来源：2026-08-30 工具管理审计（实现 vs 本稿 §2/§3/§6/§7/§11 对照）确认三项实质偏离。以下为修正设计；每项独立可交付，顺序 B → C → A。
+
+### 23.1 P1-B 人工步骤真确认（human_tool 第三类落地，最小改动）
+
+问题：`manual_tool` 以 deterministic 身份注册且执行即成功（仅附 note）；§3 Human Tool: approval/input 未落地，计划里的人工步骤实际无人确认。
+
+设计：
+- `capabilities.py` 新增 `HumanCapabilityAdapter`（kind="human_tool"），manual_tool 以第三类注册进 CapabilityRegistry。
+- 状态机审批闸门条件扩展：`is_required(tool)` **或** capability.kind=="human_tool" → 必挂 ApprovalManager（复用 P0-a 全流程：WS 卡片、approve/reject 端点、超时即拒）。
+- 批准后 manual_tool 返回步骤描述；拒绝/超时走 blocked=user_rejected 路径。
+- 兼容口径：旧计划 manual 步骤行为改变（会挂起等待）——这是设计意图的矫正而非回归；预留 `approval.human_steps` 开关（默认 true）。
+- manual_tool metadata 描述同步更新（"等待人工确认后执行"）。
+
+验证：无 required_tools 配置时 human 步骤必挂审批；approve→Success；reject→Failed blocked；超时→拒；`/api/capabilities` 出现 kind=human_tool；普通工具不受影响。
+
+### 23.2 P1-C test_runner 工具（补全 run/test/git 的 test 位）
+
+问题：7 工具无测试类，计划白名单又禁 shell → coding_agent 改完代码无法跑测试，“改→测→修”闭环断裂。
+
+设计：
+- 新增 `python/tools/test_runner.py`：只执行白名单命令模板，不做 shell 逃生舱。
+  - 模板来源：config `test_runner.commands`（默认内置 pytest / npm 两模板）；inputs={suite, test_path?, args?} → list argv 拼接（无 shell=True）。
+  - cwd 固定解析到工作区根（复用 tools/workspace.py）；超时默认 120s；返回 `{success: exit_code==0, exit_code, stdout 尾部, stderr 尾部}`（验收器已支持 returncode/exit_code 双键）。
+- 注册进 ToolRegistry（category="test"）→ Adapter 自动进 Capability 目录 → Dispatcher 聚合对 Designer 可见。
+- 计划提示词白名单扩为 file_creator / coding_agent / test_runner，test_runner 契约：inputs 必含 suite；acceptance 必含 `{"type":"exit_code","equals":0}`。
+- `json_fixer` 新增普通工具轻契约 TOOL_CONTRACTS：test_runner 缺 suite / 缺 acceptance → 计划打回。
+- 授权：test_runner 步骤 Grant allowed_tools={test_runner}；无网络；是否需审批交给 approval.required_tools 配置（默认不挂）。
+
+验证：pytest 模板通过/失败两态；未登记模板拒绝；argv 拼接无 shell 注入面；契约校验拒绝缺 suite/缺 acceptance 的 test_runner 步骤；真实 E2E 扩展：coding_agent 修改 → test_runner 跑 pytest → 全绿。
+
+### 23.3 P1-A 搜索旁路收编（授权化设计期搜索）
+
+问题：设计书生成阶段 ToolRegistryAgent 直调 WebFetcher.execute —— 无 Grant、无 allowed_hosts、无审计，绕过 §1/§7（当前配置 enforce=true 且 allowed_hosts 为空，旁路完全绕开了这层）。
+
+设计：
+- `AuthorizationManager` 新增无 step 的通用签发 `issue_grant(subject, allowed_tools, limits=None, ttl=None)`：资源为空，URL 检查走 allowed_hosts。
+- server 在 /api/design 调用 generate_design 前签发 design_search Grant：allowed_tools={"web_fetcher"}、max_tool_calls=6、TTL=600s、allowed_hosts 继承配置；用后撤销。
+- ToolRegistryAgent 的抓取改走 CapabilityRegistry 的 web_fetcher Adapter（authorize + to_thread，复用 1.3 机制）；每次写审计（actor=designer_search，带 grant_id）。
+- 预算超限 / 主机不在 allowlist → 结构化拒绝反馈给 LLM 继续生成（不中断设计书）。
+- 兼容口径 fail-closed：无 Grant 且 enforce=true → 搜索返回“未授权”结果（设计书继续，只是不联网）；enforce=false 保持旧行为。
+
+验证：无 Grant 拒绝（断言无网络调用）；有 Grant 放行+审计+用量；越权主机拒绝；enforce=false 兼容。
+
+### 23.4 审计顺带入档（不改代码）
+
+- `plugin_system.py`（PluginManager/ToolPlugin）标记废弃候选：P3 外部扩展层如启用（MCP 适配）以新设计为准；代码头部加废弃注记。
+- Dispatcher 职责漂移（路由实际在 executor）：接受现状，§11 注记更新而非改代码。
+- Schema 校验（§7 第六项）列 P2：等 capability input_schema 有真实内容后统一补。
+- 工具分类学（generation/other/search vs read/edit/run/test/git）列 P3，仅影响目录可读性。
+
+### 23.5 实施顺序与总验收口径
+
+顺序：P1-B（最小）→ P1-C → P1-A（涉及 designer 链路最广）。每项：确定性测试先行 → 全量回归 → 涉及真实 LLM 的部分以 RUN_REAL_LLM_EVAL=1 收尾。
+三项全部完成的标志：`/api/capabilities` 出现三种 kind；搜索有审计记录且受 allowlist 约束；真实 E2E 计划可包含 test_runner 步骤并全绿。
+
 ## 变更记录
+
+### 1.5-draft — 2026-08-30
+
+- 新增 §23 工具管理修正计划（未实施）：P1-B 人工步骤真确认（human_tool 第三类）、P1-C test_runner 工具（白名单模板，补全测试位）、P1-A 搜索旁路收编（设计期 Grant + 审计 + fail-closed 兼容）；审计顺带入档四项（插件系统废弃候选、Dispatcher 职责注记、Schema 校验列 P2、分类学列 P3）。
 
 ### 1.4-draft — 2026-08-30
 
