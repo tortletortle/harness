@@ -1,0 +1,150 @@
+api_keys:
+  bbapi: REDACTED-ROTATE-YOUR-KEY
+  hejuapi: REDACTED-ROTATE-YOUR-KEY
+  newapi: REDACTED-ROTATE-YOUR-KEY
+  stepfun: REDACTED-ROTATE-YOUR-KEY
+base_urls:
+  bbapi: https://www.bb-api.com/v1
+  hejuapi: https://www.hejuapi.com/v1
+  newapi: https://newapi.dragon3api.com/v1
+  stepfun: https://api.stepfun.com/step_plan/v1
+models:
+  codegen:
+    fallback:
+      max_tokens: 4000
+      model: gpt-5.6-terra
+      provider: hejuapi
+      temperature: 0.2
+    primary:
+      max_tokens: 4000
+      model: gpt-5.6-sol
+      provider: hejuapi
+      temperature: 0.2
+  designer:
+    fallback:
+      max_tokens: 8000
+      model: claude-opus-5
+      provider: bbapi
+      temperature: 0.3
+    primary:
+      max_tokens: 8000
+      model: claude-haiku-4-5-20251001
+      provider: newapi
+      temperature: 0.3
+  executor:
+    primary:
+      max_tokens: 4000
+      model: claude-haiku-4-5-20251001
+      provider: newapi
+      temperature: 0.1
+  knowledge:
+    fallback:
+      max_tokens: 4000
+      model: step-3.5-flash
+      provider: stepfun
+      temperature: 0.2
+    primary:
+      max_tokens: 4000
+      model: step-3.7-flash
+      provider: stepfun
+      temperature: 0.2
+  stepfun_asr:
+    fallback:
+      max_tokens: 4000
+      model: stepaudio-2.5-asr
+      provider: stepfun
+      temperature: 0.1
+    primary:
+      max_tokens: 4000
+      model: step-asr-1.1
+      provider: stepfun
+      temperature: 0.1
+  stepfun_audio:
+    fallback:
+      max_tokens: 4000
+      model: stepaudio-2.5-chat
+      provider: stepfun
+      temperature: 0.3
+    primary:
+      max_tokens: 4000
+      model: step-audio-2
+      provider: stepfun
+      temperature: 0.3
+  stepfun_chat:
+    fallback:
+      max_tokens: 4000
+      model: step-2x-large
+      provider: stepfun
+      temperature: 0.3
+    primary:
+      max_tokens: 4000
+      model: step-3.5-flash
+      provider: stepfun
+      temperature: 0.3
+  stepfun_image_edit:
+    primary:
+      max_tokens: 4000
+      model: step-image-edit-2
+      provider: stepfun
+      temperature: 0.3
+  stepfun_search:
+    primary:
+      max_tokens: 4000
+      model: dr-search-api
+      provider: stepfun
+      temperature: 0.2
+  stepfun_tts:
+    fallback:
+      max_tokens: 4000
+      model: stepaudio-2.5-tts
+      provider: stepfun
+      temperature: 0.3
+    primary:
+      max_tokens: 4000
+      model: step-tts-2
+      provider: stepfun
+      temperature: 0.3
+  toolmanager:
+    fallback:
+      max_tokens: 4000
+      model: claude-sonnet-5
+      provider: bbapi
+      temperature: 0.1
+    primary:
+      max_tokens: 4000
+      model: claude-haiku-4-5-20251001
+      provider: newapi
+      temperature: 0.1
+  vision:
+    fallback:
+      max_tokens: 4000
+      model: step-1o-turbo-vision
+      provider: stepfun
+      temperature: 0.1
+    primary:
+      max_tokens: 4000
+      model: step-gui
+      provider: stepfun
+      temperature: 0.1
+rate_limit:
+  requests_per_minute: 50
+  tokens_per_minute: 100000
+retry:
+  backoff_factor: 2
+  max_attempts: 3
+  timeout: 60
+# Runtime 临时授权：每个 API 步骤单独签发，执行后撤销。
+# allowed_hosts 留空表示网络工具必须显式配置目标主机，不会被 Grant 默认放行。
+authorization:
+  enforce: true
+  require_grant: true
+  allow_absolute_paths: true
+  default_ttl_seconds: 600
+  default_max_tool_calls: 1
+  default_max_model_calls: 3
+  default_max_elapsed_seconds: 600
+  deny_resources:
+    - .env
+    - .env.*
+    - .git/**
+  allowed_hosts: []
