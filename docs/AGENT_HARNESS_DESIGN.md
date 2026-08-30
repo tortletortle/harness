@@ -858,6 +858,13 @@ PlanUpdateEvent 增加自增 version
 - 新增 tests/python/test_cache.py 7 项（命中/未命中计数、key 规范化、指纹失效、TTL 过期、PlanCache 继承）。
 - 已知边界：指纹校验当前只保护设计书缓存（计划缓存以 design_id 为键，天然隔离）；上游前缀缓存是否生效取决于 provider 实现。
 
+### 1.8 补充 — 真实任务观察第 2 期（多文件重构，2026-08-30）
+
+- 场景：三文件 User 模块破坏性重构（7 步：3 创建 + 3 coding_agent + 1 test_runner），隔离工作区真实 LLM，5 次执行。
+- 修复三缺陷：多轮解析失败无反馈重试、空内容写入（破坏性）、部分成功被判全失败（turn 预算耗尽但已有成功写回 → 交外层验收裁决）。
+- 结构性缺口实证：①多文件一致性无保障（AI 真实犯错：service.py 参数顺序与 models.py 不匹配，验收层正确拦截）；②失败后无跨步骤恢复（步骤 5 失败后计划停止，尽管其产物实际正确）。两者共同构成 AgentSession 分层的最高优先级实证。
+- 附带发现：设计书 LLM 对长复杂请求的 JSON 输出稳定性不足（连续 4 次解析失败）；观察脚本 token 含非 ASCII 字符导致 HTTP 头编码失败。
+
 ### 1.7-draft — 2026-08-30
 
 - 多轮 Agent Loop 第一阶段落地：CodingAgentTool v2（version 0.2.0）支持 inputs.max_turns 有界自测迭代——每轮读→模型→写回→test_runner 自测，测试失败（exit_code 非零）作为合法结构化反馈进入下一轮提示词，通过即提前结束；自测被拒/基础设施失败则停止迭代交外层验收。
