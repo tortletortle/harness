@@ -347,6 +347,11 @@ def validate_agent_steps(data: dict) -> Tuple[bool, Optional[str]]:
                         m = re.match(r"^(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)", s_low)
                         if m:
                             return m.group(1) in hay
+                        # token 级规则：转移式指令（"return 0 to 1"）↔ 期望产物
+                        # （"return 1"）——文本的显著 token 全部出现在指令中即视为有交集。
+                        toks = [t for t in re.findall(r"[A-Za-z_][\w]*", s_low) if len(t) >= 2]
+                        if toks and all(tok in hay for tok in toks):
+                            return True
                         return False
 
                     if not any(_text_matches(s) for s in cc_texts):

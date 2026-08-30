@@ -103,6 +103,15 @@ class CodingAgentTool(BaseAgentTool):
         last_test_exit: Optional[int] = None
         turns_used = 0
 
+        # P2 上下文编排：附仓库地图（Aider 模式，fail-open；静默降级不写日志）
+        repo_map_block = ""
+        try:
+            import asyncio as _asyncio
+            from knowledge.injection import build_repo_map_block
+            repo_map_block = await _asyncio.to_thread(build_repo_map_block, 2500) or ""
+        except Exception:
+            repo_map_block = ""
+
         # 对话式消息序列：首轮之后不再重建完整提示词，而是追加 assistant/user 消息对。
         # 前缀（system + 首轮请求 + 各轮 assistant 输出）跨轮保持不变，
         # 使上游前缀缓存（KV cache）可以命中，降低多轮时的延迟与费用。
@@ -134,7 +143,7 @@ class CodingAgentTool(BaseAgentTool):
             # ---- 模型调用（GrantLLMClient 在调用前强制预算）----
             if messages is None:
                 # 首轮：完整初始提示词（此后作为稳定前缀复用，提高上游缓存命中）
-                prompt = self._build_prompt(request, target_path, current_content, "")
+                prompt = self._build_prompt(request, target_path, current_content, "", repo_map_block)
                 messages = [
                     Message(role="system", content=context.system_prompt or self.description),
                     Message(role="user", content=prompt),
@@ -344,6 +353,7 @@ class CodingAgentTool(BaseAgentTool):
         target_path: str,
         current_content: str,
         feedback: str = "",
+        repo_map_block: str = "",
     ) -> str:
         inputs = request.inputs or {}
         instruction = str(inputs.get("instruction") or request.goal)
@@ -354,12 +364,14 @@ class CodingAgentTool(BaseAgentTool):
         else:
             current_block = "文件当前不存在，需要新建。"
         feedback_block = f"\n上一轮反馈：\n{feedback}\n" if feedback else ""
+        map_block = f"\n{repo_map_block}\n" if repo_map_block else ""
         return (
             "只完成当前 WorkItem，不创建子 Agent，不扩大权限，不读写目标以外的文件。\n"
             f"目标：{request.goal}\n"
             f"修改指令：{instruction}\n"
             f"目标文件：{target_path}\n"
             f"{current_block}"
+            f"{map_block}"
             f"{feedback_block}\n"
             "只输出 JSON（不要输出其他文字）：\n"
             '{"status":"completed|needs_input|failed",'
