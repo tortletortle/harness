@@ -58,15 +58,23 @@ def _open_db() -> sqlite3.Connection:
     return conn
 
 
+def _to_int(value: Any) -> int:
+    """宽容整数转换：坏字符串/None → 0（记账尽量保留数据，不丢行）。"""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _normalize_tokens(usage: Any) -> tuple:
     """归一化 OpenAI（prompt/completion/total）与 Anthropic（input/output）两种口径。"""
     if usage is None:
         usage = {}
     if not isinstance(usage, dict):
         usage = dict(getattr(usage, "__dict__", {}) or {})
-    input_t = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
-    output_t = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
-    total = int(usage.get("total_tokens") or (input_t + output_t))
+    input_t = _to_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
+    output_t = _to_int(usage.get("completion_tokens") or usage.get("output_tokens"))
+    total = _to_int(usage.get("total_tokens")) or (input_t + output_t)
     return input_t, output_t, total
 
 

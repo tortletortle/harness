@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`1.6-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）已实施；工具选型评测达标；worktree 路线已定
+- 当前版本：`1.7-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）与多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）已实施；工具选型评测达标；worktree 路线已定
 - 最后更新：2026-08-30
 
 ## 1. 目标
@@ -786,7 +786,7 @@ PlanUpdateEvent 增加自增 version
 
 ### 22.7 后续阶段（不在 1.4）
 
-- 多轮 Agent Loop（AgentSession，§13/§14 概念已定）：CodingAgentTool v2 带界内 turn 预算与 stop policy；Grant 预算从“单次模型调用”升级为“session 预算”。
+- 多轮 Agent Loop 第一阶段（1.7 已落地）：CodingAgentTool v2 支持有界自测迭代——inputs.max_turns>1 时每轮写回后用 test_runner 自测（须在 allowed_tools 声明），测试输出作为结构化反馈进入下一轮提示词，通过即提前结束；Grant 预算按轮扩展（max_model_calls=turns、max_tool_calls=1+3*turns，见 agent_step_grant_params）。最终验收仍归 AcceptanceRunner。默认 max_turns=1 与单轮行为完全兼容。完整 AgentSession/Turn/Attempt 分层（§15）仍为后续。
 - Artifact Store 引用落地；worktree 并行（§19 顺序不变，最后做）。
 
 ## 23. 工具管理修正计划（1.5 · 已定，待实施）
@@ -849,6 +849,14 @@ PlanUpdateEvent 增加自增 version
 三项完成的标志均已达成：`/api/capabilities` 出现三种 kind；搜索受 Grant/allowlist/审计约束；真实 E2E 计划包含 test_runner 步骤（见 test_fullflow_e2e.py）。
 
 ## 变更记录
+
+### 1.7-draft — 2026-08-30
+
+- 多轮 Agent Loop 第一阶段落地：CodingAgentTool v2（version 0.2.0）支持 inputs.max_turns 有界自测迭代——每轮读→模型→写回→test_runner 自测，测试失败（exit_code 非零）作为合法结构化反馈进入下一轮提示词，通过即提前结束；自测被拒/基础设施失败则停止迭代交外层验收。
+- Grant 预算按轮扩展：agent_step_grant_params 以 max_turns 为单一旋钮（max_model_calls=turns、max_tool_calls=1+3*turns）；allowed_tools 契约放宽至 text_editor+test_runner（§23.2 的授权边界不变）。
+- test_runner.execute 接受 execute 指令别名（executor 对未指定 instruction 的步骤推断为 execute）。
+- 新增多轮确定性测试：两轮自测闭环（第 1 轮改错→自测失败→反馈→第 2 轮改对→自测通过）、预算耗尽（3 轮全部失败→completed+facts 记录 last_test_exit，交外层验收）、跨 segment step_order 全局唯一回归。
+- 已知边界：多轮自测的测试发现依赖 inputs.test_path 精确指向测试文件；真实 E2E 曾暴露 step_order 全局唯一 bug（同日修复）。完整 AgentSession/Turn/Attempt 分层仍为后续。
 
 ### 1.6-draft — 2026-08-30
 

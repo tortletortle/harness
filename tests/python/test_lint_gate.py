@@ -159,6 +159,8 @@ def test_command_runner_nonempty_output_no_flag():
 @pytest.fixture()
 def sandbox_ws(tmp_path, monkeypatch):
     monkeypatch.setattr("tools.workspace.resolve_workspace_root", lambda: tmp_path)
+    # command_runner 通过自身模块级 _resolve_workspace_root 取工作区根（导入时已绑定）
+    monkeypatch.setattr(cr_mod, "_resolve_workspace_root", lambda: tmp_path)
     return tmp_path
 
 
