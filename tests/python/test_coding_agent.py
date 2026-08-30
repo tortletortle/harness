@@ -361,7 +361,7 @@ class _SeqProvider(LLMProvider):
         return "sequence"
 
     async def chat(self, messages, model, temperature=0.7, max_tokens=4000, **kwargs):
-        self.calls.append(messages)
+        self.calls.append(list(messages))  # 快照：messages 会被后续轮原地追加
         idx = min(len(self.calls) - 1, len(self.responses) - 1)
         return LLMResponse(content=self.responses[idx], model=model, finish_reason="stop")
 
@@ -432,6 +432,16 @@ async def test_coding_agent_multi_turn_self_test_loop(tmp_path, monkeypatch):
     # 第 2 轮提示词应携带第 1 轮的自测反馈
     second_prompt = provider.calls[1][-1].content
     assert "上一轮反馈" in second_prompt and "exit_code=1" in second_prompt
+    # 对话式消息序列：第 2 轮的 messages 必须完整复用第 1 轮的前缀
+    # （system + 首轮请求 + 第 1 轮 assistant 输出），上游前缀缓存才能命中。
+    first_msgs = provider.calls[0]
+    second_msgs = provider.calls[1]
+    assert len(second_msgs) == len(first_msgs) + 2
+    for i, msg in enumerate(first_msgs):
+        assert second_msgs[i].role == msg.role
+        assert second_msgs[i].content == msg.content
+    assert second_msgs[len(first_msgs)].role == "assistant"  # 第 1 轮输出回填
+    assert second_msgs[-1].role == "user"  # 本轮反馈
 
 
 @pytest.mark.asyncio

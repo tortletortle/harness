@@ -114,6 +114,15 @@ pub enum PlanFilter {
     Archived,
 }
 
+/// 可全屏放大的区块（双击标题或 ⛶ 进入，Esc 退出）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Zone {
+    Projects,
+    Steps,
+    Logs,
+    Assistant,
+}
+
 /// 后台 → UI 事件
 #[derive(Debug)]
 pub enum GuiEvent {
@@ -243,6 +252,8 @@ pub struct EasApp {
     design_delete_confirmation: Option<String>,
     /// 日志级别过滤：None = 全部
     log_filter: Option<String>,
+    /// 双击全屏的区块
+    zoomed: Option<Zone>,
 }
 
 impl EasApp {
@@ -281,6 +292,7 @@ impl EasApp {
             chat_busy: false,
             design_delete_confirmation: None,
             log_filter: None,
+            zoomed: None,
         }
     }
 
@@ -963,6 +975,7 @@ impl EasApp {
                 }
                 if ui.selectable_label(active, text).clicked() {
                     self.state.mode = mode;
+                    self.zoomed = None;
                 }
                 ui.add_space(2.0);
             }
@@ -1186,6 +1199,218 @@ impl EasApp {
             });
     }
 
+    fn settings_central_content(&mut self, ui: &mut egui::Ui) {
+        theme::card(ui, |ui| {
+            ui.strong("服务状态");
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new(self.status_text())
+                    .size(12.5)
+                    .color(theme::TEXT_SEC),
+            );
+            ui.add_space(4.0);
+            if self.state.connected {
+                theme::badge(ui, "● 已连接", theme::OK_TEXT, theme::OK_SOFT);
+            } else {
+                theme::badge(ui, "● 未连接", theme::DANGER_TEXT, theme::DANGER_SOFT);
+            }
+        });
+        ui.add_space(8.0);
+        theme::card(ui, |ui| {
+            ui.strong("服务地址");
+            ui.add_space(2.0);
+            ui.monospace(self.state.base.as_str());
+            ui.weak("由环境变量 EAS_API_BASE 指定，默认 http://127.0.0.1:8000");
+        });
+        ui.add_space(8.0);
+        theme::card(ui, |ui| {
+            ui.strong("API Token");
+            ui.add_space(2.0);
+            let token_edit = egui::TextEdit::singleline(&mut self.token_draft)
+                .password(true)
+                .hint_text("API token")
+                .desired_width(240.0);
+            let response = ui.add(token_edit);
+            let apply_clicked = ui
+                .add_enabled(
+                    !self.token_draft.trim().is_empty(),
+                    theme::primary_button("应用 token"),
+                )
+                .clicked();
+            if apply_clicked
+                || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+            {
+                let t = self.token_draft.trim().to_string();
+                if !t.is_empty() && t != self.state.token {
+                    self.send(Command::SetToken(t));
+                }
+            }
+            ui.add_space(2.0);
+            ui.weak("token 来源：环境变量 EAS_API_TOKEN 或 config/api_token");
+        });
+        ui.add_space(8.0);
+        theme::card(ui, |ui| {
+            ui.strong("工具与能力");
+            ui.add_space(2.0);
+            match &self.settings_data {
+                Some(data) => {
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| {
+                            ui.strong(format!("内置工具（{}）", data.tools.len()));
+                            for tool in &data.tools {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(&tool.name).size(13.0).strong());
+                                    ui.label(
+                                        egui::RichText::new(format!("[{}]", tool.category))
+                                            .size(11.5)
+                                            .color(theme::TEXT_SEC),
+                                    );
+                                });
+                                ui.weak(&tool.description);
+                                if !tool.capabilities.is_empty() {
+                                    ui.weak(format!("能力: {}", tool.capabilities.join("、")));
+                                }
+                                ui.add_space(4.0);
+                            }
+                            ui.add_space(4.0);
+                            ui.strong(format!("Capability 声明（{}）", data.capabilities.len()));
+                            for cap in &data.capabilities {
+                                ui.weak(format!(
+                                    "{} · {} · {} · 幂等: {}",
+                                    cap.id, cap.kind, cap.side_effect, cap.idempotent
+                                ));
+                            }
+                        });
+                }
+                None => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.weak("正在加载工具与能力…");
+                    });
+                }
+            }
+        });
+        ui.add_space(8.0);
+        theme::card(ui, |ui| {
+            ui.strong("后端配置（config/models.yaml）");
+            ui.add_space(2.0);
+            match &self.settings_data {
+                Some(data) => {
+                    if let Some(keys) = data.config["api_keys_configured"].as_object() {
+                        for (k, v) in keys {
+                            let ok = v.as_bool().unwrap_or(false);
+                            theme::badge(
+                                ui,
+                                &format!("{k}: {}", if ok { "已配置" } else { "未配置" }),
+                                if ok { theme::OK_TEXT } else { theme::TEXT_SEC },
+                                if ok { theme::OK_SOFT } else { theme::HOVER_BG },
+                            );
+                        }
+                    }
+                    ui.add_space(4.0);
+                    if let Some(urls) = data.config["base_urls"].as_object() {
+                        for (k, v) in urls {
+                            ui.horizontal(|ui| {
+                                ui.weak(format!("{k}:"));
+                                ui.monospace(v.as_str().unwrap_or(""));
+                            });
+                        }
+                    }
+                    ui.add_space(4.0);
+                    ui.weak("编辑密钥请直接修改 config/models.yaml——GUI 保存会整体覆盖密钥映射，暂不开放。");
+                }
+                None => {
+                    ui.weak("等待加载…");
+                }
+            }
+        });
+        ui.add_space(8.0);
+        theme::card(ui, |ui| {
+            ui.strong("服务运维");
+            ui.add_space(2.0);
+            ui.weak("重启会让后端进程退出，需要重新启动后端后 GUI 才能重连。");
+            ui.add_space(4.0);
+            if self.restart_confirm {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("确定重启后端服务？").color(theme::DANGER_TEXT));
+                    if ui.add(theme::secondary_button("再想想")).clicked() {
+                        self.restart_confirm = false;
+                    }
+                    if ui.add(theme::danger_button("确认重启")).clicked() {
+                        self.restart_confirm = false;
+                        self.send(Command::RestartServer);
+                    }
+                });
+            } else if ui
+                .add(theme::danger_outline_button("重启后端服务"))
+                .clicked()
+            {
+                self.restart_confirm = true;
+            }
+        });
+        ui.add_space(10.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.add(theme::secondary_button("关闭")).clicked() {
+                self.settings_open = false;
+            }
+        });
+    }
+
+    fn assistant_content(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical()
+            .stick_to_bottom(true)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if self.chat_history.is_empty() {
+                    ui.weak("向 AI 助手提问，例如：解释一下当前计划的步骤。");
+                }
+                for (role, content) in &self.chat_history {
+                    let (who, color) = if role == "user" {
+                        ("你", theme::ACCENT_TEXT)
+                    } else {
+                        ("助手", theme::OK_TEXT)
+                    };
+                    theme::card(ui, |ui| {
+                        ui.label(egui::RichText::new(who).size(11.5).strong().color(color));
+                        ui.label(egui::RichText::new(content).size(13.0));
+                    });
+                    ui.add_space(4.0);
+                }
+                if self.chat_busy {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.weak("思考中…");
+                    });
+                }
+            });
+        ui.add_space(6.0);
+        ui.separator();
+        let send_enabled = !self.chat_busy && !self.chat_draft.trim().is_empty();
+        ui.horizontal(|ui| {
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut self.chat_draft)
+                    .hint_text("输入问题…（Enter 发送）")
+                    .desired_width(f32::INFINITY),
+            );
+            let enter_send = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let send_clicked = ui
+                .add_enabled(send_enabled, theme::primary_button("发送"))
+                .clicked();
+            if (send_clicked || enter_send) && send_enabled {
+                let msg = self.chat_draft.trim().to_string();
+                let history = self.chat_history.clone();
+                self.chat_history.push(("user".into(), msg.clone()));
+                self.chat_draft.clear();
+                self.chat_busy = true;
+                self.send(Command::Chat {
+                    message: msg,
+                    history,
+                });
+            }
+        });
+    }
+
     fn rollback_confirmation(&mut self, ctx: &egui::Context) {
         // 三态：确认 → 执行中 →（结果摘要显示在计划头部卡片）
         let confirming = self.state.rollback_confirmation.clone();
@@ -1247,6 +1472,10 @@ impl eframe::App for EasApp {
         }
         // 即使本帧没有事件，也保持即时模式持续处理队列和输入。
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        // 全屏模式：Esc 退出
+        if self.zoomed.is_some() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.zoomed = None;
+        }
 
         // 2. 顶栏：品牌 + 模式切换 + 服务状态 + 连接徽章 + token 配置
         egui::TopBottomPanel::top("top_bar")
@@ -1305,143 +1534,146 @@ impl eframe::App for EasApp {
             });
 
         // 3. 审批队列位于中央计划区上方，单卡片操作互不阻塞。
-        self.approval_queue(ctx);
-        self.audit_panel(ctx);
+        if self.zoomed.is_none() {
+            self.approval_queue(ctx);
+            self.audit_panel(ctx);
+        }
 
         // 4. 左栏：设计书列表或计划列表，二者互不覆盖各自状态。
-        egui::SidePanel::left("navigation_list")
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::SURFACE)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER))
-                    .inner_margin(egui::Margin::same(10.0)),
-            )
-            .show(ctx, |ui| {
-                if self.state.mode == GuiMode::Plan {
-                    ui.horizontal(|ui| {
-                        ui.heading("项目");
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.add(theme::secondary_button("刷新")).clicked() {
-                                self.send(Command::RefreshPlans);
+        if self.zoomed == Some(Zone::Projects) {
+            egui::SidePanel::left("navigation_list")
+                .exact_width(ctx.screen_rect().width())
+                .frame(
+                    egui::Frame::default()
+                        .fill(theme::SURFACE)
+                        .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                        .inner_margin(egui::Margin::same(10.0)),
+                )
+                .show(ctx, |ui| {
+                    if self.state.mode == GuiMode::Plan {
+                        ui.horizontal(|ui| {
+                            let h = ui.heading("项目");
+                            if h.double_clicked() {
+                                self.zoomed = Some(Zone::Projects);
+                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.add(theme::secondary_button("⛶ 全屏")).clicked() {
+                                        self.zoomed = Some(Zone::Projects);
+                                    }
+                                    if ui.add(theme::secondary_button("刷新")).clicked() {
+                                        self.send(Command::RefreshPlans);
+                                    }
+                                },
+                            );
+                        });
+                        ui.add_space(4.0);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.plan_search)
+                                .hint_text("搜索名称 / ID…")
+                                .desired_width(f32::INFINITY),
+                        );
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            for (filter, label) in [
+                                (PlanFilter::All, "全部"),
+                                (PlanFilter::Active, "执行中"),
+                                (PlanFilter::Finished, "已完成"),
+                                (PlanFilter::Archived, "已归档"),
+                            ] {
+                                let active = self.plan_filter == filter;
+                                let mut text = egui::RichText::new(label).size(12.0);
+                                if active {
+                                    text = text.strong();
+                                }
+                                if ui.selectable_label(active, text).clicked() {
+                                    self.plan_filter = filter;
+                                }
                             }
                         });
-                    });
-                    ui.add_space(4.0);
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.plan_search)
-                            .hint_text("搜索名称 / ID…")
-                            .desired_width(f32::INFINITY),
-                    );
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        for (filter, label) in [
-                            (PlanFilter::All, "全部"),
-                            (PlanFilter::Active, "执行中"),
-                            (PlanFilter::Finished, "已完成"),
-                            (PlanFilter::Archived, "已归档"),
-                        ] {
-                            let active = self.plan_filter == filter;
-                            let mut text = egui::RichText::new(label).size(12.0);
-                            if active {
-                                text = text.strong();
-                            }
-                            if ui.selectable_label(active, text).clicked() {
-                                self.plan_filter = filter;
-                            }
-                        }
-                    });
-                    ui.add_space(4.0);
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        let search = self.plan_search.trim().to_lowercase();
-                        let plans = self.state.plans.clone();
-                        let mut shown = 0usize;
-                        for p in &plans {
-                            let display = if p.display_name.is_empty() {
-                                format!("项目 {}", &p.plan_id[..8.min(p.plan_id.len())])
-                            } else {
-                                p.display_name.clone()
-                            };
-                            let matches_search = search.is_empty()
-                                || display.to_lowercase().contains(&search)
-                                || p.plan_id.to_lowercase().contains(&search);
-                            let status = parse_plan_status(&p.status);
-                            let matches_filter = match self.plan_filter {
-                                PlanFilter::All => !p.archived,
-                                PlanFilter::Active => {
-                                    !p.archived
-                                        && matches!(
-                                            status,
-                                            PlanStatus::Draft
-                                                | PlanStatus::Pending
-                                                | PlanStatus::Approved
-                                                | PlanStatus::Running
-                                                | PlanStatus::Paused
-                                        )
+                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            let search = self.plan_search.trim().to_lowercase();
+                            let plans = self.state.plans.clone();
+                            let mut shown = 0usize;
+                            for p in &plans {
+                                let display = if p.display_name.is_empty() {
+                                    format!("项目 {}", &p.plan_id[..8.min(p.plan_id.len())])
+                                } else {
+                                    p.display_name.clone()
+                                };
+                                let matches_search = search.is_empty()
+                                    || display.to_lowercase().contains(&search)
+                                    || p.plan_id.to_lowercase().contains(&search);
+                                let status = parse_plan_status(&p.status);
+                                let matches_filter = match self.plan_filter {
+                                    PlanFilter::All => !p.archived,
+                                    PlanFilter::Active => {
+                                        !p.archived
+                                            && matches!(
+                                                status,
+                                                PlanStatus::Draft
+                                                    | PlanStatus::Pending
+                                                    | PlanStatus::Approved
+                                                    | PlanStatus::Running
+                                                    | PlanStatus::Paused
+                                            )
+                                    }
+                                    PlanFilter::Finished => {
+                                        !p.archived
+                                            && matches!(
+                                                status,
+                                                PlanStatus::Completed
+                                                    | PlanStatus::Failed
+                                                    | PlanStatus::RolledBack
+                                            )
+                                    }
+                                    PlanFilter::Archived => p.archived,
+                                };
+                                if !matches_search || !matches_filter {
+                                    continue;
                                 }
-                                PlanFilter::Finished => {
-                                    !p.archived
-                                        && matches!(
-                                            status,
-                                            PlanStatus::Completed
-                                                | PlanStatus::Failed
-                                                | PlanStatus::RolledBack
-                                        )
-                                }
-                                PlanFilter::Archived => p.archived,
-                            };
-                            if !matches_search || !matches_filter {
-                                continue;
-                            }
-                            shown += 1;
-                            theme::card(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    let selected = self.selected_plan_id.as_deref()
-                                        == Some(p.plan_id.as_str());
-                                    let mut text = egui::RichText::new(display.clone()).size(14.0);
-                                    if selected {
-                                        text = text.strong().color(theme::ACCENT_TEXT);
-                                    }
-                                    if ui.add(egui::SelectableLabel::new(selected, text)).clicked()
-                                    {
-                                        self.select_plan(p.plan_id.clone());
-                                    }
-                                    let (label, fg, bg) = theme::plan_status_visual(status);
-                                    theme::badge(ui, label, fg, bg);
-                                    if p.archived {
-                                        theme::badge(
-                                            ui,
-                                            "已归档",
-                                            theme::TEXT_SEC,
-                                            theme::HOVER_BG,
-                                        );
-                                    }
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(Self::short_time(&p.created_at))
-                                            .size(11.5)
-                                            .color(theme::TEXT_FAINT),
-                                    );
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if ui.small_button("删除").clicked() {
-                                                self.delete_confirmation = Some(p.plan_id.clone());
+                                shown += 1;
+                                let card_resp = egui::Frame::default()
+                                    .fill(theme::SURFACE)
+                                    .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                                    .rounding(egui::Rounding::same(10.0))
+                                    .inner_margin(egui::Margin::same(12.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            let selected = self.selected_plan_id.as_deref()
+                                                == Some(p.plan_id.as_str());
+                                            let mut text =
+                                                egui::RichText::new(display.clone()).size(14.0);
+                                            if selected {
+                                                text = text.strong().color(theme::ACCENT_TEXT);
                                             }
-                                            if ui.small_button("改名").clicked() {
-                                                self.rename_dialog = Some((
-                                                    p.plan_id.clone(),
-                                                    p.display_name.clone(),
-                                                ));
+                                            if ui
+                                                .add(egui::SelectableLabel::new(selected, text))
+                                                .clicked()
+                                            {
+                                                self.select_plan(p.plan_id.clone());
                                             }
-                                            let arch =
-                                                if p.archived { "取消归档" } else { "归档" };
-                                            if ui.small_button(arch).clicked() {
-                                                self.send(Command::ArchivePlan {
-                                                    plan_id: p.plan_id.clone(),
-                                                    archived: !p.archived,
-                                                });
+                                            let (label, fg, bg) = theme::plan_status_visual(status);
+                                            theme::badge(ui, label, fg, bg);
+                                            if p.archived {
+                                                theme::badge(
+                                                    ui,
+                                                    "已归档",
+                                                    theme::TEXT_SEC,
+                                                    theme::HOVER_BG,
+                                                );
                                             }
+                                        });
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(Self::short_time(
+                                                    &p.created_at,
+                                                ))
+                                                .size(11.5)
+                                                .color(theme::TEXT_FAINT),
+                                            );
                                             if !p.design_id.is_empty() {
                                                 let did = &p.design_id[..8.min(p.design_id.len())];
                                                 if ui.small_button(format!("设计 {did}")).clicked()
@@ -1449,620 +1681,967 @@ impl eframe::App for EasApp {
                                                     self.select_design(p.design_id.clone());
                                                 }
                                             }
-                                        },
-                                    );
+                                        });
+                                    })
+                                    .response;
+                                // 右键功能菜单：改名 / 归档 / 删除 / 查看设计书
+                                card_resp.context_menu(|ui| {
+                                    ui.set_min_width(150.0);
+                                    if ui.button("✏ 改名").clicked() {
+                                        self.rename_dialog =
+                                            Some((p.plan_id.clone(), p.display_name.clone()));
+                                        ui.close_menu();
+                                    }
+                                    let arch = if p.archived { "取消归档" } else { "归档" };
+                                    if ui.button(arch).clicked() {
+                                        self.send(Command::ArchivePlan {
+                                            plan_id: p.plan_id.clone(),
+                                            archived: !p.archived,
+                                        });
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("删除").clicked() {
+                                        self.delete_confirmation = Some(p.plan_id.clone());
+                                        ui.close_menu();
+                                    }
+                                    if !p.design_id.is_empty() {
+                                        if ui.button("查看设计书").clicked() {
+                                            self.select_design(p.design_id.clone());
+                                            ui.close_menu();
+                                        }
+                                    }
                                 });
+                                ui.add_space(4.0);
+                            }
+                            if shown == 0 {
+                                ui.weak("没有匹配的项目");
+                            }
+                        });
+                    } else {
+                        self.design_list_panel(ui);
+                    }
+                });
+        } else if self.zoomed.is_none() {
+            egui::SidePanel::left("navigation_list")
+                .frame(
+                    egui::Frame::default()
+                        .fill(theme::SURFACE)
+                        .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                        .inner_margin(egui::Margin::same(10.0)),
+                )
+                .show(ctx, |ui| {
+                    if self.state.mode == GuiMode::Plan {
+                        ui.horizontal(|ui| {
+                            ui.heading("项目");
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.add(theme::secondary_button("刷新")).clicked() {
+                                        self.send(Command::RefreshPlans);
+                                    }
+                                },
+                            );
+                        });
+                        ui.add_space(4.0);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.plan_search)
+                                .hint_text("搜索名称 / ID…")
+                                .desired_width(f32::INFINITY),
+                        );
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            for (filter, label) in [
+                                (PlanFilter::All, "全部"),
+                                (PlanFilter::Active, "执行中"),
+                                (PlanFilter::Finished, "已完成"),
+                                (PlanFilter::Archived, "已归档"),
+                            ] {
+                                let active = self.plan_filter == filter;
+                                let mut text = egui::RichText::new(label).size(12.0);
+                                if active {
+                                    text = text.strong();
+                                }
+                                if ui.selectable_label(active, text).clicked() {
+                                    self.plan_filter = filter;
+                                }
+                            }
+                        });
+                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            let search = self.plan_search.trim().to_lowercase();
+                            let plans = self.state.plans.clone();
+                            let mut shown = 0usize;
+                            for p in &plans {
+                                let display = if p.display_name.is_empty() {
+                                    format!("项目 {}", &p.plan_id[..8.min(p.plan_id.len())])
+                                } else {
+                                    p.display_name.clone()
+                                };
+                                let matches_search = search.is_empty()
+                                    || display.to_lowercase().contains(&search)
+                                    || p.plan_id.to_lowercase().contains(&search);
+                                let status = parse_plan_status(&p.status);
+                                let matches_filter = match self.plan_filter {
+                                    PlanFilter::All => !p.archived,
+                                    PlanFilter::Active => {
+                                        !p.archived
+                                            && matches!(
+                                                status,
+                                                PlanStatus::Draft
+                                                    | PlanStatus::Pending
+                                                    | PlanStatus::Approved
+                                                    | PlanStatus::Running
+                                                    | PlanStatus::Paused
+                                            )
+                                    }
+                                    PlanFilter::Finished => {
+                                        !p.archived
+                                            && matches!(
+                                                status,
+                                                PlanStatus::Completed
+                                                    | PlanStatus::Failed
+                                                    | PlanStatus::RolledBack
+                                            )
+                                    }
+                                    PlanFilter::Archived => p.archived,
+                                };
+                                if !matches_search || !matches_filter {
+                                    continue;
+                                }
+                                shown += 1;
+                                let card_resp = egui::Frame::default()
+                                    .fill(theme::SURFACE)
+                                    .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                                    .rounding(egui::Rounding::same(10.0))
+                                    .inner_margin(egui::Margin::same(12.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            let selected = self.selected_plan_id.as_deref()
+                                                == Some(p.plan_id.as_str());
+                                            let mut text =
+                                                egui::RichText::new(display.clone()).size(14.0);
+                                            if selected {
+                                                text = text.strong().color(theme::ACCENT_TEXT);
+                                            }
+                                            if ui
+                                                .add(egui::SelectableLabel::new(selected, text))
+                                                .clicked()
+                                            {
+                                                self.select_plan(p.plan_id.clone());
+                                            }
+                                            let (label, fg, bg) = theme::plan_status_visual(status);
+                                            theme::badge(ui, label, fg, bg);
+                                            if p.archived {
+                                                theme::badge(
+                                                    ui,
+                                                    "已归档",
+                                                    theme::TEXT_SEC,
+                                                    theme::HOVER_BG,
+                                                );
+                                            }
+                                        });
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(Self::short_time(
+                                                    &p.created_at,
+                                                ))
+                                                .size(11.5)
+                                                .color(theme::TEXT_FAINT),
+                                            );
+                                            if !p.design_id.is_empty() {
+                                                let did = &p.design_id[..8.min(p.design_id.len())];
+                                                if ui.small_button(format!("设计 {did}")).clicked()
+                                                {
+                                                    self.select_design(p.design_id.clone());
+                                                }
+                                            }
+                                        });
+                                    })
+                                    .response;
+                                // 右键功能菜单：改名 / 归档 / 删除 / 查看设计书
+                                card_resp.context_menu(|ui| {
+                                    ui.set_min_width(150.0);
+                                    if ui.button("✏ 改名").clicked() {
+                                        self.rename_dialog =
+                                            Some((p.plan_id.clone(), p.display_name.clone()));
+                                        ui.close_menu();
+                                    }
+                                    let arch = if p.archived { "取消归档" } else { "归档" };
+                                    if ui.button(arch).clicked() {
+                                        self.send(Command::ArchivePlan {
+                                            plan_id: p.plan_id.clone(),
+                                            archived: !p.archived,
+                                        });
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("删除").clicked() {
+                                        self.delete_confirmation = Some(p.plan_id.clone());
+                                        ui.close_menu();
+                                    }
+                                    if !p.design_id.is_empty() {
+                                        if ui.button("查看设计书").clicked() {
+                                            self.select_design(p.design_id.clone());
+                                            ui.close_menu();
+                                        }
+                                    }
+                                });
+                                ui.add_space(4.0);
+                            }
+                            if shown == 0 {
+                                ui.weak("没有匹配的项目");
+                            }
+                        });
+                    } else {
+                        self.design_list_panel(ui);
+                    }
+                });
+        } // 4.5 右侧：AI 助手停靠面板（🤖 助手开关，不再遮挡主内容）
+        if self.chat_open {
+            if self.chat_open {
+                if self.zoomed == Some(Zone::Assistant) {
+                    egui::SidePanel::right("assistant_panel")
+                        .exact_width(ctx.screen_rect().width())
+                        .resizable(true)
+                        .default_width(320.0)
+                        .frame(
+                            egui::Frame::default()
+                                .fill(theme::SURFACE)
+                                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                                .inner_margin(egui::Margin::same(10.0)),
+                        )
+                        .show(ctx, |ui| {
+                            ui.horizontal(|ui| {
+                                let h = ui.strong("🤖 AI 助手");
+                                if h.double_clicked() {
+                                    self.zoomed = Some(Zone::Assistant);
+                                }
+                                theme::badge(ui, "在线", theme::OK_TEXT, theme::OK_SOFT);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button("⛶ 全屏").clicked() {
+                                            self.zoomed = Some(Zone::Assistant);
+                                        }
+                                        if ui.small_button("收起").clicked() {
+                                            self.chat_open = false;
+                                        }
+                                    },
+                                );
                             });
                             ui.add_space(4.0);
-                        }
-                        if shown == 0 {
-                            ui.weak("没有匹配的项目");
-                        }
-                    });
-                } else {
-                    self.design_list_panel(ui);
-                }
-            });
 
-        // 5. 中央：设计输入/审阅，或原有计划详情 + 控制。
-        egui::CentralPanel::default()
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::PAGE_BG)
-                    .inner_margin(egui::Margin::same(14.0)),
-            )
-            .show(ctx, |ui| {
-                match self.state.mode {
-                    GuiMode::Input => self.design_input_panel(ui),
-                    GuiMode::Review => self.design_review_panel(ui),
-                    GuiMode::Plan => match self.selection() {
-                        Some(sel) => {
-                            // 头部卡片：标题 + 状态徽章 + 进度条 + 控制按钮
-                            theme::card(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "计划 {}",
-                                            &sel.plan_id[..8.min(sel.plan_id.len())]
-                                        ))
-                                        .size(17.0)
-                                        .strong(),
-                                    );
-                                    let (label, fg, bg) = theme::plan_status_visual(sel.status);
-                                    theme::badge(ui, label, fg, bg);
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            self.control_buttons(ui, &sel.plan_id, sel.status);
-                                        },
-                                    );
+                            egui::ScrollArea::vertical()
+                                .stick_to_bottom(true)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    if self.chat_history.is_empty() {
+                                        ui.weak("向 AI 助手提问，例如：解释一下当前计划的步骤。");
+                                    }
+                                    for (role, content) in &self.chat_history {
+                                        let (who, color) = if role == "user" {
+                                            ("你", theme::ACCENT_TEXT)
+                                        } else {
+                                            ("助手", theme::OK_TEXT)
+                                        };
+                                        theme::card(ui, |ui| {
+                                            ui.label(
+                                                egui::RichText::new(who)
+                                                    .size(11.5)
+                                                    .strong()
+                                                    .color(color),
+                                            );
+                                            ui.label(egui::RichText::new(content).size(13.0));
+                                        });
+                                        ui.add_space(4.0);
+                                    }
+                                    if self.chat_busy {
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.weak("思考中…");
+                                        });
+                                    }
                                 });
-                                if sel.progress.1 > 0 {
-                                    let fraction = sel.progress.0 as f32 / sel.progress.1 as f32;
-                                    ui.add(
-                                        egui::ProgressBar::new(fraction)
-                                            .fill(theme::ACCENT)
-                                            .text(format!(
-                                                "{}/{} 步",
-                                                sel.progress.0, sel.progress.1
-                                            ))
-                                            .desired_height(18.0),
-                                    );
+                            ui.add_space(6.0);
+                            ui.separator();
+                            let send_enabled =
+                                !self.chat_busy && !self.chat_draft.trim().is_empty();
+                            ui.horizontal(|ui| {
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut self.chat_draft)
+                                        .hint_text("输入问题…（Enter 发送）")
+                                        .desired_width(f32::INFINITY),
+                                );
+                                let enter_send = response.lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                let send_clicked = ui
+                                    .add_enabled(send_enabled, theme::primary_button("发送"))
+                                    .clicked();
+                                if (send_clicked || enter_send) && send_enabled {
+                                    let msg = self.chat_draft.trim().to_string();
+                                    let history = self.chat_history.clone();
+                                    self.chat_history.push(("user".into(), msg.clone()));
+                                    self.chat_draft.clear();
+                                    self.chat_busy = true;
+                                    self.send(Command::Chat {
+                                        message: msg,
+                                        history,
+                                    });
                                 }
                             });
-                            if let Some(rb) = self.state.rollback_result.clone() {
-                                if !self.rollback_result_dismissed {
+                        });
+                } else if self.zoomed.is_none() {
+                    egui::SidePanel::right("assistant_panel")
+                        .resizable(true)
+                        .default_width(320.0)
+                        .frame(
+                            egui::Frame::default()
+                                .fill(theme::SURFACE)
+                                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                                .inner_margin(egui::Margin::same(10.0)),
+                        )
+                        .show(ctx, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.strong("🤖 AI 助手");
+                                theme::badge(ui, "在线", theme::OK_TEXT, theme::OK_SOFT);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button("收起").clicked() {
+                                            self.chat_open = false;
+                                        }
+                                    },
+                                );
+                            });
+                            ui.add_space(4.0);
+
+                            egui::ScrollArea::vertical()
+                                .stick_to_bottom(true)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    if self.chat_history.is_empty() {
+                                        ui.weak("向 AI 助手提问，例如：解释一下当前计划的步骤。");
+                                    }
+                                    for (role, content) in &self.chat_history {
+                                        let (who, color) = if role == "user" {
+                                            ("你", theme::ACCENT_TEXT)
+                                        } else {
+                                            ("助手", theme::OK_TEXT)
+                                        };
+                                        theme::card(ui, |ui| {
+                                            ui.label(
+                                                egui::RichText::new(who)
+                                                    .size(11.5)
+                                                    .strong()
+                                                    .color(color),
+                                            );
+                                            ui.label(egui::RichText::new(content).size(13.0));
+                                        });
+                                        ui.add_space(4.0);
+                                    }
+                                    if self.chat_busy {
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.weak("思考中…");
+                                        });
+                                    }
+                                });
+                            ui.add_space(6.0);
+                            ui.separator();
+                            let send_enabled =
+                                !self.chat_busy && !self.chat_draft.trim().is_empty();
+                            ui.horizontal(|ui| {
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut self.chat_draft)
+                                        .hint_text("输入问题…（Enter 发送）")
+                                        .desired_width(f32::INFINITY),
+                                );
+                                let enter_send = response.lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                let send_clicked = ui
+                                    .add_enabled(send_enabled, theme::primary_button("发送"))
+                                    .clicked();
+                                if (send_clicked || enter_send) && send_enabled {
+                                    let msg = self.chat_draft.trim().to_string();
+                                    let history = self.chat_history.clone();
+                                    self.chat_history.push(("user".into(), msg.clone()));
+                                    self.chat_draft.clear();
+                                    self.chat_busy = true;
+                                    self.send(Command::Chat {
+                                        message: msg,
+                                        history,
+                                    });
+                                }
+                            });
+                        });
+                }
+            }
+        } // 5. 中央：设计输入/审阅，或原有计划详情 + 控制。
+        if !self.settings_open {
+            egui::CentralPanel::default()
+                .frame(
+                    egui::Frame::default()
+                        .fill(theme::PAGE_BG)
+                        .inner_margin(egui::Margin::same(14.0)),
+                )
+                .show(ctx, |ui| {
+                    match self.state.mode {
+                        GuiMode::Input => self.design_input_panel(ui),
+                        GuiMode::Review => self.design_review_panel(ui),
+                        GuiMode::Plan => match self.selection() {
+                            Some(sel) => {
+                                // 头部卡片：标题 + 状态徽章 + 进度条 + 控制按钮
+                                theme::card(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.label(
                                             egui::RichText::new(format!(
+                                                "计划 {}",
+                                                &sel.plan_id[..8.min(sel.plan_id.len())]
+                                            ))
+                                            .size(17.0)
+                                            .strong(),
+                                        );
+                                        let (label, fg, bg) = theme::plan_status_visual(sel.status);
+                                        theme::badge(ui, label, fg, bg);
+                                        if ui.small_button("⛶ 全屏").clicked() {
+                                            self.zoomed = Some(Zone::Steps);
+                                        }
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                self.control_buttons(ui, &sel.plan_id, sel.status);
+                                            },
+                                        );
+                                    });
+                                    if sel.progress.1 > 0 {
+                                        let fraction =
+                                            sel.progress.0 as f32 / sel.progress.1 as f32;
+                                        ui.add(
+                                            egui::ProgressBar::new(fraction)
+                                                .fill(theme::ACCENT)
+                                                .text(format!(
+                                                    "{}/{} 步",
+                                                    sel.progress.0, sel.progress.1
+                                                ))
+                                                .desired_height(18.0),
+                                        );
+                                    }
+                                });
+                                if let Some(rb) = self.state.rollback_result.clone() {
+                                    if !self.rollback_result_dismissed {
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(format!(
                                                 "↩ 上次回滚：新分支 {} · 从 {} 恢复 · 废弃 {} 步",
                                                 rb.new_branch, rb.resume_from, rb.marked_obsolete
                                             ))
-                                            .size(12.0)
-                                            .color(theme::INFO_TEXT),
-                                        );
-                                        if ui.small_button("✕").clicked() {
-                                            self.rollback_result_dismissed = true;
-                                        }
-                                    });
-                                    ui.add_space(4.0);
-                                }
-                            }
-                            ui.add_space(8.0);
-                            egui::ScrollArea::vertical().show(ui, |ui| {
-                                for (step, live) in &sel.steps {
-                                    let (icon, color) = theme::step_marker(*live);
-                                    theme::card(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(
-                                                egui::RichText::new(icon).color(color).size(15.0),
+                                                .size(12.0)
+                                                .color(theme::INFO_TEXT),
                                             );
-                                            ui.label(&step.description);
-                                            ui.label(
-                                                egui::RichText::new(format!("[{}]", step.tool))
-                                                    .size(12.0)
-                                                    .color(theme::TEXT_SEC)
-                                                    .monospace(),
-                                            );
-                                            ui.with_layout(
-                                                egui::Layout::right_to_left(egui::Align::Center),
-                                                |ui| {
-                                                    // 仅 Pending/Retry 可跳过（与后端守卫语义一致）
-                                                    if matches!(
-                                                        live,
-                                                        StepStatus::Pending | StepStatus::Retry
-                                                    ) && ui.small_button("跳过").clicked()
-                                                    {
-                                                        self.send(Command::Skip {
-                                                            plan_id: sel.plan_id.clone(),
-                                                            step_id: step.step_id.clone(),
-                                                        });
-                                                    }
-                                                    // 回滚始终先进入确认态，避免误操作。
-                                                    if matches!(
-                                                        live,
-                                                        StepStatus::Success | StepStatus::Failed
-                                                    ) && self.state.rollback_in_flight.is_none()
-                                                        && ui.small_button("回滚到此").clicked()
-                                                    {
-                                                        self.state.request_rollback(
-                                                            sel.plan_id.clone(),
-                                                            step.step_id.clone(),
-                                                        );
-                                                        self.rollback_result_dismissed = false;
-                                                    }
-                                                },
-                                            );
-                                        });
-                                        if let Some(outputs) = &step.outputs {
-                                            if let Some(err) =
-                                                outputs.get("error").and_then(|e| e.as_str())
-                                            {
-                                                ui.add_space(2.0);
-                                                theme::error_inline(ui, &format!("错误: {err}"));
+                                            if ui.small_button("✕").clicked() {
+                                                self.rollback_result_dismissed = true;
                                             }
-                                        }
-                                    });
-                                    ui.add_space(6.0);
+                                        });
+                                        ui.add_space(4.0);
+                                    }
                                 }
-                            });
-                        }
-                        None => {
-                            ui.add_space(24.0);
-                            ui.centered_and_justified(|ui| ui.weak("选择或等待计划加载…"));
-                        }
-                    },
-                }
-            });
-
-        // 底部通知（后端 detail / 控制结果）：挂在日志面板之上，可手动关闭
-        if self.state.notice.is_some() {
-            egui::TopBottomPanel::bottom("notice_bar")
-                .frame(
-                    egui::Frame::default()
-                        .fill(theme::NOTICE_BG)
-                        .stroke(egui::Stroke::new(1.0, theme::WARN_SOFT))
-                        .inner_margin(egui::Margin::symmetric(16.0, 8.0)),
-                )
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("⚠").color(theme::WARN_TEXT).size(14.0));
-                        ui.label(
-                            egui::RichText::new(self.state.notice.as_deref().unwrap_or_default())
-                                .color(theme::WARN_TEXT)
-                                .size(13.5),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("✕ 关闭").clicked() {
-                                self.state.clear_notice();
-                            }
-                        });
-                    });
-                });
-        }
-
-        // 底栏：实时日志流（深色等宽块）
-        egui::TopBottomPanel::bottom("log_panel")
-            .resizable(true)
-            .default_height(150.0)
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::SURFACE)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER))
-                    .inner_margin(egui::Margin::symmetric(12.0, 8.0)),
-            )
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("实时日志");
-                    theme::badge(
-                        ui,
-                        &format!("{} 条", self.state.logs.len()),
-                        theme::TEXT_SEC,
-                        theme::HOVER_BG,
-                    );
-                    for (level, label) in [
-                        ("error", "错误"),
-                        ("warning", "警告"),
-                        ("success", "成功"),
-                        ("info", "信息"),
-                    ] {
-                        let active = self.log_filter.as_deref() == Some(level);
-                        let mut text = egui::RichText::new(label).size(12.0);
-                        if active {
-                            text = text.strong();
-                        }
-                        if ui.selectable_label(active, text).clicked() {
-                            self.log_filter = if active { None } else { Some(level.into()) };
-                        }
-                    }
-                });
-                egui::Frame::default()
-                    .fill(theme::LOG_BG)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER))
-                    .rounding(egui::Rounding::same(8.0))
-                    .inner_margin(egui::Margin::same(8.0))
-                    .show(ui, |ui| {
-                        egui::ScrollArea::vertical()
-                            .stick_to_bottom(true)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                let logs: Vec<LogLine> = self.state.logs.clone();
-                                let level_filter = self.log_filter.clone();
-                                for line in logs
-                                    .iter()
-                                    .rev()
-                                    .take(300)
-                                    .filter(|l| {
-                                        level_filter
-                                            .as_deref()
-                                            .map(|f| l.level == f)
-                                            .unwrap_or(true)
-                                    })
-                                    .rev()
-                                {
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "[{}] {}",
-                                            line.level, line.message
-                                        ))
-                                        .monospace()
-                                        .size(12.5)
-                                        .color(theme::log_color(&line.level)),
-                                    );
-                                }
-                            });
-                    });
-            });
-
-        self.rollback_confirmation(ctx);
-
-        // 设置窗口：连接状态 / 服务地址 / API token
-        if self.settings_open {
-            egui::Window::new("⚙ 设置")
-                .anchor(egui::Align2::RIGHT_TOP, [-12.0, 48.0])
-                .collapsible(false)
-                .resizable(false)
-                .show(ctx, |ui| {
-                    theme::card(ui, |ui| {
-                        ui.strong("服务状态");
-                        ui.add_space(2.0);
-                        ui.label(
-                            egui::RichText::new(self.status_text())
-                                .size(12.5)
-                                .color(theme::TEXT_SEC),
-                        );
-                        ui.add_space(4.0);
-                        if self.state.connected {
-                            theme::badge(ui, "● 已连接", theme::OK_TEXT, theme::OK_SOFT);
-                        } else {
-                            theme::badge(ui, "● 未连接", theme::DANGER_TEXT, theme::DANGER_SOFT);
-                        }
-                    });
-                    ui.add_space(8.0);
-                    theme::card(ui, |ui| {
-                        ui.strong("服务地址");
-                        ui.add_space(2.0);
-                        ui.monospace(self.state.base.as_str());
-                        ui.weak("由环境变量 EAS_API_BASE 指定，默认 http://127.0.0.1:8000");
-                    });
-                    ui.add_space(8.0);
-                    theme::card(ui, |ui| {
-                        ui.strong("API Token");
-                        ui.add_space(2.0);
-                        let token_edit = egui::TextEdit::singleline(&mut self.token_draft)
-                            .password(true)
-                            .hint_text("API token")
-                            .desired_width(240.0);
-                        let response = ui.add(token_edit);
-                        let apply_clicked = ui
-                            .add_enabled(
-                                !self.token_draft.trim().is_empty(),
-                                theme::primary_button("应用 token"),
-                            )
-                            .clicked();
-                        if apply_clicked
-                            || (response.lost_focus()
-                                && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                        {
-                            let t = self.token_draft.trim().to_string();
-                            if !t.is_empty() && t != self.state.token {
-                                self.send(Command::SetToken(t));
-                            }
-                        }
-                        ui.add_space(2.0);
-                        ui.weak("token 来源：环境变量 EAS_API_TOKEN 或 config/api_token");
-                    });
-                    ui.add_space(8.0);
-                    theme::card(ui, |ui| {
-                        ui.strong("工具与能力");
-                        ui.add_space(2.0);
-                        match &self.settings_data {
-                            Some(data) => {
-                                egui::ScrollArea::vertical()
-                                    .max_height(200.0)
-                                    .show(ui, |ui| {
-                                        ui.strong(format!("内置工具（{}）", data.tools.len()));
-                                        for tool in &data.tools {
+                                ui.add_space(8.0);
+                                egui::ScrollArea::vertical().show(ui, |ui| {
+                                    for (step, live) in &sel.steps {
+                                        let (icon, color) = theme::step_marker(*live);
+                                        theme::card(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.label(
-                                                    egui::RichText::new(&tool.name)
-                                                        .size(13.0)
-                                                        .strong(),
+                                                    egui::RichText::new(icon)
+                                                        .color(color)
+                                                        .size(15.0),
                                                 );
+                                                ui.label(&step.description);
                                                 ui.label(
-                                                    egui::RichText::new(format!(
-                                                        "[{}]",
-                                                        tool.category
-                                                    ))
-                                                    .size(11.5)
-                                                    .color(theme::TEXT_SEC),
+                                                    egui::RichText::new(format!("[{}]", step.tool))
+                                                        .size(12.0)
+                                                        .color(theme::TEXT_SEC)
+                                                        .monospace(),
+                                                );
+                                                ui.with_layout(
+                                                    egui::Layout::right_to_left(
+                                                        egui::Align::Center,
+                                                    ),
+                                                    |ui| {
+                                                        // 仅 Pending/Retry 可跳过（与后端守卫语义一致）
+                                                        if matches!(
+                                                            live,
+                                                            StepStatus::Pending | StepStatus::Retry
+                                                        ) && ui.small_button("跳过").clicked()
+                                                        {
+                                                            self.send(Command::Skip {
+                                                                plan_id: sel.plan_id.clone(),
+                                                                step_id: step.step_id.clone(),
+                                                            });
+                                                        }
+                                                        // 回滚始终先进入确认态，避免误操作。
+                                                        if matches!(
+                                                            live,
+                                                            StepStatus::Success
+                                                                | StepStatus::Failed
+                                                        ) && self
+                                                            .state
+                                                            .rollback_in_flight
+                                                            .is_none()
+                                                            && ui.small_button("回滚到此").clicked()
+                                                        {
+                                                            self.state.request_rollback(
+                                                                sel.plan_id.clone(),
+                                                                step.step_id.clone(),
+                                                            );
+                                                            self.rollback_result_dismissed = false;
+                                                        }
+                                                    },
                                                 );
                                             });
-                                            ui.weak(&tool.description);
-                                            if !tool.capabilities.is_empty() {
-                                                ui.weak(format!(
-                                                    "能力: {}",
-                                                    tool.capabilities.join("、")
-                                                ));
+                                            if let Some(outputs) = &step.outputs {
+                                                if let Some(err) =
+                                                    outputs.get("error").and_then(|e| e.as_str())
+                                                {
+                                                    ui.add_space(2.0);
+                                                    theme::error_inline(
+                                                        ui,
+                                                        &format!("错误: {err}"),
+                                                    );
+                                                }
                                             }
-                                            ui.add_space(4.0);
-                                        }
-                                        ui.add_space(4.0);
-                                        ui.strong(format!(
-                                            "Capability 声明（{}）",
-                                            data.capabilities.len()
-                                        ));
-                                        for cap in &data.capabilities {
-                                            ui.weak(format!(
-                                                "{} · {} · {} · 幂等: {}",
-                                                cap.id, cap.kind, cap.side_effect, cap.idempotent
-                                            ));
-                                        }
-                                    });
-                            }
-                            None => {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.weak("正在加载工具与能力…");
-                                });
-                            }
-                        }
-                    });
-                    ui.add_space(8.0);
-                    theme::card(ui, |ui| {
-                        ui.strong("后端配置（config/models.yaml）");
-                        ui.add_space(2.0);
-                        match &self.settings_data {
-                            Some(data) => {
-                                if let Some(keys) =
-                                    data.config["api_keys_configured"].as_object()
-                                {
-                                    for (k, v) in keys {
-                                        let ok = v.as_bool().unwrap_or(false);
-                                        theme::badge(
-                                            ui,
-                                            &format!(
-                                                "{k}: {}",
-                                                if ok { "已配置" } else { "未配置" }
-                                            ),
-                                            if ok {
-                                                theme::OK_TEXT
-                                            } else {
-                                                theme::TEXT_SEC
-                                            },
-                                            if ok { theme::OK_SOFT } else { theme::HOVER_BG },
-                                        );
-                                    }
-                                }
-                                ui.add_space(4.0);
-                                if let Some(urls) = data.config["base_urls"].as_object() {
-                                    for (k, v) in urls {
-                                        ui.horizontal(|ui| {
-                                            ui.weak(format!("{k}:"));
-                                            ui.monospace(v.as_str().unwrap_or(""));
                                         });
+                                        ui.add_space(6.0);
                                     }
-                                }
-                                ui.add_space(4.0);
-                                ui.weak("编辑密钥请直接修改 config/models.yaml——GUI 保存会整体覆盖密钥映射，暂不开放。");
+                                });
                             }
                             None => {
-                                ui.weak("等待加载…");
+                                ui.add_space(24.0);
+                                ui.centered_and_justified(|ui| ui.weak("选择或等待计划加载…"));
                             }
-                        }
-                    });
-                    ui.add_space(8.0);
-                    theme::card(ui, |ui| {
-                        ui.strong("服务运维");
-                        ui.add_space(2.0);
-                        ui.weak("重启会让后端进程退出，需要重新启动后端后 GUI 才能重连。");
-                        ui.add_space(4.0);
-                        if self.restart_confirm {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new("确定重启后端服务？")
-                                        .color(theme::DANGER_TEXT),
-                                );
-                                if ui.add(theme::secondary_button("再想想")).clicked() {
-                                    self.restart_confirm = false;
-                                }
-                                if ui.add(theme::danger_button("确认重启")).clicked() {
-                                    self.restart_confirm = false;
-                                    self.send(Command::RestartServer);
-                                }
-                            });
-                        } else if ui
-                            .add(theme::danger_outline_button("重启后端服务"))
-                            .clicked()
-                        {
-                            self.restart_confirm = true;
-                        }
-                    });
-                    ui.add_space(10.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add(theme::secondary_button("关闭")).clicked() {
-                            self.settings_open = false;
-                        }
-                    });
+                        },
+                    }
                 });
-        }
 
-        // AI 助手对话窗
-        if self.chat_open {
-            egui::Window::new("🤖 AI 助手")
-                .anchor(egui::Align2::RIGHT_BOTTOM, [-12.0, -12.0])
-                .default_width(430.0)
-                .default_height(500.0)
-                .collapsible(false)
-                .show(ctx, |ui| {
-                    egui::ScrollArea::vertical()
-                        .stick_to_bottom(true)
-                        .max_height(300.0)
-                        .show(ui, |ui| {
-                            if self.chat_history.is_empty() {
-                                ui.weak("向 AI 助手提问（需后端运行中），试试：");
-                                ui.horizontal_wrapped(|ui| {
-                                    for example in [
-                                        "解释一下当前计划的步骤",
-                                        "帮我写一个登录页的测试要点",
-                                        "这个系统有哪些工具",
-                                    ] {
-                                        if ui.small_button(example).clicked() {
-                                            self.chat_draft = example.to_string();
-                                        }
+            // 底部通知（后端 detail / 控制结果）：挂在日志面板之上，可手动关闭
+            if self.state.notice.is_some() {
+                egui::TopBottomPanel::bottom("notice_bar")
+                    .frame(
+                        egui::Frame::default()
+                            .fill(theme::NOTICE_BG)
+                            .stroke(egui::Stroke::new(1.0, theme::WARN_SOFT))
+                            .inner_margin(egui::Margin::symmetric(16.0, 8.0)),
+                    )
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("⚠").color(theme::WARN_TEXT).size(14.0));
+                            ui.label(
+                                egui::RichText::new(
+                                    self.state.notice.as_deref().unwrap_or_default(),
+                                )
+                                .color(theme::WARN_TEXT)
+                                .size(13.5),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.small_button("✕ 关闭").clicked() {
+                                        self.state.clear_notice();
                                     }
-                                });
-                                ui.add_space(4.0);
+                                },
+                            );
+                        });
+                    });
+            }
+
+            // 底栏：实时日志流（深色等宽块）
+            if self.zoomed == Some(Zone::Logs) {
+                egui::TopBottomPanel::bottom("log_panel")
+                    .exact_height(ctx.screen_rect().height() - 50.0)
+                    .resizable(true)
+                    .default_height(150.0)
+                    .frame(
+                        egui::Frame::default()
+                            .fill(theme::SURFACE)
+                            .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                            .inner_margin(egui::Margin::symmetric(12.0, 8.0)),
+                    )
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            let h = ui.heading("实时日志");
+                            if h.double_clicked() {
+                                self.zoomed = Some(Zone::Logs);
                             }
-                            for (role, content) in &self.chat_history {
-                                let (who, color) = if role == "user" {
-                                    ("你", theme::ACCENT_TEXT)
-                                } else {
-                                    ("助手", theme::OK_TEXT)
-                                };
-                                theme::card(ui, |ui| {
-                                    ui.label(
-                                        egui::RichText::new(who).size(11.5).strong().color(color),
-                                    );
-                                    ui.label(egui::RichText::new(content).size(13.0));
-                                });
-                                ui.add_space(4.0);
+                            theme::badge(
+                                ui,
+                                &format!("{} 条", self.state.logs.len()),
+                                theme::TEXT_SEC,
+                                theme::HOVER_BG,
+                            );
+                            if ui.small_button("⛶ 全屏").clicked() {
+                                self.zoomed = Some(Zone::Logs);
                             }
-                            if self.chat_busy {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.weak("思考中…");
-                                });
+                            for (level, label) in [
+                                ("error", "错误"),
+                                ("warning", "警告"),
+                                ("success", "成功"),
+                                ("info", "信息"),
+                            ] {
+                                let active = self.log_filter.as_deref() == Some(level);
+                                let mut text = egui::RichText::new(label).size(12.0);
+                                if active {
+                                    text = text.strong();
+                                }
+                                if ui.selectable_label(active, text).clicked() {
+                                    self.log_filter =
+                                        if active { None } else { Some(level.into()) };
+                                }
                             }
                         });
-                    ui.add_space(6.0);
-                    ui.separator();
-                    let send_enabled = !self.chat_busy && !self.chat_draft.trim().is_empty();
-                    ui.horizontal(|ui| {
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut self.chat_draft)
-                                .hint_text("输入问题…（Enter 发送）")
-                                .desired_width(f32::INFINITY),
-                        );
-                        let enter_send =
-                            response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        let send_clicked = ui
-                            .add_enabled(send_enabled, theme::primary_button("发送"))
-                            .clicked();
-                        if ui.small_button("清空").clicked() {
-                            self.chat_history.clear();
-                            self.chat_draft.clear();
-                        }
-                        if (send_clicked || enter_send) && send_enabled {
-                            let msg = self.chat_draft.trim().to_string();
-                            let history = self.chat_history.clone();
-                            self.chat_history.push(("user".into(), msg.clone()));
-                            self.chat_draft.clear();
-                            self.chat_busy = true;
-                            self.send(Command::Chat {
-                                message: msg,
-                                history,
+                        egui::Frame::default()
+                            .fill(theme::LOG_BG)
+                            .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                            .rounding(egui::Rounding::same(8.0))
+                            .inner_margin(egui::Margin::same(8.0))
+                            .show(ui, |ui| {
+                                egui::ScrollArea::vertical()
+                                    .stick_to_bottom(true)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        let logs: Vec<LogLine> = self.state.logs.clone();
+                                        let level_filter = self.log_filter.clone();
+                                        for line in logs
+                                            .iter()
+                                            .rev()
+                                            .take(300)
+                                            .filter(|l| {
+                                                level_filter
+                                                    .as_deref()
+                                                    .map(|f| l.level == f)
+                                                    .unwrap_or(true)
+                                            })
+                                            .rev()
+                                        {
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "[{}] {}",
+                                                    line.level, line.message
+                                                ))
+                                                .monospace()
+                                                .size(12.5)
+                                                .color(theme::log_color(&line.level)),
+                                            );
+                                        }
+                                    });
                             });
-                        }
                     });
-                });
-        }
-
-        // 设计书删除确认窗
-        if let Some(design_id) = self.design_delete_confirmation.clone() {
-            egui::Window::new("确认删除设计书")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.label(format!(
-                        "确定删除设计书 {} 吗？已生成执行计划的设计书不可删除。",
-                        &design_id[..8.min(design_id.len())]
-                    ));
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui.add(theme::secondary_button("取消")).clicked() {
-                            self.design_delete_confirmation = None;
-                        }
-                        if ui.add(theme::danger_button("确认删除")).clicked() {
-                            self.design_delete_confirmation = None;
-                            self.send(Command::DeleteDesign { design_id });
-                        }
-                    });
-                });
-        }
-
-        // 删除确认窗
-        if let Some(plan_id) = self.delete_confirmation.clone() {
-            egui::Window::new("确认删除")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.label(format!(
-                        "确定删除项目 {} 吗？其全部步骤与执行记录将被移除（审计日志保留）。",
-                        &plan_id[..8.min(plan_id.len())]
-                    ));
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui.add(theme::secondary_button("取消")).clicked() {
-                            self.delete_confirmation = None;
-                        }
-                        if ui.add(theme::danger_button("确认删除")).clicked() {
-                            self.delete_confirmation = None;
-                            self.send(Command::DeletePlan { plan_id });
-                        }
-                    });
-                });
-        }
-
-        // 重命名对话框
-        if self.rename_dialog.is_some() {
-            let (dialog_plan_id, mut draft) = self.rename_dialog.clone().unwrap();
-            let mut submitted = false;
-            egui::Window::new("重命名项目")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.label("给这个项目起个好记的名字：");
-                    ui.add_space(4.0);
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut draft)
-                            .desired_width(240.0)
-                            .hint_text("项目名称"),
-                    );
-                    if !resp.has_focus() {
-                        resp.request_focus();
-                    }
-                    let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui.add(theme::secondary_button("取消")).clicked() {
-                            submitted = true;
-                        }
-                        let can_submit = !draft.trim().is_empty();
-                        if (enter && can_submit)
-                            || ui
-                                .add_enabled(can_submit, theme::primary_button("保存"))
-                                .clicked()
-                        {
-                            self.send(Command::RenamePlan {
-                                plan_id: dialog_plan_id.clone(),
-                                name: draft.trim().to_string(),
-                            });
-                            submitted = true;
-                        }
-                    });
-                });
-            if submitted {
-                self.rename_dialog = None;
             } else {
-                self.rename_dialog = Some((dialog_plan_id, draft));
+                egui::CentralPanel::default()
+                    .frame(
+                        egui::Frame::default()
+                            .fill(theme::PAGE_BG)
+                            .inner_margin(egui::Margin::same(14.0)),
+                    )
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.heading("⚙ 设置");
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.add(theme::secondary_button("返回")).clicked() {
+                                        self.settings_open = false;
+                                    }
+                                },
+                            );
+                        });
+                        ui.add_space(6.0);
+                        self.settings_central_content(ui);
+                    });
             }
-        }
 
-        // 6. WS 断开提示
+            self.rollback_confirmation(ctx);
+
+            // 设计书删除确认窗
+            if let Some(design_id) = self.design_delete_confirmation.clone() {
+                egui::Window::new("确认删除设计书")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(format!(
+                            "确定删除设计书 {} 吗？已生成执行计划的设计书不可删除。",
+                            &design_id[..8.min(design_id.len())]
+                        ));
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.add(theme::secondary_button("取消")).clicked() {
+                                self.design_delete_confirmation = None;
+                            }
+                            if ui.add(theme::danger_button("确认删除")).clicked() {
+                                self.design_delete_confirmation = None;
+                                self.send(Command::DeleteDesign { design_id });
+                            }
+                        });
+                    });
+            }
+
+            // 删除确认窗
+            if let Some(plan_id) = self.delete_confirmation.clone() {
+                egui::Window::new("确认删除")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(format!(
+                            "确定删除项目 {} 吗？其全部步骤与执行记录将被移除（审计日志保留）。",
+                            &plan_id[..8.min(plan_id.len())]
+                        ));
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.add(theme::secondary_button("取消")).clicked() {
+                                self.delete_confirmation = None;
+                            }
+                            if ui.add(theme::danger_button("确认删除")).clicked() {
+                                self.delete_confirmation = None;
+                                self.send(Command::DeletePlan { plan_id });
+                            }
+                        });
+                    });
+            }
+
+            // 重命名对话框
+            if self.rename_dialog.is_some() {
+                let (dialog_plan_id, mut draft) = self.rename_dialog.clone().unwrap();
+                let mut submitted = false;
+                egui::Window::new("重命名项目")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label("给这个项目起个好记的名字：");
+                        ui.add_space(4.0);
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut draft)
+                                .desired_width(240.0)
+                                .hint_text("项目名称"),
+                        );
+                        if !resp.has_focus() {
+                            resp.request_focus();
+                        }
+                        let enter =
+                            resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.add(theme::secondary_button("取消")).clicked() {
+                                submitted = true;
+                            }
+                            let can_submit = !draft.trim().is_empty();
+                            if (enter && can_submit)
+                                || ui
+                                    .add_enabled(can_submit, theme::primary_button("保存"))
+                                    .clicked()
+                            {
+                                self.send(Command::RenamePlan {
+                                    plan_id: dialog_plan_id.clone(),
+                                    name: draft.trim().to_string(),
+                                });
+                                submitted = true;
+                            }
+                        });
+                    });
+            } else if self.zoomed.is_none() {
+                egui::TopBottomPanel::bottom("log_panel")
+                    .resizable(true)
+                    .default_height(150.0)
+                    .frame(
+                        egui::Frame::default()
+                            .fill(theme::SURFACE)
+                            .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                            .inner_margin(egui::Margin::symmetric(12.0, 8.0)),
+                    )
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.heading("实时日志");
+                            theme::badge(
+                                ui,
+                                &format!("{} 条", self.state.logs.len()),
+                                theme::TEXT_SEC,
+                                theme::HOVER_BG,
+                            );
+                            for (level, label) in [
+                                ("error", "错误"),
+                                ("warning", "警告"),
+                                ("success", "成功"),
+                                ("info", "信息"),
+                            ] {
+                                let active = self.log_filter.as_deref() == Some(level);
+                                let mut text = egui::RichText::new(label).size(12.0);
+                                if active {
+                                    text = text.strong();
+                                }
+                                if ui.selectable_label(active, text).clicked() {
+                                    self.log_filter =
+                                        if active { None } else { Some(level.into()) };
+                                }
+                            }
+                        });
+                        egui::Frame::default()
+                            .fill(theme::LOG_BG)
+                            .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                            .rounding(egui::Rounding::same(8.0))
+                            .inner_margin(egui::Margin::same(8.0))
+                            .show(ui, |ui| {
+                                egui::ScrollArea::vertical()
+                                    .stick_to_bottom(true)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        let logs: Vec<LogLine> = self.state.logs.clone();
+                                        let level_filter = self.log_filter.clone();
+                                        for line in logs
+                                            .iter()
+                                            .rev()
+                                            .take(300)
+                                            .filter(|l| {
+                                                level_filter
+                                                    .as_deref()
+                                                    .map(|f| l.level == f)
+                                                    .unwrap_or(true)
+                                            })
+                                            .rev()
+                                        {
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "[{}] {}",
+                                                    line.level, line.message
+                                                ))
+                                                .monospace()
+                                                .size(12.5)
+                                                .color(theme::log_color(&line.level)),
+                                            );
+                                        }
+                                    });
+                            });
+                    });
+            } else {
+                egui::CentralPanel::default()
+                    .frame(
+                        egui::Frame::default()
+                            .fill(theme::PAGE_BG)
+                            .inner_margin(egui::Margin::same(14.0)),
+                    )
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.heading("⚙ 设置");
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.add(theme::secondary_button("返回")).clicked() {
+                                        self.settings_open = false;
+                                    }
+                                },
+                            );
+                        });
+                        ui.add_space(6.0);
+                        self.settings_central_content(ui);
+                    });
+            }
+
+            self.rollback_confirmation(ctx);
+
+            // 设计书删除确认窗
+            if let Some(design_id) = self.design_delete_confirmation.clone() {
+                egui::Window::new("确认删除设计书")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(format!(
+                            "确定删除设计书 {} 吗？已生成执行计划的设计书不可删除。",
+                            &design_id[..8.min(design_id.len())]
+                        ));
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.add(theme::secondary_button("取消")).clicked() {
+                                self.design_delete_confirmation = None;
+                            }
+                            if ui.add(theme::danger_button("确认删除")).clicked() {
+                                self.design_delete_confirmation = None;
+                                self.send(Command::DeleteDesign { design_id });
+                            }
+                        });
+                    });
+            }
+
+            // 删除确认窗
+            if let Some(plan_id) = self.delete_confirmation.clone() {
+                egui::Window::new("确认删除")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(format!(
+                            "确定删除项目 {} 吗？其全部步骤与执行记录将被移除（审计日志保留）。",
+                            &plan_id[..8.min(plan_id.len())]
+                        ));
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.add(theme::secondary_button("取消")).clicked() {
+                                self.delete_confirmation = None;
+                            }
+                            if ui.add(theme::danger_button("确认删除")).clicked() {
+                                self.delete_confirmation = None;
+                                self.send(Command::DeletePlan { plan_id });
+                            }
+                        });
+                    });
+            }
+
+            // 重命名对话框
+            if self.rename_dialog.is_some() {
+                let (dialog_plan_id, mut draft) = self.rename_dialog.clone().unwrap();
+                let mut submitted = false;
+                egui::Window::new("重命名项目")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label("给这个项目起个好记的名字：");
+                        ui.add_space(4.0);
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut draft)
+                                .desired_width(240.0)
+                                .hint_text("项目名称"),
+                        );
+                        if !resp.has_focus() {
+                            resp.request_focus();
+                        }
+                        let enter =
+                            resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.add(theme::secondary_button("取消")).clicked() {
+                                submitted = true;
+                            }
+                            let can_submit = !draft.trim().is_empty();
+                            if (enter && can_submit)
+                                || ui
+                                    .add_enabled(can_submit, theme::primary_button("保存"))
+                                    .clicked()
+                            {
+                                self.send(Command::RenamePlan {
+                                    plan_id: dialog_plan_id.clone(),
+                                    name: draft.trim().to_string(),
+                                });
+                                submitted = true;
+                            }
+                        });
+                    });
+                if submitted {
+                    self.rename_dialog = None;
+                } else {
+                    self.rename_dialog = Some((dialog_plan_id, draft));
+                }
+            }
+        } // 6. WS 断开提示
         if let Some(err) = &self.state.last_ws_error {
             egui::Window::new("连接状态")
                 .anchor(egui::Align2::RIGHT_BOTTOM, [-8.0, -8.0])

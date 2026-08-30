@@ -30,6 +30,9 @@ class DesignCache:
         self.max_size = max_size
         self.ttl = ttl
         self.cache: Dict[str, Dict[str, Any]] = self._load_cache()
+        # 命中率观测（§上下文缓存优化）：进程内计数，随重启清零。
+        self._lookups = 0
+        self._hits = 0
     
     def _make_key(self, user_request: str) -> str:
         """生成缓存键"""
@@ -87,16 +90,19 @@ class DesignCache:
             logger.debug("缓存已满，驱逐: {}", least_used_key)
             self._save_cache()
     
-    def get(self, user_request: str) -> Optional[Dict[str, Any]]:
+    def get(self, user_request: str, fingerprint: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         获取缓存的设计书
         
         Args:
             user_request: 用户需求
+            fingerprint: 可选指纹（工具目录/模型）。提供时不一致视为未命中，
+                并删除陈旧条目——防止"工具清单变了还返回旧设计书"的错误命中。
             
         Returns:
-            缓存的设计书数据，如果不存在或已过期则返回 None
+            缓存的设计书数据，如果不存在/已过期/指纹不一致则返回 None
         """
+        self._lookups += 1
         # 清理过期缓存
         self._clean_expired()
         
@@ -112,20 +118,29 @@ class DesignCache:
             self._save_cache()
             return None
         
+        # 指纹校验：目录/模型变了 → 陈旧条目直接淘汰
+        if fingerprint is not None and entry.get("fingerprint") != fingerprint:
+            logger.info("缓存指纹不一致，淘汰陈旧设计书: {}", key)
+            del self.cache[key]
+            self._save_cache()
+            return None
+        
         # 增加命中次数
+        self._hits += 1
         entry["hits"] = entry.get("hits", 0) + 1
         entry["last_access"] = time.time()
         self._save_cache()
         
         return entry.get("design")
     
-    def set(self, user_request: str, design: Dict[str, Any]):
+    def set(self, user_request: str, design: Dict[str, Any], fingerprint: Optional[str] = None):
         """
         设置缓存
         
         Args:
             user_request: 用户需求
             design: 设计书数据（字典格式）
+            fingerprint: 可选指纹（工具目录/模型），参与命中校验
         """
         # 检查是否需要驱逐
         self._evict_if_needed()
@@ -136,6 +151,7 @@ class DesignCache:
             "timestamp": time.time(),
             "last_access": time.time(),
             "hits": 0,
+            "fingerprint": fingerprint,
             "user_request": user_request  # 保存原始请求以便调试
         }
         
@@ -162,13 +178,17 @@ class DesignCache:
         logger.info("已清空所有缓存")
     
     def stats(self) -> Dict[str, Any]:
-        """获取缓存统计信息"""
+        """获取缓存统计信息（含命中率）"""
         now = time.time()
         total_hits = sum(entry.get("hits", 0) for entry in self.cache.values())
+        hit_rate = (self._hits / self._lookups) if self._lookups else 0.0
         
         return {
             "total_entries": len(self.cache),
             "total_hits": total_hits,
+            "lookups": self._lookups,
+            "process_hits": self._hits,
+            "hit_rate": round(hit_rate, 4),
             "max_size": self.max_size,
             "ttl_days": self.ttl / (24 * 3600),
             "oldest_entry": min(

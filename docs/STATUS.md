@@ -43,6 +43,7 @@
    （2026-08-30 注：已通过内置工具 `code_context` 落地第一步——工作区仓库地图、
    SQLite FTS5 全文检索与知识笔记长期记忆，见 docs/CODE_CONTEXT.md；
    跨任务记忆编排与向量检索仍是待办）
+   （2026-08-30 注③：P2 记忆编排已落地——knowledge/injection.py 把 code_context 检索注入 Designer 设计提示词，把仓库地图注入 coding_agent 单轮修改提示词，均 fail-open）
    （2026-08-30 注②：LLM token 用量记账 + 计划级预算闸门已落地——GET /api/usage 查询，config budget.max_tokens_per_plan 配置上限，超限自动转 Paused；text_editor/file_creator 语法门禁与 command_runner Docker 沙箱同步落地，详见 docs/HARDENING_2026-08-30.md）
 4. **架构分层与代码分布脱节**：`designer/`、`executor/`、`dispatcher/`、`toolmanager/`
    目录只有空 `__init__.py`，真实逻辑集中在 `api/server.py`（约 1500 行）与

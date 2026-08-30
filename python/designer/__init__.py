@@ -100,13 +100,7 @@ class DefaultDesigner(Designer):
         缺省（None）且 enforce=true 时，搜索请求会被结构化拒绝（fail-closed）。
         """
         
-        # 检查缓存
-        cached_design = self.design_cache.get(user_request)
-        if cached_design:
-            logger.info("使用缓存的设计书")
-            return DesignDocument(**cached_design)
-        
-        # 通过dispatcher获取工具信息
+        # 通过dispatcher获取工具信息（先于缓存查询：工具目录指纹参与缓存校验）
         tools_info = ""
         if self.dispatcher:
             try:
@@ -121,12 +115,41 @@ class DefaultDesigner(Designer):
                 tools_info = "（工具信息不可用）"
         else:
             tools_info = "（未配置dispatcher）"
+
+        # 工具目录指纹：目录或模型变化时缓存失效，防止"工具清单变了还返回旧设计书"。
+        import hashlib
+        try:
+            _primary = self.model_config["primary"]
+        except (KeyError, TypeError):
+            _primary = {}
+        fingerprint = hashlib.md5(
+            f"{tools_info}|{_primary.get('provider', '')}|{_primary.get('model', '')}".encode()
+        ).hexdigest()
+
+        # 检查缓存（指纹一致才命中）
+        cached_design = self.design_cache.get(user_request, fingerprint=fingerprint)
+        if cached_design:
+            logger.info("使用缓存的设计书（工具目录指纹一致）")
+            return DesignDocument(**cached_design)
+        
+        # P2 记忆编排：相关历史经验/知识笔记/代码检索注入设计上下文。
+        # fail-open：注入失败只降级，绝不阻断设计生成；to_thread 防止索引/检索阻塞事件循环。
+        memory_section = ""
+        try:
+            import asyncio as _asyncio
+            from knowledge.injection import build_design_memory_block
+            memory_block = await _asyncio.to_thread(build_design_memory_block, user_request)
+            if memory_block:
+                memory_section = "\n" + memory_block + "\n"
+        except Exception as mem_exc:
+            logger.warning("记忆注入失败（忽略）: {}", mem_exc)
         
         # 构建详细的prompt
         system_prompt = f"""你是一个资深的系统架构师和技术专家。
 
 系统中当前可用的工具（仅供参考）：
 {tools_info}
+{memory_section}
 
 注意：这些工具在设计阶段不可执行，仅作为设计参考。你可以在设计书中提及需要使用哪些工具，但现在不要执行它们。
 
@@ -392,7 +415,7 @@ class DefaultDesigner(Designer):
             )
             
             # 保存到缓存
-            self.design_cache.set(user_request, design.model_dump(mode="json"))
+            self.design_cache.set(user_request, design.model_dump(mode="json"), fingerprint=fingerprint)
             
             return design
             
