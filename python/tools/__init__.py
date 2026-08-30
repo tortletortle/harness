@@ -13,6 +13,7 @@ from .manual_tool import ManualTool
 from .git_operator import GitOperator
 from .text_editor import TextEditor
 from .web_fetcher import WebFetcher
+from .super_search import SuperSearch
 from .test_runner import TestRunner
 
 from logging_config import get_logger
@@ -54,7 +55,7 @@ class ToolRegistryAgent:
 
 你的职责：
 1. 理解搜索需求
-2. 调用合适的搜索工具（如web_fetcher）
+2. 调用合适的搜索工具（如super_search）
 3. 整理和总结搜索结果
 4. 返回清晰、有用的信息
 
@@ -106,7 +107,8 @@ class ToolRegistryAgent:
         
         # 构建搜索请求
         system_prompt = f"{context}\n\n可用的搜索工具：\n{tools_info}"
-        user_prompt = f"请帮我搜索以下信息：\n{query}\n\n请调用web_fetcher工具获取信息。"
+        search_tool_name = "super_search" if has_super_search else "web_fetcher"
+        user_prompt = f"请帮我搜索以下信息：\n{query}\n\n请调用{search_tool_name}工具搜索信息。"
         
         messages = [
             Message(role="system", content=system_prompt),
@@ -114,23 +116,48 @@ class ToolRegistryAgent:
         ]
         
         # 定义可用的工具（只允许search类）
-        tools_for_llm = [{
-            "type": "function",
-            "function": {
-                "name": "web_fetcher",
-                "description": "获取网页内容",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "url": {
-                            "type": "string",
-                            "description": "要访问的URL地址"
-                        }
-                    },
-                    "required": ["url"]
+        # 优先暴露 super_search（真正的多引擎搜索）；无 super_search 的环境退回 web_fetcher
+        has_super_search = any(t.get("tool_id") == "super_search" for t in available_tools)
+        if has_super_search:
+            tools_for_llm = [{
+                "type": "function",
+                "function": {
+                    "name": "super_search",
+                    "description": "多引擎聚合网页搜索，返回标题/链接/摘要",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "搜索关键词"
+                            },
+                            "max_results": {
+                                "type": "integer",
+                                "description": "返回结果条数，默认10"
+                            }
+                        },
+                        "required": ["query"]
+                    }
                 }
-            }
-        }]
+            }]
+        else:
+            tools_for_llm = [{
+                "type": "function",
+                "function": {
+                    "name": "web_fetcher",
+                    "description": "获取网页内容",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "type": "string",
+                                "description": "要访问的URL地址"
+                            }
+                        },
+                        "required": ["url"]
+                    }
+                }
+            }]
         
         # 调用LLM
         provider = self.model_config.get("primary", {}).get("provider", "newapi")
@@ -162,7 +189,33 @@ class ToolRegistryAgent:
                 for tool_call in response.tool_calls:
                     func_name = tool_call['function']['name']
                     
-                    if func_name == 'web_fetcher':
+                    if func_name == 'super_search':
+                        try:
+                            args = json.loads(tool_call['function']['arguments'])
+                            logger.debug("搜索: {}", args.get('query', ''))
+
+                            # 调用super_search
+                            from .super_search import SuperSearch
+                            result = SuperSearch.execute('search', {
+                                'query': args.get('query', ''),
+                                'max_results': args.get('max_results', 10),
+                            })
+                            search_results.append(result)
+
+                            # 添加到消息历史
+                            messages.append(Message(
+                                role="tool",
+                                content=json.dumps(result, ensure_ascii=False),
+                                tool_call_id=tool_call.get('id')
+                            ))
+                        except Exception as e:
+                            logger.warning("搜索失败: {}", e)
+                            messages.append(Message(
+                                role="tool",
+                                content=json.dumps({"error": str(e)}, ensure_ascii=False),
+                                tool_call_id=tool_call.get('id')
+                            ))
+                    elif func_name == 'web_fetcher':
                         try:
                             args = json.loads(tool_call['function']['arguments'])
                             url = args.get('url', '')
@@ -295,6 +348,7 @@ class ToolRegistry:
         self.register_tool("git_operator", GitOperator)
         self.register_tool("text_editor", TextEditor)
         self.register_tool("web_fetcher", WebFetcher)
+        self.register_tool("super_search", SuperSearch)
         # 测试运行：白名单模板执行器（设计稿 §23.2，补全 test 位）
         self.register_tool("test_runner", TestRunner)
     

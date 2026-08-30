@@ -11,6 +11,7 @@ AI 任务编排与执行系统：用户提出需求 → Designer（LLM）生成�
 - Agent 即工具：`coding_agent`（单轮、Grant 受限）已贯通设计与执行链路，见 [docs/AGENT_HARNESS_DESIGN.md](docs/AGENT_HARNESS_DESIGN.md) §19/§22
 - CI：三任务流水线（Rust / pytest / vitest）
 
+- 超级搜索工具：super_search（多引擎聚合搜索 + 深度检索 + 正文抽取；无 Key 可用，可选 Tavily/Brave/Serper 增强）
 详细完成度与遗留事项见 [docs/STATUS.md](docs/STATUS.md)。
 
 ## 快速开始
@@ -64,7 +65,7 @@ harness/
 ├── python/            # 后端核心
 │   ├── api/server.py  # FastAPI 服务（核心逻辑所在）
 │   ├── database.py    # SQLite 持久化
-│   ├── tools/         # 7 个内置工具
+│   ├── tools/         # 8 个内置工具
 │   ├── llm_client/    # 多提供商 LLM 客户端
 │   └── ...
 ├── frontend/          # React 18 + Vite + Tailwind + Zustand

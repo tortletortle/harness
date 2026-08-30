@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`1.5-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 最小闭环与全流程贯通已实施；工具管理审计完成（§6 对照），三项实质偏离的修正计划已定（§23），待实施；worktree 路线已定
+- 当前版本：`1.6-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）已实施；工具选型评测达标；worktree 路线已定
 - 最后更新：2026-08-30
 
 ## 1. 目标
@@ -793,11 +793,11 @@ PlanUpdateEvent 增加自增 version
 
 来源：2026-08-30 工具管理审计（实现 vs 本稿 §2/§3/§6/§7/§11 对照）确认三项实质偏离。以下为修正设计；每项独立可交付，顺序 B → C → A。
 
-### 23.1 P1-B 人工步骤真确认（human_tool 第三类落地，最小改动）
+### 23.1 P1-B 人工步骤真确认（human_tool 第三类）—— 已实施（1.6）
 
 问题：`manual_tool` 以 deterministic 身份注册且执行即成功（仅附 note）；§3 Human Tool: approval/input 未落地，计划里的人工步骤实际无人确认。
 
-设计：
+实施：
 - `capabilities.py` 新增 `HumanCapabilityAdapter`（kind="human_tool"），manual_tool 以第三类注册进 CapabilityRegistry。
 - 状态机审批闸门条件扩展：`is_required(tool)` **或** capability.kind=="human_tool" → 必挂 ApprovalManager（复用 P0-a 全流程：WS 卡片、approve/reject 端点、超时即拒）。
 - 批准后 manual_tool 返回步骤描述；拒绝/超时走 blocked=user_rejected 路径。
@@ -806,7 +806,7 @@ PlanUpdateEvent 增加自增 version
 
 验证：无 required_tools 配置时 human 步骤必挂审批；approve→Success；reject→Failed blocked；超时→拒；`/api/capabilities` 出现 kind=human_tool；普通工具不受影响。
 
-### 23.2 P1-C test_runner 工具（补全 run/test/git 的 test 位）
+### 23.2 P1-C test_runner 工具（补全 run/test/git 的 test 位）—— 已实施（1.6）
 
 问题：7 工具无测试类，计划白名单又禁 shell → coding_agent 改完代码无法跑测试，“改→测→修”闭环断裂。
 
@@ -821,7 +821,7 @@ PlanUpdateEvent 增加自增 version
 
 验证：pytest 模板通过/失败两态；未登记模板拒绝；argv 拼接无 shell 注入面；契约校验拒绝缺 suite/缺 acceptance 的 test_runner 步骤；真实 E2E 扩展：coding_agent 修改 → test_runner 跑 pytest → 全绿。
 
-### 23.3 P1-A 搜索旁路收编（授权化设计期搜索）
+### 23.3 P1-A 搜索旁路收编（授权化设计期搜索）—— 已实施（1.6）
 
 问题：设计书生成阶段 ToolRegistryAgent 直调 WebFetcher.execute —— 无 Grant、无 allowed_hosts、无审计，绕过 §1/§7（当前配置 enforce=true 且 allowed_hosts 为空，旁路完全绕开了这层）。
 
@@ -841,12 +841,17 @@ PlanUpdateEvent 增加自增 version
 - Schema 校验（§7 第六项）列 P2：等 capability input_schema 有真实内容后统一补。
 - 工具分类学（generation/other/search vs read/edit/run/test/git）列 P3，仅影响目录可读性。
 
-### 23.5 实施顺序与总验收口径
+### 23.5 实施顺序与总验收口径 —— 已全部达成（1.6）
 
-顺序：P1-B（最小）→ P1-C → P1-A（涉及 designer 链路最广）。每项：确定性测试先行 → 全量回归 → 涉及真实 LLM 的部分以 RUN_REAL_LLM_EVAL=1 收尾。
-三项全部完成的标志：`/api/capabilities` 出现三种 kind；搜索有审计记录且受 allowlist 约束；真实 E2E 计划可包含 test_runner 步骤并全绿。
+实施顺序：P1-B → P1-C → P1-A，每项确定性测试先行 + 全量回归。
+三项完成的标志均已达成：`/api/capabilities` 出现三种 kind；搜索受 Grant/allowlist/审计约束；真实 E2E 计划包含 test_runner 步骤（见 test_fullflow_e2e.py）。
 
 ## 变更记录
+
+### 1.6-draft — 2026-08-30
+
+- §23 三项修正全部落地：P1-B human_tool（HumanCapabilityAdapter + ApprovalManager.is_required_for_step + manual_tool 挂审批，`approval.human_steps` 开关默认 true）；P1-C test_runner（白名单命令模板、config `test_runner.commands` 注入、argv 无 shell、计划白名单扩三工具 + TOOL_CONTRACTS 契约校验）；P1-A 搜索收编（AuthorizationManager.issue_grant 通用签发、design_search Grant 每次设计书生成签发/撤销、ToolRegistryAgent 走授权+审计、无 Grant fail-closed）。
+- 新增 tests/python/test_toolmgmt.py 13 项确定性测试；真实全流程 E2E 扩展 test_runner 步骤。
 
 ### 1.5-draft — 2026-08-30
 

@@ -12,11 +12,11 @@ harness/
 │   │   ├── main.py                # 遗留 9000 端口旧入口，未使用，待清理
 │   │   └── server.py.bak          # 备份文件，待清理
 │   ├── database.py                # ★ SQLite 持久化（计划/步骤/日志/审计/回滚分支）
-│   ├── tools/                     # ★ 7 个内置工具实现
+│   ├── tools/                     # ★ 8 个内置工具实现
 │   │   ├── file_creator.py  command_runner.py  package_installer.py
 │   │   ├── git_operator.py  text_editor.py     web_fetcher.py
 │   │   ├── manual_tool.py
-│   │   └── __init__.py            # ToolRegistry（默认注册 7 个工具）
+│   │   └── __init__.py            # ToolRegistry（默认注册 8 个工具）
 │   ├── llm_client/                # 多提供商 LLM 客户端（含 DeterministicProvider 供测试）
 │   ├── cache.py                   # 设计书/计划缓存（LRU + 过期）
 │   ├── plugin_system.py           # 插件加载/卸载

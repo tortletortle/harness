@@ -541,6 +541,14 @@ class DefaultExecutor(ExecutorAI):
             else:
                 return "fetch_content"
 
+        # super_search 的映射
+        elif tool_id == "super_search":
+            if "url" in inputs and "query" not in inputs:
+                return "extract_text"
+            if inputs.get("fetch_top") or inputs.get("content_chars"):
+                return "deep_search"
+            return "search"
+
         # 默认返回 None，让调用者处理
         return None
 

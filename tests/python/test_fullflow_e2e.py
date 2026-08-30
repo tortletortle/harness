@@ -110,10 +110,12 @@ def executed_plan(server):
     """全流程：设计书 → 审批 → 计划 → 执行 → 完成。返回 (plan_id, plan_data)。"""
     req_body = {
         "user_request": (
-            "使用 coding_agent 工具完成以下两步，不要执行任何 shell 命令："
-            "第一步用 file_creator 创建 src/counter.py，内容为 def value():\\n    return 0；"
-            "第二步用 coding_agent 把 src/counter.py 里的 return 0 修改为 return 1，"
-            "函数其余部分保持不变。每一步都要给出可自动验证的 acceptance。"
+            "使用以下工具完成四步，不要执行任何 shell 命令："
+            "第一步用 file_creator 创建 counter.py，内容为 def value():\\n    return 0；"
+            "第二步用 file_creator 创建 test_counter.py，内容为 from counter import value\\n\\ndef test_value():\\n    assert value() == 1；"
+            "第三步用 coding_agent 把 counter.py 里的 return 0 修改为 return 1，函数其余部分保持不变；"
+            "第四步用 test_runner 运行 pytest 测试 test_counter.py 确认通过。"
+            "每一步都给出可自动验证的 acceptance。"
         )
     }
     code, data = _req("/api/design", method="POST", body=req_body)
@@ -130,7 +132,7 @@ def executed_plan(server):
     assert plan, f"approve response missing plan: {data!r}"
     plan_id = plan["plan_id"]
 
-    # 计划里应出现 coding_agent 步骤（设计期契约已允许并引导）
+    # 计划里应出现 coding_agent 与 test_runner 步骤（设计期契约已允许并引导）
     code, data = _req(f"/api/plan/{plan_id}")
     assert code == 200, f"/api/plan/{plan_id} -> {code} {data!r}"
     steps = data.get("steps") or data.get("plan", {}).get("steps", [])
@@ -139,6 +141,11 @@ def executed_plan(server):
     for s in agent_steps:
         assert s.get("acceptance"), f"coding_agent 步骤缺少 acceptance: {s!r}"
         assert s.get("inputs", {}).get("allowed_tools") == ["text_editor"], s.get("inputs")
+    runner_steps = [s for s in steps if s.get("tool") == "test_runner"]
+    assert runner_steps, f"计划未包含 test_runner 步骤: {[s.get('tool') for s in steps]}"
+    for s in runner_steps:
+        assert s.get("inputs", {}).get("suite"), f"test_runner 步骤缺少 suite: {s!r}"
+        assert any(r.get("type") == "exit_code" for r in (s.get("acceptance") or [])), f"test_runner 步骤缺少 exit_code 验收: {s!r}"
 
     code, d = _req(f"/api/plan/{plan_id}/execute", method="POST")
     assert code == 200, f"execute -> {code} {d!r}"
@@ -181,11 +188,24 @@ def test_full_flow_agent_step_outputs_and_acceptance(executed_plan):
 def test_full_flow_final_file_content_via_agent_edit(executed_plan, tmp_path_factory):
     # 从工作区断言最终内容：server 的工作区即 .tmp_fullflow_e2e_root
     root = Path(PYTHON_DIR.parent / ".tmp_fullflow_e2e_root")
-    counter = root / "src" / "counter.py"
+    counter = root / "counter.py"
     assert counter.exists(), f"missing {counter}"
     content = counter.read_text(encoding="utf-8")
     assert "return 1" in content
     assert "def value" in content
+
+
+def test_full_flow_test_runner_closes_edit_test_loop(executed_plan):
+    """改→测闭环：test_runner 步骤在 coding_agent 修改后运行且通过。"""
+    _, steps = executed_plan
+    runner_steps = [s for s in steps if s.get("tool") == "test_runner"]
+    assert runner_steps
+    for s in runner_steps:
+        outputs = s.get("outputs") or {}
+        assert outputs.get("check_status") == "passed", str(outputs)[:500]
+        tool_output = outputs.get("output") or {}
+        assert tool_output.get("exit_code") == 0, str(outputs)[:500]
+        assert tool_output.get("success") is True
 
 
 def test_full_flow_audit_links_agent_grant(executed_plan):
