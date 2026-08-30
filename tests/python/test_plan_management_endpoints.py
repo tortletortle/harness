@@ -37,14 +37,14 @@ def _seed(db, plan_id="p1", status="Pending", display_name=None, archived=0):
             "INSERT OR IGNORE INTO designs (design_id, user_request, timestamp, "
             "part1_design, part2_tool_assessment, user_approval, user_comments, created_at) "
             "VALUES (?,?,?,?,?,?,?,?)",
-            ("d1", "测试需求", "2026-08-30T00:00:00", "{}", "{}", None, None,
+            ("11111111-1111-1111-1111-111111111111", "测试需求", "2026-08-30T00:00:00", "{}", "{}", None, None,
              "2026-08-30T00:00:00"),
         )
         conn.execute(
             "INSERT INTO plans (plan_id, design_id, created_at, status, segments, "
             "implementation_list, dynamic_insertions, archived, display_name) "
             "VALUES (?,?,?,?,?,?,?,?,?)",
-            (plan_id, "d1", "2026-08-30T00:00:00", status, "[]", "[]", "[]",
+            (plan_id, "11111111-1111-1111-1111-111111111111", "2026-08-30T00:00:00", status, "[]", "[]", "[]",
              archived, display_name),
         )
         conn.commit()
@@ -136,3 +136,18 @@ def test_delete_running_plan_returns_409(client):
         assert conn.execute("SELECT COUNT(*) FROM plans").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+def test_delete_design_roundtrip(client):
+    c, db = client
+    _seed(db)  # 设计书 d1 + 计划 p1（外键引用 d1）
+    resp = c.delete("/api/design/11111111-1111-1111-1111-111111111111", headers=_headers())
+    assert resp.status_code == 409  # 被计划引用，禁止删除
+
+    # 先删计划，再删设计书
+    assert c.delete("/api/plan/p1", headers=_headers()).status_code == 200
+    resp = c.delete("/api/design/11111111-1111-1111-1111-111111111111", headers=_headers())
+    assert resp.status_code == 200
+    assert resp.json() == {"success": True, "design_id": "11111111-1111-1111-1111-111111111111"}
+    # 重复删除 → 404
+    assert c.delete("/api/design/11111111-1111-1111-1111-111111111111", headers=_headers()).status_code == 404

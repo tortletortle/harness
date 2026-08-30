@@ -236,5 +236,5 @@ async def test_invalid_agent_step_plan_is_rejected_at_design_time():
         ensure_ascii=False,
     )
     designer, _ = _make_designer(invalid)
-    with pytest.raises(GenerationError, match="agent 契约校验失败"):
+    with pytest.raises(GenerationError, match="步骤契约校验失败"):
         await designer.generate_plan(_design_document())

@@ -1,4 +1,4 @@
-"""
+﻿"""
 工具库索引
 管理所有可用工具，并提供AI agent处理复杂请求
 """
@@ -96,8 +96,8 @@ class ToolRegistryAgent:
         """
         from llm_client import Message
         
-        # 使用搜索助手上下文
-        context = self.get_context("search_assistant")
+        # 使用搜索助手上下文（注意：不要覆盖方法参数 context——它携带 design_search Grant id）
+        system_context = self.get_context("search_assistant")
         
         # 准备工具信息
         tools_info = "\n".join([
@@ -110,6 +110,8 @@ class ToolRegistryAgent:
         search_tool_name = "super_search" if has_super_search else "web_fetcher"
         user_prompt = f"请帮我搜索以下信息：\n{query}\n\n请调用{search_tool_name}工具搜索信息。"
         
+        system_prompt = f"{system_context}\n\n可用的搜索工具：\n{tools_info}"
+
         messages = [
             Message(role="system", content=system_prompt),
             Message(role="user", content=user_prompt),
@@ -192,12 +194,17 @@ class ToolRegistryAgent:
                             args = json.loads(tool_call['function']['arguments'])
                             logger.debug("搜索: {}", args.get('query', ''))
 
-                            # 调用super_search
-                            from .super_search import SuperSearch
-                            result = SuperSearch.execute('search', {
-                                'query': args.get('query', ''),
-                                'max_results': args.get('max_results', 10),
-                            })
+                            # 授权化搜索（设计稿 §23.3）：super_search 与 web_fetcher
+                            # 同样受 design_search Grant 约束，拒绝不触达网络。
+                            result = await self._authorized_search(
+                                "super_search",
+                                "search",
+                                {
+                                    'query': args.get('query', ''),
+                                    'max_results': args.get('max_results', 10),
+                                },
+                                context,
+                            )
                             search_results.append(result)
 
                             # 添加到消息历史
@@ -222,7 +229,7 @@ class ToolRegistryAgent:
                             # 授权化抓取（设计稿 §23.3）：enforce 模式下
                             # 无 design_search Grant 或主机不在 allowlist →
                             # 结构化拒绝回喂 LLM，不触达网络。
-                            result = await self._authorized_fetch(url, context)
+                            result = await self._authorized_search("web_fetcher", "fetch_content", {"url": url}, context)
                             search_results.append(result)
                             
                             # 添加到消息历史
@@ -263,45 +270,57 @@ class ToolRegistryAgent:
             }
 
 
-    async def _authorized_fetch(self, url: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """授权化抓取（设计稿 §23.3）。
+    async def _authorized_search(
+        self,
+        tool_id: str,
+        instruction: str,
+        inputs: Dict[str, Any],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """授权化搜索调用（设计稿 §23.3）。
 
         - enforce 模式：无 Grant / 主机不在 allowlist / 预算耗尽 →
           结构化拒绝，不触达网络；每次调用（含拒绝）写审计。
         - enforce=false 或未接授权管理器 → authorize 内部直接放行，
           保持旧行为（兼容）。
         """
-        from .web_fetcher import WebFetcher
-
         registry = self.registry
         manager = getattr(registry, "authorization_manager", None) if registry is not None else None
         database = getattr(registry, "database", None) if registry is not None else None
-        grant_id = (context or {}).get("grant_id")
-        inputs = {"url": url}
+        grant_id = context.get("grant_id") if isinstance(context, dict) else None
 
         if manager is not None:
-            decision = manager.authorize(grant_id, "web_fetcher", "fetch_content", inputs)
-            self._audit(database, url, decision.allowed, decision.reason if not decision.allowed else None, grant_id)
+            decision = manager.authorize(grant_id, tool_id, instruction, inputs)
+            self._audit(database, tool_id, instruction, inputs, decision.allowed, decision.reason if not decision.allowed else None, grant_id)
             if not decision.allowed:
                 return {
                     "success": False,
                     "blocked": True,
                     "error": f"search_denied: {decision.reason}",
                     "message": f"搜索未获授权: {decision.message}（可继续生成设计书，但无法联网检索）",
-                    "url": url,
+                    "inputs": inputs,
                 }
 
-        result = await asyncio.to_thread(WebFetcher.execute, "fetch_content", inputs)
+        if tool_id == "super_search":
+            from .super_search import SuperSearch
+            result = await asyncio.to_thread(SuperSearch.execute, instruction, inputs)
+        else:
+            from .web_fetcher import WebFetcher
+            result = await asyncio.to_thread(WebFetcher.execute, instruction, inputs)
         return result
 
-    def _audit(self, database, url: str, success: bool, block_reason: Optional[str], grant_id: Optional[str]) -> None:
+    async def _authorized_fetch(self, url: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """兼容包装：web_fetcher 授权化抓取。"""
+        return await self._authorized_search("web_fetcher", "fetch_content", {"url": url}, context)
+
+    def _audit(self, database, tool_id: str, instruction: str, inputs: Dict[str, Any], success: bool, block_reason: Optional[str], grant_id: Optional[str]) -> None:
         if database is None:
             return
         try:
             database.save_audit_log(
-                tool_id="web_fetcher",
-                instruction="design_search:fetch_content",
-                inputs={"url": url},
+                tool_id=tool_id,
+                instruction=f"design_search:{instruction}",
+                inputs=inputs,
                 success=success,
                 blocked=block_reason is not None,
                 block_reason=block_reason,

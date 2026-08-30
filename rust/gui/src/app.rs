@@ -89,6 +89,13 @@ pub enum Command {
     },
     RefreshSettingsData,
     RestartServer,
+    Chat {
+        message: String,
+        history: Vec<(String, String)>,
+    },
+    DeleteDesign {
+        design_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,6 +183,9 @@ pub enum GuiEvent {
         capabilities: Vec<CapabilitySpec>,
         config: serde_json::Value,
     },
+    ChatReply {
+        reply: Result<String, String>,
+    },
 }
 
 /// 中央区渲染用的拥有数据（避免渲染中借用冲突）
@@ -224,6 +234,15 @@ pub struct EasApp {
     restart_confirm: bool,
     /// 回滚结果条是否已关闭
     rollback_result_dismissed: bool,
+    /// AI 助手对话窗（纯 UI 状态）
+    chat_open: bool,
+    chat_history: Vec<(String, String)>,
+    chat_draft: String,
+    chat_busy: bool,
+    /// 待确认删除的设计书 id
+    design_delete_confirmation: Option<String>,
+    /// 日志级别过滤：None = 全部
+    log_filter: Option<String>,
 }
 
 impl EasApp {
@@ -256,6 +275,12 @@ impl EasApp {
             settings_data: None,
             restart_confirm: false,
             rollback_result_dismissed: false,
+            chat_open: false,
+            chat_history: Vec::new(),
+            chat_draft: String::new(),
+            chat_busy: false,
+            design_delete_confirmation: None,
+            log_filter: None,
         }
     }
 
@@ -620,6 +645,7 @@ impl EasApp {
                     self.send(Command::RefreshStatus);
                     // 归档/重命名/删除/执行控制都会改变列表内容，统一刷新项目列表。
                     self.send(Command::RefreshPlans);
+                    self.refresh_designs();
                     // 控制成功后立即拉当前计划详情，快速校准 REST 视图。
                     if self.selected_plan_id.as_deref() == Some(plan_id.as_str()) {
                         self.send(Command::RefreshPlanDetail {
@@ -634,6 +660,15 @@ impl EasApp {
                     self.state.push_log("error", e);
                 }
             },
+            GuiEvent::ChatReply { reply } => {
+                self.chat_busy = false;
+                match reply {
+                    Ok(text) => self.chat_history.push(("assistant".into(), text)),
+                    Err(e) => self
+                        .chat_history
+                        .push(("assistant".into(), format!("⚠ 请求失败: {e}"))),
+                }
+            }
             GuiEvent::SettingsData {
                 tools,
                 capabilities,
@@ -896,15 +931,18 @@ impl EasApp {
                 } else {
                     design.user_request.chars().take(24).collect::<String>()
                 };
-                if ui
-                    .add_sized(
-                        [ui.available_width(), 26.0],
-                        egui::SelectableLabel::new(selected, label),
-                    )
-                    .clicked()
-                {
-                    self.select_design(design.design_id);
-                }
+                ui.horizontal(|ui| {
+                    let btn_w = (ui.available_width() - 66.0).max(60.0);
+                    if ui
+                        .add_sized([btn_w, 26.0], egui::SelectableLabel::new(selected, label))
+                        .clicked()
+                    {
+                        self.select_design(design.design_id.clone());
+                    }
+                    if ui.small_button("删除").clicked() {
+                        self.design_delete_confirmation = Some(design.design_id.clone());
+                    }
+                });
                 ui.add_space(2.0);
             }
         });
@@ -1068,6 +1106,16 @@ impl EasApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading("审计日志");
+                    theme::badge(
+                        ui,
+                        if self.selected_plan_id.is_some() {
+                            "当前计划"
+                        } else {
+                            "全部"
+                        },
+                        theme::ACCENT_TEXT,
+                        theme::ACCENT_SOFT,
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.add(theme::secondary_button("刷新")).clicked() {
                             self.refresh_audit();
@@ -1098,6 +1146,10 @@ impl EasApp {
                     theme::error_inline(ui, error);
                 }
                 ui.separator();
+                if self.state.audit_logs.is_empty() && !self.state.audit_loading {
+                    ui.weak("暂无日志记录——搜索仅作用于已拉取的最近条目");
+                    ui.add_space(4.0);
+                }
                 egui::ScrollArea::both().show(ui, |ui| {
                     egui::Grid::new("audit_table")
                         .striped(true)
@@ -1231,6 +1283,9 @@ impl eframe::App for EasApp {
                                 self.settings_data = None;
                                 self.send(Command::RefreshSettingsData);
                             }
+                        }
+                        if ui.add(theme::secondary_button("🤖 助手")).clicked() {
+                            self.chat_open = !self.chat_open;
                         }
                         if ui
                             .add(theme::secondary_button(if self.state.audit_visible {
@@ -1585,6 +1640,21 @@ impl eframe::App for EasApp {
                         theme::TEXT_SEC,
                         theme::HOVER_BG,
                     );
+                    for (level, label) in [
+                        ("error", "错误"),
+                        ("warning", "警告"),
+                        ("success", "成功"),
+                        ("info", "信息"),
+                    ] {
+                        let active = self.log_filter.as_deref() == Some(level);
+                        let mut text = egui::RichText::new(label).size(12.0);
+                        if active {
+                            text = text.strong();
+                        }
+                        if ui.selectable_label(active, text).clicked() {
+                            self.log_filter = if active { None } else { Some(level.into()) };
+                        }
+                    }
                 });
                 egui::Frame::default()
                     .fill(theme::LOG_BG)
@@ -1597,7 +1667,19 @@ impl eframe::App for EasApp {
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 let logs: Vec<LogLine> = self.state.logs.clone();
-                                for line in logs.iter().rev().take(300).rev() {
+                                let level_filter = self.log_filter.clone();
+                                for line in logs
+                                    .iter()
+                                    .rev()
+                                    .take(300)
+                                    .filter(|l| {
+                                        level_filter
+                                            .as_deref()
+                                            .map(|f| l.level == f)
+                                            .unwrap_or(true)
+                                    })
+                                    .rev()
+                                {
                                     ui.label(
                                         egui::RichText::new(format!(
                                             "[{}] {}",
@@ -1800,6 +1882,95 @@ impl eframe::App for EasApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.add(theme::secondary_button("关闭")).clicked() {
                             self.settings_open = false;
+                        }
+                    });
+                });
+        }
+
+        // AI 助手对话窗
+        if self.chat_open {
+            egui::Window::new("🤖 AI 助手")
+                .anchor(egui::Align2::RIGHT_BOTTOM, [-12.0, -12.0])
+                .default_width(430.0)
+                .default_height(500.0)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical()
+                        .stick_to_bottom(true)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            if self.chat_history.is_empty() {
+                                ui.weak("向 AI 助手提问，例如：解释一下当前计划的步骤。");
+                            }
+                            for (role, content) in &self.chat_history {
+                                let (who, color) = if role == "user" {
+                                    ("你", theme::ACCENT_TEXT)
+                                } else {
+                                    ("助手", theme::OK_TEXT)
+                                };
+                                theme::card(ui, |ui| {
+                                    ui.label(
+                                        egui::RichText::new(who).size(11.5).strong().color(color),
+                                    );
+                                    ui.label(egui::RichText::new(content).size(13.0));
+                                });
+                                ui.add_space(4.0);
+                            }
+                            if self.chat_busy {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.weak("思考中…");
+                                });
+                            }
+                        });
+                    ui.add_space(6.0);
+                    ui.separator();
+                    let send_enabled = !self.chat_busy && !self.chat_draft.trim().is_empty();
+                    ui.horizontal(|ui| {
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.chat_draft)
+                                .hint_text("输入问题…（Enter 发送）")
+                                .desired_width(f32::INFINITY),
+                        );
+                        let enter_send =
+                            response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        let send_clicked = ui
+                            .add_enabled(send_enabled, theme::primary_button("发送"))
+                            .clicked();
+                        if (send_clicked || enter_send) && send_enabled {
+                            let msg = self.chat_draft.trim().to_string();
+                            let history = self.chat_history.clone();
+                            self.chat_history.push(("user".into(), msg.clone()));
+                            self.chat_draft.clear();
+                            self.chat_busy = true;
+                            self.send(Command::Chat {
+                                message: msg,
+                                history,
+                            });
+                        }
+                    });
+                });
+        }
+
+        // 设计书删除确认窗
+        if let Some(design_id) = self.design_delete_confirmation.clone() {
+            egui::Window::new("确认删除设计书")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "确定删除设计书 {} 吗？已生成执行计划的设计书不可删除。",
+                        &design_id[..8.min(design_id.len())]
+                    ));
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.add(theme::secondary_button("取消")).clicked() {
+                            self.design_delete_confirmation = None;
+                        }
+                        if ui.add(theme::danger_button("确认删除")).clicked() {
+                            self.design_delete_confirmation = None;
+                            self.send(Command::DeleteDesign { design_id });
                         }
                     });
                 });

@@ -1828,6 +1828,27 @@ async def update_config(request: ConfigUpdateRequest):
         logger.exception("更新配置失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/api/design/{design_id}", dependencies=[Depends(require_token)])
+async def delete_design(design_id: str):
+    """删除设计书（已生成执行计划的设计书不可删除，需先删除对应计划）。"""
+    try:
+        if not state.database.design_exists(design_id):
+            raise HTTPException(status_code=404, detail="设计书不存在")
+        referenced = state.database.list_plans(design_id=design_id, limit=1)
+        if referenced:
+            raise HTTPException(
+                status_code=409,
+                detail="该设计书已生成执行计划，请先删除对应的执行计划",
+            )
+        if not state.database.delete_design(design_id):
+            raise HTTPException(status_code=500, detail="删除设计书失败")
+        return {"success": True, "design_id": design_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("删除设计书失败: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/chat", dependencies=[Depends(require_token)])
 async def chat(request: ChatRequest):
     """AI 助手对话"""

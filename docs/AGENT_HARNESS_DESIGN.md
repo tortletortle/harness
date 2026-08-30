@@ -834,6 +834,8 @@ PlanUpdateEvent 增加自增 version
 
 验证：无 Grant 拒绝（断言无网络调用）；有 Grant 放行+审计+用量；越权主机拒绝；enforce=false 兼容。
 
+> 现状注记（2026-08-30）：`super_search` 工具已落地并注册（多引擎聚合搜索 + 深度检索 + 正文抽取，无需 API Key 可用，详见 docs/SUPER_SEARCH.md）；`ToolRegistryAgent.handle_search_request` 已改为优先调用 super_search（无则退回 web_fetcher）。P1-A 实施时建议以 super_search 为搜索载体（design_search Grant 的 allowed_tools={"super_search"}），本节 Grant/审计/fail-closed 设计不变。
+
 ### 23.4 审计顺带入档（不改代码）
 
 - `plugin_system.py`（PluginManager/ToolPlugin）标记废弃候选：P3 外部扩展层如启用（MCP 适配）以新设计为准；代码头部加废弃注记。

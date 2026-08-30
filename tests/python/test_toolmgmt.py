@@ -174,6 +174,40 @@ def test_validate_tool_contracts():
     assert ok, err
 
 
+@pytest.mark.asyncio
+async def test_search_super_search_branch_authorized(tmp_path, monkeypatch):
+    """对方会话新增的 super_search 分支也必须走 design_search Grant（§23.3 合并）。"""
+    monkeypatch.setenv("EAS_WORKSPACE_ROOT", str(tmp_path))
+    from llm_client import LLMClient
+    from tools import ToolRegistry
+    from tools import super_search
+
+    registry = ToolRegistry(LLMClient(), {"primary": {"provider": "deterministic", "model": "m"}})
+    manager = AuthorizationManager(workspace_root=tmp_path)
+    registry.authorization_manager = manager
+    registry.database = _StubDB()
+    grant = manager.issue_grant(
+        "design_search",
+        ["web_fetcher", "super_search"],
+        limits=GrantLimits(max_tool_calls=2, max_model_calls=0),
+    )
+    calls = []
+    monkeypatch.setattr(
+        super_search.SuperSearch,
+        "execute",
+        lambda instruction, inputs: calls.append(inputs) or {"success": True, "results": []},
+    )
+    # 无 Grant → 结构化拒绝，不触达搜索引擎
+    r1 = await registry.agent._authorized_search("super_search", "search", {"query": "q"}, context={})
+    assert r1["blocked"] is True and "search_denied" in r1["error"]
+    assert calls == []
+    # 有 Grant → 放行并审计
+    r2 = await registry.agent._authorized_search("super_search", "search", {"query": "q"}, context={"grant_id": grant.grant_id})
+    assert r2["success"] is True
+    assert len(calls) == 1
+    assert grant.used_tool_calls == 1
+
+
 # ===== P1-A 搜索授权化 =====
 
 

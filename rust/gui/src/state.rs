@@ -585,6 +585,9 @@ mod tests {
             plan_id: "old".into(),
             design_id: "d0".into(),
             created_at: "t".into(),
+            status: "Pending".into(),
+            display_name: String::new(),
+            archived: false,
         });
         assert!(st.begin_design_action());
         st.finish_design_action(Ok(DesignApprovalResponse::Approved {

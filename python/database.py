@@ -587,6 +587,33 @@ class Database:
             logger.exception("删除计划失败: {}", e)
             raise DatabaseError(f"删除计划失败: {e}") from e
 
+    def design_exists(self, design_id: str) -> bool:
+        """轻量存在性检查（不做完整模型解析）。"""
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT 1 FROM designs WHERE design_id = ? LIMIT 1",
+                    (design_id,),
+                )
+                return cursor.fetchone() is not None
+        except Exception as e:
+            logger.exception("查询设计书存在性失败: {}", e)
+            raise DatabaseError(f"查询设计书存在性失败: {e}") from e
+
+    def delete_design(self, design_id: str) -> bool:
+        """删除设计书行。返回是否命中。"""
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM designs WHERE design_id = ?", (design_id,))
+                deleted = cursor.rowcount > 0
+                conn.commit()
+                return deleted
+        except Exception as e:
+            logger.exception("删除设计书失败: {}", e)
+            raise DatabaseError(f"删除设计书失败: {e}") from e
+
     def get_steps(self, plan_id: str) -> List[Dict[str, Any]]:
         """获取计划的所有步骤"""
         try:

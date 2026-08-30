@@ -373,6 +373,48 @@ impl ApiClient {
             .to_string())
     }
 
+    pub async fn chat(&self, message: &str, history: &[(String, String)]) -> ControlResult {
+        #[derive(serde::Serialize)]
+        struct Msg<'a> {
+            role: &'a str,
+            content: &'a str,
+        }
+        #[derive(serde::Serialize)]
+        struct Body<'a> {
+            message: &'a str,
+            history: Vec<Msg<'a>>,
+        }
+        let body = Body {
+            message,
+            history: history
+                .iter()
+                .map(|(r, c)| Msg {
+                    role: r,
+                    content: c,
+                })
+                .collect(),
+        };
+        let resp = self
+            .post_json_with_timeout("/api/chat", &body, std::time::Duration::from_secs(120))
+            .await?;
+        let v: serde_json::Value = resp.json().await?;
+        Ok(v.get("response")
+            .and_then(|r| r.as_str())
+            .unwrap_or("(空回复)")
+            .to_string())
+    }
+
+    pub async fn delete_design(&self, design_id: &str) -> ControlResult {
+        let resp = self
+            .delete_request(&format!("/api/design/{design_id}"))
+            .await?;
+        let v: serde_json::Value = resp.json().await?;
+        Ok(v.get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("设计书已删除")
+            .to_string())
+    }
+
     pub async fn get_status(&self) -> Result<ServiceStatus, ApiError> {
         let resp = self.get("/api/status").await?;
         Ok(resp.json().await?)

@@ -472,35 +472,23 @@ async fn supervisor(
                 )
                 .await;
             }
-            Command::RefreshSettingsData => {
-                let tools = api.get_tools().await.map_err(|e| e.to_string());
-                let capabilities = api.get_capabilities().await.map_err(|e| e.to_string());
-                let config = api.get_config().await.map_err(|e| e.to_string());
-                match (tools, capabilities, config) {
-                    (Ok(tools), Ok(capabilities), Ok(config)) => {
-                        forward_event(
-                            &events_tx,
-                            &ctx,
-                            GuiEvent::SettingsData {
-                                tools,
-                                capabilities,
-                                config,
-                            },
-                        )
-                        .await;
-                    }
-                    (Err(e), ..) | (_, Err(e), _) | (.., Err(e)) => {
-                        forward_event(&events_tx, &ctx, GuiEvent::Error(e)).await;
-                    }
-                }
+            Command::Chat { message, history } => {
+                let result = api
+                    .chat(&message, &history)
+                    .await
+                    .map_err(|e| e.to_string());
+                forward_event(&events_tx, &ctx, GuiEvent::ChatReply { reply: result }).await;
             }
-            Command::RestartServer => {
-                let result = api.restart_server().await.map_err(|e| e.to_string());
+            Command::DeleteDesign { design_id } => {
+                let result = api
+                    .delete_design(&design_id)
+                    .await
+                    .map_err(|e| e.to_string());
                 forward_event(
                     &events_tx,
                     &ctx,
                     GuiEvent::ControlResult {
-                        plan_id: "restart".to_string(),
+                        plan_id: design_id,
                         result,
                     },
                 )
