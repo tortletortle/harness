@@ -162,7 +162,8 @@ class TestRunner:
 
     @staticmethod
     def execute(instruction: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        if instruction not in ("run", "run_tests"):
+        # executor 对未指定 instruction 的步骤推断为 "execute"，与 run 同义。
+        if instruction not in ("run", "run_tests", "execute"):
             return {
                 "success": False,
                 "message": f"未知指令: {instruction}",

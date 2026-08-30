@@ -1897,10 +1897,22 @@ impl eframe::App for EasApp {
                 .show(ctx, |ui| {
                     egui::ScrollArea::vertical()
                         .stick_to_bottom(true)
-                        .auto_shrink([false, false])
+                        .max_height(300.0)
                         .show(ui, |ui| {
                             if self.chat_history.is_empty() {
-                                ui.weak("向 AI 助手提问，例如：解释一下当前计划的步骤。");
+                                ui.weak("向 AI 助手提问（需后端运行中），试试：");
+                                ui.horizontal_wrapped(|ui| {
+                                    for example in [
+                                        "解释一下当前计划的步骤",
+                                        "帮我写一个登录页的测试要点",
+                                        "这个系统有哪些工具",
+                                    ] {
+                                        if ui.small_button(example).clicked() {
+                                            self.chat_draft = example.to_string();
+                                        }
+                                    }
+                                });
+                                ui.add_space(4.0);
                             }
                             for (role, content) in &self.chat_history {
                                 let (who, color) = if role == "user" {
@@ -1937,6 +1949,10 @@ impl eframe::App for EasApp {
                         let send_clicked = ui
                             .add_enabled(send_enabled, theme::primary_button("发送"))
                             .clicked();
+                        if ui.small_button("清空").clicked() {
+                            self.chat_history.clear();
+                            self.chat_draft.clear();
+                        }
                         if (send_clicked || enter_send) && send_enabled {
                             let msg = self.chat_draft.trim().to_string();
                             let history = self.chat_history.clone();

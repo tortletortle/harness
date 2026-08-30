@@ -238,3 +238,60 @@ async def test_invalid_agent_step_plan_is_rejected_at_design_time():
     designer, _ = _make_designer(invalid)
     with pytest.raises(GenerationError, match="步骤契约校验失败"):
         await designer.generate_plan(_design_document())
+
+
+_TWO_SEGMENT_PLAN_JSON = json.dumps(
+    {
+        "segments": [
+            {
+                "description": "创建",
+                "steps": [
+                    {
+                        "description": "创建 counter",
+                        "tool": "file_creator",
+                        "inputs": {"path": "counter.py", "content": "def value():\n    return 0"},
+                        "acceptance": [{"type": "file_exists", "path": "counter.py"}],
+                    },
+                    {
+                        "description": "创建测试",
+                        "tool": "file_creator",
+                        "inputs": {"path": "test_counter.py", "content": "test"},
+                        "acceptance": [{"type": "file_exists", "path": "test_counter.py"}],
+                    },
+                ],
+            },
+            {
+                "description": "修改并验证",
+                "steps": [
+                    {
+                        "description": "修改 counter",
+                        "tool": "coding_agent",
+                        "inputs": {
+                            "path": "counter.py",
+                            "instruction": "return 0 to 1",
+                            "allowed_tools": ["text_editor"],
+                        },
+                        "acceptance": [{"type": "content_contains", "path": "counter.py", "text": "return 1"}],
+                    },
+                    {
+                        "description": "运行测试",
+                        "tool": "test_runner",
+                        "inputs": {"suite": "pytest", "test_path": "test_counter.py"},
+                        "acceptance": [{"type": "exit_code", "equals": 0}],
+                    },
+                ],
+            },
+        ],
+        "implementation_list": ["counter.py"],
+    },
+    ensure_ascii=False,
+)
+
+
+@pytest.mark.asyncio
+async def test_step_order_is_global_across_segments():
+    """step_order 必须全计划内递增：多 segment 平局会让执行顺序随机。"""
+    designer, _ = _make_designer(_TWO_SEGMENT_PLAN_JSON)
+    plan = await designer.generate_plan(_design_document())
+    orders = [s.order for seg in plan.segments for s in seg.steps]
+    assert orders == [1, 2, 3, 4], str(orders)

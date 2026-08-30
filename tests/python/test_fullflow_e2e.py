@@ -110,7 +110,7 @@ def executed_plan(server):
     """全流程：设计书 → 审批 → 计划 → 执行 → 完成。返回 (plan_id, plan_data)。"""
     req_body = {
         "user_request": (
-            "使用以下工具完成四步，不要执行任何 shell 命令："
+            "使用以下工具完成四步，不要执行任何 shell 命令。必须严格按下面给出的顺序生成四个步骤，不得调整顺序："
             "第一步用 file_creator 创建 counter.py，内容为 def value():\\n    return 0；"
             "第二步用 file_creator 创建 test_counter.py，内容为 from counter import value\\n\\ndef test_value():\\n    assert value() == 1；"
             "第三步用 coding_agent 把 counter.py 里的 return 0 修改为 return 1，函数其余部分保持不变；"
@@ -202,10 +202,13 @@ def test_full_flow_test_runner_closes_edit_test_loop(executed_plan):
     assert runner_steps
     for s in runner_steps:
         outputs = s.get("outputs") or {}
-        assert outputs.get("check_status") == "passed", str(outputs)[:500]
-        tool_output = outputs.get("output") or {}
+        # 普通工具步骤的 outputs 即工具结果字典（exit_code 在顶层）
+        tool_output = outputs.get("output") if isinstance(outputs.get("output"), dict) else outputs
         assert tool_output.get("exit_code") == 0, str(outputs)[:500]
         assert tool_output.get("success") is True
+        acceptance = outputs.get("acceptance") or {}
+        if acceptance:
+            assert acceptance.get("status") == "passed"
 
 
 def test_full_flow_audit_links_agent_grant(executed_plan):

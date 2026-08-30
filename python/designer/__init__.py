@@ -651,6 +651,8 @@ class DefaultDesigner(Designer):
 - 允许使用的工具：file_creator（创建新文件/目录）、coding_agent（修改已存在的代码文件）、test_runner（运行登记过的测试模板验证代码）。不要执行任何 shell 命令，不要使用 command_runner / package_installer / git_operator / text_editor / web_fetcher。
 - 创建新文件用 file_creator；修改已存在文件的内容用 coding_agent（它能先读原文再做受控修改）；代码改完后可用 test_runner 跑测试验证。
 - test_runner 步骤契约：inputs 必含 suite（已登记模板名，如 "pytest"，可用 test_path 指定测试文件或目录）；acceptance 必含 {"type":"exit_code","equals":0}；不要用 test_runner 执行非测试命令。
+- 用户需求或审批反馈中明确限定了可用工具时（如"只使用 file_creator"），该限定优先级最高：白名单只是上限，不得额外引入其他工具。
+- 步骤顺序必须尊重依赖关系：先创建被后续步骤使用的文件，再修改它，最后运行验证它的测试；test_runner 步骤必须排在其验证对象的创建/修改步骤之后。
 
 🔧 coding_agent 步骤契约（必须全部满足，否则计划会被拒绝）：
 1. inputs 必须包含：path（要修改的单个文件，相对路径）、instruction（一句话修改指令）、allowed_tools 固定为 ["text_editor"]
@@ -817,6 +819,11 @@ class DefaultDesigner(Designer):
                 from datetime import datetime
                 
                 segments = []
+                # step_order 必须全计划内唯一递增：get_next_runnable_step 按
+                # step_order 排序取下一步，回滚的 step_order > X 也依赖全局序。
+                # 原 bug：按 segment 内编号（每段都从 1 开始），多 segment 计划
+                # 全部平局 → 执行顺序随机。
+                global_step_order = 0
                 for seg_data in plan_data["segments"]:
                     steps = []
                     for step_data in seg_data["steps"]:
@@ -841,9 +848,10 @@ class DefaultDesigner(Designer):
                             "执行成功" if acceptance else "手动检查"
                         )
                         
+                        global_step_order += 1
                         steps.append(Step(
                             step_id=uuid4(),
-                            order=len(steps) + 1,  # 自动生成序号
+                            order=global_step_order,  # 全计划内递增序号
                             description=step_data.get("description", "未知步骤"),
                             tool=step_data.get("tool", "manual_tool"),
                             inputs=inputs_value,
