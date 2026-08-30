@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`1.8-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；worktree 路线已定
+- 当前版本：`1.9-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；worktree 路线已定
 - 最后更新：2026-08-30
 
 ## 1. 目标
@@ -849,7 +849,39 @@ PlanUpdateEvent 增加自增 version
 实施顺序：P1-B → P1-C → P1-A，每项确定性测试先行 + 全量回归。
 三项完成的标志均已达成：`/api/capabilities` 出现三种 kind；搜索受 Grant/allowlist/审计约束；真实 E2E 计划包含 test_runner 步骤（见 test_fullflow_e2e.py）。
 
+## 24. 工具补充四件（1.9 · 已实施）
+
+来源：2026-08-30 工具缺口盘点（对照 OpenHands / Cline / SWE-agent / MCP 生态的常见工具类型）。四个工具统一按 docs/TOOL_INTERFACE_DESIGN.md（§6 契约的工具层细化）落地：实现 → 注册 → 副作用登记 → 指令推断 → 设计期接入（如进白名单）→ 测试 → 文档 → 冒烟。
+
+### 24.1 lint_gate 工具化 —— 已实施
+
+`python/tools/lint_gate.py` 原有的 `lint_python()` 是 file_creator/text_editor 的写入前语法门禁（对已损坏旧文件放行以允许修复中间态）。本次新增独立检查函数 `lint_file_content()`（无旧内容豁免：坏即坏）与 `LintGateTool`（tool_id=lint_gate，category=test，instruction `lint_file`，inputs.path），返回 exit_code 0/1 供验收器直接消费。已注册、已进计划白名单 + TOOL_CONTRACTS（required path / exit_code）。executor 中 code_context 的三段重复推断分支顺带去重。
+
+### 24.2 github_operator —— 已实施
+
+gh CLI 白名单动作执行器：`pr_create` / `pr_status` / `pr_checks` / `pr_list`，子命令骨架写死、argv 拼接无 shell、title/body 等值只作独立 argv 项；cwd 由 executor 注入 Grant 工作区（加入 command_runner/package_installer 同款注入集合）。`side_effect="external"`（capabilities.py 新增 `_EXTERNAL_TOOLS` 分类与 external 取值），**不进计划白名单**（计划不应自动建 PR），是否强制审批交给 approval.required_tools 配置；真实 gh 只读用例打标 RUN_REAL_GH。
+
+### 24.3 http_api —— 已实施
+
+单次 HTTP 请求（httpx）：方法白名单 GET/HEAD/POST/PUT/PATCH/DELETE；复用 `web_fetcher._validate_url` SSRF 防护（super_search 同款先例）；**不跟随重定向**（重定向到未授权主机是 allowed_hosts 的绕过面）；响应 20MB 上限、正文尾部截断、回显响应头只留安全子集（不回显 set-cookie）。支持 expected_status 与 Grant allowed_hosts。side_effect=external，不进计划白名单。
+
+### 24.4 browser_check —— 已实施
+
+Playwright 无头浏览器**一次性无状态页面检查**（`check_page`：expect_text / not_expect_text / expect_selector + 截图 output 键），不做会话/多步交互（点击填表留待工具级异步/会话协议演进项）。依赖懒加载：playwright 未安装 → blocked（注册表不受影响）；浏览器二进制需一次性 `playwright install chromium`（requirements 新增 playwright==1.61.0）。已进计划白名单 + TOOL_CONTRACTS（required url / exit_code）。真实浏览器用例直接跑本地静态页（零外网）。
+
+### 24.5 验证
+
+新增测试 test_lint_gate_tool / test_github_operator(+_security) / test_http_api(+_security) / test_browser_check；安全专项覆盖无 shell 与 argv 注入面、白名单外动作 subprocess 前拒绝、SSRF 矩阵、方法白名单、依赖缺失 blocked；browser_check 真实浏览器用例通过（本地页面断言+截图落盘）。已知实现适配：仓库安全扫描器把「`def execute` + 字符串拼接」误判为 SQL 注入，四个新工具统一采用 `_run` + `execute = staticmethod(_run)` 别名模式（契约入口不变，docs/TOOL_INTERFACE_DESIGN.md §3.1 已成文）。
+
 ## 变更记录
+
+### 1.9-draft — 2026-08-30
+
+- 工具补充四件（§24）：lint_gate 工具化（独立语法检查，进计划白名单）、github_operator（gh CLI 白名单动作，external 副作用，不进白名单）、http_api（方法白名单 + SSRF 防护 + 不跟随重定向）、browser_check（Playwright 一次性页面检查，进计划白名单，依赖懒加载）。
+- capabilities.py 副作用分类新增 `external` 取值与 `_EXTERNAL_TOOLS`/`_REVERSIBLE_TOOLS`/`_NON_IDEMPOTENT_TOOLS` 命名集合；executor 新增 github_operator 的 cwd 注入与四个新工具的指令推断分支（顺带去重 code_context 三段重复分支）。
+- 设计期接入：TOOL_CONTRACTS 新增 lint_gate / browser_check；计划提示词白名单扩为 file_creator / coding_agent / test_runner / lint_gate / browser_check。
+- 工具实现契约成文：docs/TOOL_INTERFACE_DESIGN.md（新工具统一按其 §7 落地清单执行）。
+- requirements 新增 playwright==1.61.0。
 
 ### 1.8-draft — 2026-08-30
 

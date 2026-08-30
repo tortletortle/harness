@@ -19,6 +19,7 @@ from .test_runner import TestRunner
 from .lint_gate import LintGateTool
 from .github_operator import GitHubOperator
 from .http_api import HttpApi
+from .browser_check import BrowserCheck
 from .project_memory import ProjectMemory
 
 from logging_config import get_logger
@@ -380,6 +381,8 @@ class ToolRegistry:
         self.register_tool("github_operator", GitHubOperator)
         # HTTP API 调用：方法白名单 + SSRF 防护，对外副作用不进计划白名单
         self.register_tool("http_api", HttpApi)
+        # 页面检查：Playwright 无头浏览器一次性断言+截图（懒加载依赖，缺依赖 blocked）
+        self.register_tool("browser_check", BrowserCheck)
         # 项目工作记忆：执行状态持久化到工作区，让后续任务"接着干"（用户定位：只服务完成项目）
         self.register_tool("project_memory", ProjectMemory)
     

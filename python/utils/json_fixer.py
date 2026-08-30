@@ -241,6 +241,11 @@ TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
         "require_acceptance": True,
         "required_acceptance_types": {"exit_code"},
     },
+    "browser_check": {
+        "required_inputs": ("url",),
+        "require_acceptance": True,
+        "required_acceptance_types": {"exit_code"},
+    },
 }
 
 ACCEPTANCE_TYPES = {"file_exists", "content_contains", "exit_code", "diff_scope"}
