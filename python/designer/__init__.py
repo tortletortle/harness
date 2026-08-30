@@ -149,7 +149,7 @@ class DefaultDesigner(Designer):
 
 系统中当前可用的工具（仅供参考）：
 {tools_info}
-{memory_section}
+{locals().get("memory_section", "")}
 
 注意：这些工具在设计阶段不可执行，仅作为设计参考。你可以在设计书中提及需要使用哪些工具，但现在不要执行它们。
 

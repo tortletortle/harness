@@ -143,7 +143,11 @@ class CodingAgentTool(BaseAgentTool):
             # ---- 模型调用（GrantLLMClient 在调用前强制预算）----
             if messages is None:
                 # 首轮：完整初始提示词（此后作为稳定前缀复用，提高上游缓存命中）
-                prompt = self._build_prompt(request, target_path, current_content, "", repo_map_block)
+                try:
+                    prompt = self._build_prompt(request, target_path, current_content, "", repo_map_block)
+                except TypeError:
+                    # 防御：外部重写可能回退 4 参签名——降级为不带仓库地图，保证单轮修改不炸
+                    prompt = self._build_prompt(request, target_path, current_content, "")
                 messages = [
                     Message(role="system", content=context.system_prompt or self.description),
                     Message(role="user", content=prompt),
