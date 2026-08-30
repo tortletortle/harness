@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "posttooluse-507a1b4e303e045a7cf62b1f46b40f82",
+  "runId": null,
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "PostToolUse"
+  },
+  "revision": null,
+  "diffHash": null,
+  "rulesVersion": null,
+  "sessionHash": "da61eb68cee54325307d104411c50f9986546a34ab422bd935be2eb50f6a13ae",
+  "reportRef": null,
+  "events": [
+    {
+      "eventId": "hook-20174b6bf8f4509a1ca34be2c40f0a0e",
+      "findingId": "mimosa-4640a2b7c6310826a782363b",
+      "type": "static_fix_verified",
+      "at": "2026-08-30T16:52:32.197Z",
+      "identity": {
+        "projectRelativeFile": "python/tools/lint_gate.py",
+        "ruleId": "security",
+        "codeEvidenceHash": "cfd485d3087ccf6afc238438a35e7fe35f1c58eeeb863db48cacc51df420f0bb",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 30,
+      "endLine": 30,
+      "reasonCode": "static_rescan_passed",
+      "reportedToAgent": false,
+      "evidence": {
+        "kind": "static_scan",
+        "boundary": "observed",
+        "producer": "deterministic",
+        "evidenceHash": "cfd485d3087ccf6afc238438a35e7fe35f1c58eeeb863db48cacc51df420f0bb"
+      },
+      "sequence": 0
+    }
+  ],
+  "observedFindingIds": [],
+  "verifiedFiles": [],
+  "recordedAt": "2026-08-30T16:52:32.940Z"
+}

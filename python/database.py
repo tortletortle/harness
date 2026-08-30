@@ -300,6 +300,12 @@ class Database:
                 ))
 
                 # Delete existing steps for this plan (for updates)
+                # 先清 step_events：它同时 FK 引用 plans 和 steps，不清会导致
+                # 删除 steps 时外键失败（失败后重新审批的真实路径，第 2 期观察发现）
+                logger.debug(f"Deleting existing step_events for plan...")
+                cursor.execute("""
+                    DELETE FROM step_events WHERE plan_id = ?
+                """, (str(plan.plan_id),))
                 logger.debug(f"Deleting existing steps for plan...")
                 cursor.execute("""
                     DELETE FROM steps WHERE plan_id = ?

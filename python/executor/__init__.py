@@ -174,8 +174,8 @@ class DefaultExecutor(ExecutorAI):
             effective_inputs = dict(step.inputs or {})
             grant = self.authorization_manager.get(grant_id) if self.authorization_manager and grant_id else None
             if grant is not None:
-                if tool_id in {"command_runner", "package_installer"} and not effective_inputs.get("cwd"):
-                    # 未指定 cwd 的命令/包操作固定在本次 Grant 的 workspace 中，
+                if tool_id in {"command_runner", "package_installer", "github_operator"} and not effective_inputs.get("cwd"):
+                    # 未指定 cwd 的命令/包/gh 操作固定在本次 Grant 的 workspace 中，
                     # 避免工具落到 API 进程当前目录；显式 cwd 仍由资源检查约束。
                     effective_inputs["cwd"] = grant.workspace_root
                 elif tool_id == "git_operator" and not effective_inputs.get("path"):
@@ -561,25 +561,24 @@ class DefaultExecutor(ExecutorAI):
                 return "search"
             return "repo_map"
 
-        # code_context 的映射
-        elif tool_id == "code_context":
-            if "note" in inputs or "content" in inputs:
-                return "remember"
-            if inputs.get("force") or inputs.get("reindex"):
-                return "reindex"
-            if "query" in inputs:
-                return "search"
-            return "repo_map"
+        # lint_gate 的映射
+        elif tool_id == "lint_gate":
+            return "lint_file"
 
-        # code_context 的映射
-        elif tool_id == "code_context":
-            if "note" in inputs or "content" in inputs:
-                return "remember"
-            if inputs.get("force") or inputs.get("reindex"):
-                return "reindex"
-            if "query" in inputs:
-                return "search"
-            return "repo_map"
+        # github_operator 的映射
+        elif tool_id == "github_operator":
+            action = str(inputs.get("action") or "").strip()
+            if action in ("pr_create", "pr_status", "pr_checks", "pr_list"):
+                return action
+            return "pr_status"
+
+        # http_api 的映射
+        elif tool_id == "http_api":
+            return "send_request"
+
+        # browser_check 的映射
+        elif tool_id == "browser_check":
+            return "check_page"
 
         # 默认返回 None，让调用者处理
         return None

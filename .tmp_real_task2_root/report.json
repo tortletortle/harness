@@ -1,44 +1,19 @@
 {
   "steps": [],
-  "plan_id": "91a61b90-2a6f-4858-8bb7-dbb7c8f82f8d",
+  "plan_id": "dfa01a06-1287-43b6-bc52-9abd442a45c3",
   "plan_steps": [
     {
       "order": 1,
-      "tool": "file_creator",
-      "description": "创建 User 类定义模块"
+      "tool": "coding_agent",
+      "description": "修改 test_users.py 适配新签名"
     },
     {
       "order": 2,
-      "tool": "file_creator",
-      "description": "创建业务逻辑服务层"
-    },
-    {
-      "order": 3,
-      "tool": "file_creator",
-      "description": "创建单元测试模块"
-    },
-    {
-      "order": 4,
-      "tool": "coding_agent",
-      "description": "User 构造函数增加 user_id 参数"
-    },
-    {
-      "order": 5,
-      "tool": "coding_agent",
-      "description": "create_user 函数增加 user_id 参数"
-    },
-    {
-      "order": 6,
-      "tool": "coding_agent",
-      "description": "测试调用更新为新的函数签名"
-    },
-    {
-      "order": 7,
       "tool": "test_runner",
-      "description": "运行 pytest 确认全部测试通过"
+      "description": "运行 pytest 验证测试通过"
     }
   ],
-  "elapsed_seconds": 87.5,
+  "elapsed_seconds": 15.5,
   "files": {
     "models.py": "class User:\n    def __init__(self, user_id, name, email):\n        self.user_id = user_id\n        self.name = name\n        self.email = email",
     "service.py": "from models import User\n\ndef create_user(name, email, user_id):\n    return User(name, email, user_id)\n",

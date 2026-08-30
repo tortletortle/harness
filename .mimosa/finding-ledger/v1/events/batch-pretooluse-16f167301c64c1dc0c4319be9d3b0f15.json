@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "pretooluse-16f167301c64c1dc0c4319be9d3b0f15",
+  "runId": null,
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "PreToolUse"
+  },
+  "revision": null,
+  "diffHash": null,
+  "rulesVersion": null,
+  "sessionHash": "da61eb68cee54325307d104411c50f9986546a34ab422bd935be2eb50f6a13ae",
+  "reportRef": null,
+  "events": [
+    {
+      "eventId": "hook-c13754614a2f8cf5d5c15e5e86453e7c",
+      "findingId": "mimosa-4640a2b7c6310826a782363b",
+      "type": "finding_blocked",
+      "at": "2026-08-30T16:50:11.777Z",
+      "identity": {
+        "projectRelativeFile": "python/tools/lint_gate.py",
+        "ruleId": "security",
+        "codeEvidenceHash": "cfd485d3087ccf6afc238438a35e7fe35f1c58eeeb863db48cacc51df420f0bb",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 108,
+      "endLine": 108,
+      "reasonCode": "deny",
+      "reportedToAgent": true,
+      "evidence": {
+        "kind": "source",
+        "boundary": "candidate",
+        "producer": "deterministic",
+        "evidenceHash": "cfd485d3087ccf6afc238438a35e7fe35f1c58eeeb863db48cacc51df420f0bb"
+      },
+      "sequence": 0
+    }
+  ],
+  "observedFindingIds": [],
+  "verifiedFiles": [],
+  "recordedAt": "2026-08-30T16:50:12.548Z"
+}

@@ -16,6 +16,7 @@ from .web_fetcher import WebFetcher
 from .super_search import SuperSearch
 from .code_context import CodeContext
 from .test_runner import TestRunner
+from .lint_gate import LintGateTool
 from .project_memory import ProjectMemory
 
 from logging_config import get_logger
@@ -371,6 +372,8 @@ class ToolRegistry:
         self.register_tool("code_context", CodeContext)
                         # 测试运行：白名单模板执行器（设计稿 §23.2，补全 test 位）
         self.register_tool("test_runner", TestRunner)
+        # 语法门禁工具化：独立 lint 步骤（lint_file），exit_code 供确定性验收
+        self.register_tool("lint_gate", LintGateTool)
         # 项目工作记忆：执行状态持久化到工作区，让后续任务"接着干"（用户定位：只服务完成项目）
         self.register_tool("project_memory", ProjectMemory)
     

@@ -236,13 +236,18 @@ TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
         "require_acceptance": True,
         "required_acceptance_types": {"exit_code"},
     },
+    "lint_gate": {
+        "required_inputs": ("path",),
+        "require_acceptance": True,
+        "required_acceptance_types": {"exit_code"},
+    },
 }
 
 ACCEPTANCE_TYPES = {"file_exists", "content_contains", "exit_code", "diff_scope"}
 
 
 def validate_tool_contracts(data: dict) -> Tuple[bool, Optional[str]]:
-    """普通工具轻契约校验（当前仅 test_runner，§23.2）。
+    """普通工具轻契约校验（test_runner / lint_gate 等，§23.2）。
 
     缺必填输入 / acceptance 缺失 / acceptance 不含要求类型 → 计划打回。
     """

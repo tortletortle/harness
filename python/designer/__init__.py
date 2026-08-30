@@ -671,9 +671,10 @@ class DefaultDesigner(Designer):
 - 目录路径以 / 结尾（如 "output/"），文件路径带扩展名
 
 【约束（重要）】
-- 允许使用的工具：file_creator（创建新文件/目录）、coding_agent（修改已存在的代码文件）、test_runner（运行登记过的测试模板验证代码）。不要执行任何 shell 命令，不要使用 command_runner / package_installer / git_operator / text_editor / web_fetcher。
+- 允许使用的工具：file_creator（创建新文件/目录）、coding_agent（修改已存在的代码文件）、test_runner（运行登记过的测试模板验证代码）、lint_gate（对 .py 文件做语法检查）。不要执行任何 shell 命令，不要使用 command_runner / package_installer / git_operator / text_editor / web_fetcher。
 - 创建新文件用 file_creator；修改已存在文件的内容用 coding_agent（它能先读原文再做受控修改）；代码改完后可用 test_runner 跑测试验证。
 - test_runner 步骤契约：inputs 必含 suite（已登记模板名，如 "pytest"，可用 test_path 指定测试文件或目录）；acceptance 必含 {"type":"exit_code","equals":0}；不要用 test_runner 执行非测试命令。
+- lint_gate 步骤契约：inputs 必含 path（要检查的 .py 文件，相对路径）；acceptance 必含 {"type":"exit_code","equals":0}；只做语法检查，不能替代测试。
 - 用户需求或审批反馈中明确限定了可用工具时（如"只使用 file_creator"），该限定优先级最高：白名单只是上限，不得额外引入其他工具。
 - 步骤顺序必须尊重依赖关系：先创建被后续步骤使用的文件，再修改它，最后运行验证它的测试；test_runner 步骤必须排在其验证对象的创建/修改步骤之后。
 
