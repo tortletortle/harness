@@ -5,9 +5,9 @@
 
 ## 版本
 
-- 当前版本：`1.2-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段与 AgentTool 骨架已实施；工具选型评测达标；worktree 路线已定
-- 最后更新：2026-08-29
+- 当前版本：`1.3-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架与 coding_agent 最小闭环（agent_tool 接入 WorkGraph 执行）已实施；工具选型评测达标；worktree 路线已定
+- 最后更新：2026-08-30
 
 ## 1. 目标
 
@@ -551,7 +551,7 @@ PlanUpdateEvent 增加自增 version
 
 改造顺序原则：**先做 P0（审批 + blocked 结构化，改动小、收益直接），再做 P1（授权、恢复、围栏），最后做概念分层和隔离。**
 
-> 实施状态（2026-08-29）：P0-a、P0-b、P1-a、P1-b、P2 已全部实现并通过回归测试，见第 19 节实现记录。P1 中"Runtime 签发 Grant"尚未实现（本次落地的是审批挂起），仍为待办。
+> 实施状态（2026-08-30）：P0-a、P0-b、P1-a、P1-b、P2 已全部实现并通过回归测试，见第 19 节实现记录；Runtime 签发 Grant 第一阶段已落地（1.1），Agent 即工具已接入 WorkGraph 执行（1.3）。
 
 ## 19. 实现记录（0.7-draft）
 
@@ -639,6 +639,16 @@ PlanUpdateEvent 增加自增 version
 - 新增 `python/grant_llm_client.py`：显式 `grant_id` 绑定的模型客户端，模型调用前扣 `max_model_calls`，调用后记录 provider usage；超预算不访问上游模型。
 - `ToolRegistry` 普通工具通过 Adapter 纳入 Capability 清单；新增 `GET /api/capabilities` 供 Runtime/UI 发现能力。
 - 验收：AgentTool、Capability、Grant 模型预算专项测试已通过；未把 Coding/Test/Review 伪装成已完成的复杂 Agent。
+
+### Agent 即工具第二阶段：接入 WorkGraph（1.3 已完成）
+
+- 新增 `python/coding_agent.py`：`CodingAgentTool`（kind=agent_tool，单轮）。执行链路：受权读取目标文件（`text_editor:read_file`，authorize+审计）→ 单次模型调用输出结构化 JSON（修改后完整文件内容）→ 写入位置固定为步骤输入声明的 path（模型输出 path 不一致即失败，不可重定向）→ 受权写回（`text_editor:write_file`，authorize+审计）→ 结构化 CapabilityResult（facts/artifacts/usage）交给验收。
+- `python/authorization.py`：`issue_for_step` 支持 `extra_allowed_tools`（并入 Grant 工具白名单）与 `limits`（预算覆盖）；新增 `agent_step_grant_params` —— 仅 kind=agent_tool 步骤允许声明额外工具与预算（普通步骤忽略 `inputs.allowed_tools`，防借道扩权）；agent 预算 = 1 次外层调度 + 默认 4 次内部调用，模型调用次数以 spec 为准（单轮 = 1）。
+- `python/executor/__init__.py`：`DefaultExecutor` 可选注入 `CapabilityRegistry`；agent_tool 步骤在调用前授权（外层闸门，消耗 1 次工具调用）后分发给 Capability 契约执行，结果字典与普通工具同构（success/output/error），复用同一验收/校验/审计路径；agent 步骤超时默认 300s（`agent_step_timeout` 可配）。
+- `python/api/server.py`：lifespan 在 authorization_manager 定稿后构建 `CodingAgentTool` 并注册进 `CapabilityRegistry`（`GET /api/capabilities` 可见）；状态机 Grant 签发改用 `agent_step_grant_params`；内部工具调用以 `actor=agent:coding_agent` 写入 `audit_logs` 并携带同一 `grant_id`。
+- fail-closed 边界（均有确定性测试）：无 Grant 失败；内部工具未授权（tool_not_granted）失败；预算耗尽（budget_exceeded）失败；路径越界在 Grant 校验层被拒；模型输出非法 JSON 或试图重定向写入路径失败且文件保持原状；单轮预算第二次模型调用被拒。
+- 验证：`tests/python/test_coding_agent.py` 10 项确定性测试全过（含 FakeAgentTool 调度回归与审计关联）；真实 LLM E2E 见 `tests/python/test_coding_agent_e2e.py`（RUN_REAL_LLM_EVAL=1 门控）。
+- 待办：Designer 生成 agent_tool 节点（计划层尚未能产出 coding_agent 步骤，当前以测试直连 executor 验证）；Artifact Store 引用落地；多轮 Agent Loop。
 
 **3. worktree 并行（parallel-code 模式）—— 最后做**
 
@@ -729,6 +739,14 @@ PlanUpdateEvent 增加自增 version
 - 源码分析结论必须附项目、路径或链接。
 
 ## 变更记录
+
+### 1.3-draft — 2026-08-30
+
+- Agent 即工具第二阶段完成：`CodingAgentTool` 接入 WorkGraph 执行 —— executor 按 kind=agent_tool 分发（同一 Grant 预算与资源边界），结果过 AcceptanceRunner，与普通工具同验收/审计路径。
+- `issue_for_step` 增加 `extra_allowed_tools`/`limits`；新增 `agent_step_grant_params`（普通步骤忽略 `inputs.allowed_tools`，防止借道扩权）。
+- coding_agent 内部工具调用（text_editor 读写）逐次 authorize + 审计（actor=agent:coding_agent，关联同一 grant_id）；模型无法重定向写入路径。
+- 新增 `test_coding_agent.py`（10 项确定性测试：正路径验收、路径重定向拒绝、未授权工具拒绝、预算耗尽拒绝、越界路径拒绝、非法 JSON fail-closed、单轮预算、参数作用域、FakeAgentTool 调度回归、审计关联）与 `test_coding_agent_e2e.py`（真实 LLM，RUN_REAL_LLM_EVAL=1 门控）。
+- 明确未实现：Designer 生成 agent_tool 节点、Artifact Store 引用、多轮 Agent Loop、Agent 动态创建、OS/容器沙箱、OPA/Cerbos、worktree 并行。
 
 ### 1.2-draft — 2026-08-29
 
