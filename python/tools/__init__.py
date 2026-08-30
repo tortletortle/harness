@@ -15,8 +15,6 @@ from .text_editor import TextEditor
 from .web_fetcher import WebFetcher
 from .super_search import SuperSearch
 from .code_context import CodeContext
-from .code_context import CodeContext
-from .code_context import CodeContext
 from .test_runner import TestRunner
 
 from logging_config import get_logger
