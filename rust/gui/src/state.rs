@@ -69,6 +69,8 @@ pub enum GuiMode {
 #[derive(Debug)]
 pub struct GuiState {
     pub token: String,
+    /// 服务地址（仅展示，由启动参数指定，运行期不可改）
+    pub base: String,
     pub mode: GuiMode,
     /// Design rows are kept separately from execution plans so review history
     /// cannot disturb the stage-2 plan/approval state.
@@ -118,6 +120,7 @@ impl Default for GuiState {
     fn default() -> Self {
         Self {
             token: String::new(),
+            base: "http://127.0.0.1:8000".to_string(),
             mode: GuiMode::Input,
             designs: Vec::new(),
             current_design: None,

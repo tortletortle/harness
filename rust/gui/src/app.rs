@@ -171,6 +171,8 @@ pub struct EasApp {
     feedback_open: bool,
     audit_limit_draft: String,
     token_draft: String,
+    /// 设置窗口是否打开（纯 UI 状态）
+    settings_open: bool,
 }
 
 impl EasApp {
@@ -195,6 +197,7 @@ impl EasApp {
             feedback_open: false,
             audit_limit_draft,
             token_draft,
+            settings_open: false,
         }
     }
 
@@ -675,72 +678,72 @@ impl EasApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-            theme::card(ui, |ui| {
-                ui.strong("用户需求");
-                ui.add_space(2.0);
-                ui.label(&design.user_request);
-            });
-            ui.add_space(8.0);
-            theme::card(ui, |ui| {
-                ui.strong("架构设计");
-                ui.label("系统组件");
-                if part1.architecture.components.is_empty() {
-                    ui.weak("暂无");
-                } else {
-                    for component in &part1.architecture.components {
-                        ui.label(format!("• {component}"));
-                    }
-                }
-                ui.label("数据流");
-                for flow in &part1.architecture.data_flow {
-                    ui.label(format!("• {flow}"));
-                }
-                ui.label(format!(
-                    "技术栈: {}",
-                    if part1.architecture.tech_stack.is_empty() {
-                        "暂无".to_string()
+                theme::card(ui, |ui| {
+                    ui.strong("用户需求");
+                    ui.add_space(2.0);
+                    ui.label(&design.user_request);
+                });
+                ui.add_space(8.0);
+                theme::card(ui, |ui| {
+                    ui.strong("架构设计");
+                    ui.label("系统组件");
+                    if part1.architecture.components.is_empty() {
+                        ui.weak("暂无");
                     } else {
-                        part1.architecture.tech_stack.join("、")
+                        for component in &part1.architecture.components {
+                            ui.label(format!("• {component}"));
+                        }
                     }
-                ));
-            });
-            ui.add_space(8.0);
-            theme::card(ui, |ui| {
-                ui.strong(format!("难度: {}", part1.difficulty.level));
-                ui.add_space(2.0);
-                ui.label(&part1.difficulty.reasoning);
-            });
-            ui.add_space(8.0);
-            theme::card(ui, |ui| {
-                ui.strong("可用工具");
-                if part2.available_tools.is_empty() {
-                    ui.weak("暂无");
-                }
-                for tool in &part2.available_tools {
+                    ui.label("数据流");
+                    for flow in &part1.architecture.data_flow {
+                        ui.label(format!("• {flow}"));
+                    }
                     ui.label(format!(
-                        "{} [{}]: {}",
-                        tool.tool_id,
-                        tool.quality.as_deref().unwrap_or("未知质量"),
-                        tool.purpose
+                        "技术栈: {}",
+                        if part1.architecture.tech_stack.is_empty() {
+                            "暂无".to_string()
+                        } else {
+                            part1.architecture.tech_stack.join("、")
+                        }
                     ));
-                }
-                if !part2.missing_tools.is_empty() {
-                    ui.strong("缺失工具");
-                    for tool in &part2.missing_tools {
-                        ui.colored_label(
-                            egui::Color32::RED,
-                            format!("{}: {}", tool.tool_id, tool.purpose),
-                        );
+                });
+                ui.add_space(8.0);
+                theme::card(ui, |ui| {
+                    ui.strong(format!("难度: {}", part1.difficulty.level));
+                    ui.add_space(2.0);
+                    ui.label(&part1.difficulty.reasoning);
+                });
+                ui.add_space(8.0);
+                theme::card(ui, |ui| {
+                    ui.strong("可用工具");
+                    if part2.available_tools.is_empty() {
+                        ui.weak("暂无");
                     }
-                }
-                if !part2.recommendations.is_empty() {
-                    ui.strong("建议");
-                    for recommendation in &part2.recommendations {
-                        ui.label(format!("• {recommendation}"));
+                    for tool in &part2.available_tools {
+                        ui.label(format!(
+                            "{} [{}]: {}",
+                            tool.tool_id,
+                            tool.quality.as_deref().unwrap_or("未知质量"),
+                            tool.purpose
+                        ));
                     }
-                }
+                    if !part2.missing_tools.is_empty() {
+                        ui.strong("缺失工具");
+                        for tool in &part2.missing_tools {
+                            ui.colored_label(
+                                egui::Color32::RED,
+                                format!("{}: {}", tool.tool_id, tool.purpose),
+                            );
+                        }
+                    }
+                    if !part2.recommendations.is_empty() {
+                        ui.strong("建议");
+                        for recommendation in &part2.recommendations {
+                            ui.label(format!("• {recommendation}"));
+                        }
+                    }
+                });
             });
-        });
         ui.add_space(8.0);
         let in_flight = self.state.design_action_in_flight;
         ui.horizontal(|ui| {
@@ -937,10 +940,7 @@ impl EasApp {
                                     .add_enabled(!in_flight, theme::primary_button("批准"))
                                     .clicked();
                                 let reject = ui
-                                    .add_enabled(
-                                        !in_flight,
-                                        theme::danger_outline_button("拒绝"),
-                                    )
+                                    .add_enabled(!in_flight, theme::danger_outline_button("拒绝"))
                                     .clicked();
                                 if in_flight {
                                     ui.spinner();
@@ -1138,6 +1138,9 @@ impl eframe::App for EasApp {
                         } else {
                             theme::badge(ui, "● 未连接", theme::DANGER_TEXT, theme::DANGER_SOFT);
                         }
+                        if ui.add(theme::secondary_button("⚙ 设置")).clicked() {
+                            self.settings_open = !self.settings_open;
+                        }
                         if ui
                             .add(theme::secondary_button(if self.state.audit_visible {
                                 "关闭审计"
@@ -1149,21 +1152,6 @@ impl eframe::App for EasApp {
                             self.state.audit_visible = !self.state.audit_visible;
                             if self.state.audit_visible && self.state.audit_logs.is_empty() {
                                 self.refresh_audit();
-                            }
-                        }
-                        let token_edit = egui::TextEdit::singleline(&mut self.token_draft)
-                            .password(true)
-                            .hint_text("API token")
-                            .desired_width(140.0);
-                        let edited = ui.add(token_edit).changed();
-                        let apply_clicked =
-                            ui.add(theme::secondary_button("应用 token")).clicked();
-                        if (edited && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                            || apply_clicked
-                        {
-                            let t = self.token_draft.trim().to_string();
-                            if !t.is_empty() && t != self.state.token {
-                                self.send(Command::SetToken(t));
                             }
                         }
                     });
@@ -1228,177 +1216,248 @@ impl eframe::App for EasApp {
                     .inner_margin(egui::Margin::same(14.0)),
             )
             .show(ctx, |ui| {
-        // 底部日志区（固定 150px）+ 主内容区：普通子 Ui 渲染，确定性布局
-        let full_rect = ui.max_rect();
-        let log_top = (full_rect.bottom() - 150.0).max(full_rect.top() + 40.0);
-        let log_rect = egui::Rect::from_min_max(
-            egui::pos2(full_rect.left(), log_top),
-            egui::pos2(full_rect.right(), full_rect.bottom()),
-        );
-        let content_rect = egui::Rect::from_min_max(
-            full_rect.min,
-            egui::pos2(full_rect.right(), log_rect.top()),
-        );
-        ui.allocate_ui_at_rect(log_rect, |ui| {
-            if let Some(notice) = self.state.notice.clone() {
-                egui::Frame::default()
-                    .fill(theme::NOTICE_BG)
-                    .rounding(egui::Rounding::same(6.0))
-                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new("⚠").color(theme::WARN_TEXT).size(13.0),
-                            );
-                            ui.label(
-                                egui::RichText::new(notice).color(theme::WARN_TEXT).size(13.0),
-                            );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui.small_button("✕ 关闭").clicked() {
-                                        self.state.clear_notice();
-                                    }
-                                },
-                            );
-                        });
-                    });
-                ui.add_space(4.0);
-            }
-            ui.horizontal(|ui| {
-                ui.heading("实时日志");
-                theme::badge(
-                    ui,
-                    &format!("{} 条", self.state.logs.len()),
-                    theme::TEXT_SEC,
-                    theme::HOVER_BG,
-                );
-            });
-            egui::Frame::default()
-                .fill(theme::LOG_BG)
-                .rounding(egui::Rounding::same(8.0))
-                .inner_margin(egui::Margin::same(8.0))
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .stick_to_bottom(true)
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            let logs: Vec<LogLine> = self.state.logs.clone();
-                            for line in logs.iter().rev().take(300).rev() {
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "[{}] {}",
-                                        line.level, line.message
-                                    ))
-                                    .monospace()
-                                    .size(12.5)
-                                    .color(theme::log_color(&line.level)),
-                                );
-                            }
-                        });
-                });
-        });
-        ui.allocate_ui_at_rect(content_rect, |ui| {
-            match self.state.mode {
-            GuiMode::Input => self.design_input_panel(ui),
-            GuiMode::Review => self.design_review_panel(ui),
-            GuiMode::Plan => match self.selection() {
-                Some(sel) => {
-                    // 头部卡片：标题 + 状态徽章 + 进度条 + 控制按钮
-                    theme::card(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "计划 {}",
-                                    &sel.plan_id[..8.min(sel.plan_id.len())]
-                                ))
-                                .size(17.0)
-                                .strong(),
-                            );
-                            let (label, fg, bg) = theme::plan_status_visual(sel.status);
-                            theme::badge(ui, label, fg, bg);
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    self.control_buttons(ui, &sel.plan_id, sel.status);
-                                },
-                            );
-                        });
-                        if sel.progress.1 > 0 {
-                            let fraction = sel.progress.0 as f32 / sel.progress.1 as f32;
-                            ui.add(
-                                egui::ProgressBar::new(fraction)
-                                    .fill(theme::ACCENT)
-                                    .text(format!("{}/{} 步", sel.progress.0, sel.progress.1))
-                                    .desired_height(18.0),
-                            );
-                        }
-                    });
-                    ui.add_space(8.0);
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for (step, live) in &sel.steps {
-                            let (icon, color) = theme::step_marker(*live);
+                match self.state.mode {
+                    GuiMode::Input => self.design_input_panel(ui),
+                    GuiMode::Review => self.design_review_panel(ui),
+                    GuiMode::Plan => match self.selection() {
+                        Some(sel) => {
+                            // 头部卡片：标题 + 状态徽章 + 进度条 + 控制按钮
                             theme::card(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new(icon).color(color).size(15.0));
-                                    ui.label(&step.description);
                                     ui.label(
-                                        egui::RichText::new(format!("[{}]", step.tool))
-                                            .size(12.0)
-                                            .color(theme::TEXT_SEC)
-                                            .monospace(),
+                                        egui::RichText::new(format!(
+                                            "计划 {}",
+                                            &sel.plan_id[..8.min(sel.plan_id.len())]
+                                        ))
+                                        .size(17.0)
+                                        .strong(),
                                     );
+                                    let (label, fg, bg) = theme::plan_status_visual(sel.status);
+                                    theme::badge(ui, label, fg, bg);
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            // 仅 Pending/Retry 可跳过（与后端守卫语义一致）
-                                            if matches!(
-                                                live,
-                                                StepStatus::Pending | StepStatus::Retry
-                                            ) && ui.small_button("跳过").clicked()
-                                            {
-                                                self.send(Command::Skip {
-                                                    plan_id: sel.plan_id.clone(),
-                                                    step_id: step.step_id.clone(),
-                                                });
-                                            }
-                                            // 回滚始终先进入确认态，避免误操作。
-                                            if matches!(
-                                                live,
-                                                StepStatus::Success | StepStatus::Failed
-                                            ) && self.state.rollback_in_flight.is_none()
-                                                && ui.small_button("回滚到此").clicked()
-                                            {
-                                                self.state.request_rollback(
-                                                    sel.plan_id.clone(),
-                                                    step.step_id.clone(),
-                                                );
-                                            }
+                                            self.control_buttons(ui, &sel.plan_id, sel.status);
                                         },
                                     );
                                 });
-                                if let Some(outputs) = &step.outputs {
-                                    if let Some(err) =
-                                        outputs.get("error").and_then(|e| e.as_str())
-                                    {
-                                        ui.add_space(2.0);
-                                        theme::error_inline(ui, &format!("错误: {err}"));
-                                    }
+                                if sel.progress.1 > 0 {
+                                    let fraction = sel.progress.0 as f32 / sel.progress.1 as f32;
+                                    ui.add(
+                                        egui::ProgressBar::new(fraction)
+                                            .fill(theme::ACCENT)
+                                            .text(format!(
+                                                "{}/{} 步",
+                                                sel.progress.0, sel.progress.1
+                                            ))
+                                            .desired_height(18.0),
+                                    );
                                 }
                             });
-                            ui.add_space(6.0);
+                            ui.add_space(8.0);
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                for (step, live) in &sel.steps {
+                                    let (icon, color) = theme::step_marker(*live);
+                                    theme::card(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(icon).color(color).size(15.0),
+                                            );
+                                            ui.label(&step.description);
+                                            ui.label(
+                                                egui::RichText::new(format!("[{}]", step.tool))
+                                                    .size(12.0)
+                                                    .color(theme::TEXT_SEC)
+                                                    .monospace(),
+                                            );
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    // 仅 Pending/Retry 可跳过（与后端守卫语义一致）
+                                                    if matches!(
+                                                        live,
+                                                        StepStatus::Pending | StepStatus::Retry
+                                                    ) && ui.small_button("跳过").clicked()
+                                                    {
+                                                        self.send(Command::Skip {
+                                                            plan_id: sel.plan_id.clone(),
+                                                            step_id: step.step_id.clone(),
+                                                        });
+                                                    }
+                                                    // 回滚始终先进入确认态，避免误操作。
+                                                    if matches!(
+                                                        live,
+                                                        StepStatus::Success | StepStatus::Failed
+                                                    ) && self.state.rollback_in_flight.is_none()
+                                                        && ui.small_button("回滚到此").clicked()
+                                                    {
+                                                        self.state.request_rollback(
+                                                            sel.plan_id.clone(),
+                                                            step.step_id.clone(),
+                                                        );
+                                                    }
+                                                },
+                                            );
+                                        });
+                                        if let Some(outputs) = &step.outputs {
+                                            if let Some(err) =
+                                                outputs.get("error").and_then(|e| e.as_str())
+                                            {
+                                                ui.add_space(2.0);
+                                                theme::error_inline(ui, &format!("错误: {err}"));
+                                            }
+                                        }
+                                    });
+                                    ui.add_space(6.0);
+                                }
+                            });
                         }
-                    });
+                        None => {
+                            ui.add_space(24.0);
+                            ui.centered_and_justified(|ui| ui.weak("选择或等待计划加载…"));
+                        }
+                    },
                 }
-                None => {
-                    ui.add_space(24.0);
-                    ui.centered_and_justified(|ui| ui.weak("选择或等待计划加载…"));
-                }
-            },
-        });
+            });
 
+        // 底部通知（后端 detail / 控制结果）：挂在日志面板之上，可手动关闭
+        if self.state.notice.is_some() {
+            egui::TopBottomPanel::bottom("notice_bar")
+                .frame(
+                    egui::Frame::default()
+                        .fill(theme::NOTICE_BG)
+                        .stroke(egui::Stroke::new(1.0, theme::WARN_SOFT))
+                        .inner_margin(egui::Margin::symmetric(16.0, 8.0)),
+                )
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("⚠").color(theme::WARN_TEXT).size(14.0));
+                        ui.label(
+                            egui::RichText::new(self.state.notice.as_deref().unwrap_or_default())
+                                .color(theme::WARN_TEXT)
+                                .size(13.5),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("✕ 关闭").clicked() {
+                                self.state.clear_notice();
+                            }
+                        });
+                    });
+                });
+        }
+
+        // 底栏：实时日志流（深色等宽块）
+        egui::TopBottomPanel::bottom("log_panel")
+            .resizable(true)
+            .default_height(150.0)
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::SURFACE)
+                    .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                    .inner_margin(egui::Margin::symmetric(12.0, 8.0)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("实时日志");
+                    theme::badge(
+                        ui,
+                        &format!("{} 条", self.state.logs.len()),
+                        theme::TEXT_SEC,
+                        theme::HOVER_BG,
+                    );
+                });
+                egui::Frame::default()
+                    .fill(theme::LOG_BG)
+                    .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                    .rounding(egui::Rounding::same(8.0))
+                    .inner_margin(egui::Margin::same(8.0))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .stick_to_bottom(true)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                let logs: Vec<LogLine> = self.state.logs.clone();
+                                for line in logs.iter().rev().take(300).rev() {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "[{}] {}",
+                                            line.level, line.message
+                                        ))
+                                        .monospace()
+                                        .size(12.5)
+                                        .color(theme::log_color(&line.level)),
+                                    );
+                                }
+                            });
+                    });
+            });
 
         self.rollback_confirmation(ctx);
+
+        // 设置窗口：连接状态 / 服务地址 / API token
+        if self.settings_open {
+            egui::Window::new("⚙ 设置")
+                .anchor(egui::Align2::RIGHT_TOP, [-12.0, 48.0])
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    theme::card(ui, |ui| {
+                        ui.strong("服务状态");
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new(self.status_text())
+                                .size(12.5)
+                                .color(theme::TEXT_SEC),
+                        );
+                        ui.add_space(4.0);
+                        if self.state.connected {
+                            theme::badge(ui, "● 已连接", theme::OK_TEXT, theme::OK_SOFT);
+                        } else {
+                            theme::badge(ui, "● 未连接", theme::DANGER_TEXT, theme::DANGER_SOFT);
+                        }
+                    });
+                    ui.add_space(8.0);
+                    theme::card(ui, |ui| {
+                        ui.strong("服务地址");
+                        ui.add_space(2.0);
+                        ui.monospace(self.state.base.as_str());
+                        ui.weak("由环境变量 EAS_API_BASE 指定，默认 http://127.0.0.1:8000");
+                    });
+                    ui.add_space(8.0);
+                    theme::card(ui, |ui| {
+                        ui.strong("API Token");
+                        ui.add_space(2.0);
+                        let token_edit = egui::TextEdit::singleline(&mut self.token_draft)
+                            .password(true)
+                            .hint_text("API token")
+                            .desired_width(240.0);
+                        let response = ui.add(token_edit);
+                        let apply_clicked = ui
+                            .add_enabled(
+                                !self.token_draft.trim().is_empty(),
+                                theme::primary_button("应用 token"),
+                            )
+                            .clicked();
+                        if apply_clicked
+                            || (response.lost_focus()
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                        {
+                            let t = self.token_draft.trim().to_string();
+                            if !t.is_empty() && t != self.state.token {
+                                self.send(Command::SetToken(t));
+                            }
+                        }
+                        ui.add_space(2.0);
+                        ui.weak("token 来源：环境变量 EAS_API_TOKEN 或 config/api_token");
+                    });
+                    ui.add_space(10.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.add(theme::secondary_button("关闭")).clicked() {
+                            self.settings_open = false;
+                        }
+                    });
+                });
+        }
 
         // 6. WS 断开提示
         if let Some(err) = &self.state.last_ws_error {
@@ -1416,6 +1475,13 @@ impl EasApp {
     fn status_text(&self) -> String {
         match &self.state.service_status {
             Some(st) => {
+                let status_cn = match st.status.as_str() {
+                    "running" => "运行中",
+                    "ok" => "正常",
+                    "stopped" => "已停止",
+                    "starting" => "启动中",
+                    other => other,
+                };
                 let exec = st
                     .current_execution
                     .as_deref()
@@ -1423,7 +1489,7 @@ impl EasApp {
                     .unwrap_or_default();
                 format!(
                     "服务: {} · 工具: {} · LLM: {}{}",
-                    st.status,
+                    status_cn,
                     st.tools_count,
                     st.llm_providers.len(),
                     exec

@@ -530,6 +530,7 @@ fn main() -> eframe::Result<()> {
             theme::install(&ctx);
             let initial_state = state::GuiState {
                 token: token.clone(),
+                base: base.clone(),
                 ..Default::default()
             };
             let thread_base = base.clone();

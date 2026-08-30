@@ -33,7 +33,7 @@ pub const DANGER_BORDER: Color32 = Color32::from_rgb(252, 165, 165);
 pub const INFO_SOFT: Color32 = Color32::from_rgb(237, 233, 254);
 pub const INFO_TEXT: Color32 = Color32::from_rgb(109, 40, 217);
 
-pub const LOG_BG: Color32 = Color32::from_rgb(17, 24, 39); // 日志深底
+pub const LOG_BG: Color32 = Color32::from_rgb(243, 244, 246); // 日志浅底（融入浅色主题）
 pub const NOTICE_BG: Color32 = Color32::from_rgb(255, 251, 235); // 通知浅琥珀底
 
 // ---------- 全局安装 ----------
@@ -208,12 +208,12 @@ pub fn audit_result_visual(result: AuditResult) -> (&'static str, Color32) {
     }
 }
 
-/// 深色日志区内的日志级别配色。
+/// 浅色日志底上的日志级别配色。
 pub fn log_color(level: &str) -> Color32 {
     match level {
-        "error" => Color32::from_rgb(248, 113, 113),
-        "warning" => Color32::from_rgb(251, 191, 36),
-        "success" => Color32::from_rgb(74, 222, 128),
-        _ => Color32::from_rgb(209, 213, 219),
+        "error" => Color32::from_rgb(220, 38, 38),
+        "warning" => Color32::from_rgb(180, 83, 9),
+        "success" => Color32::from_rgb(21, 128, 61),
+        _ => Color32::from_rgb(75, 85, 99),
     }
 }

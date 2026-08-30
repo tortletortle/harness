@@ -127,6 +127,8 @@ class Database:
                 ("current_branch", "ALTER TABLE plans ADD COLUMN current_branch INTEGER NOT NULL DEFAULT 1"),
                 ("resume_from_step_id", "ALTER TABLE plans ADD COLUMN resume_from_step_id TEXT"),
                 ("paused_at_step_id", "ALTER TABLE plans ADD COLUMN paused_at_step_id TEXT"),
+                ("archived", "ALTER TABLE plans ADD COLUMN archived INTEGER NOT NULL DEFAULT 0"),
+                ("display_name", "ALTER TABLE plans ADD COLUMN display_name TEXT"),
             ]:
                 if column not in plan_columns:
                     cursor.execute(ddl)
@@ -517,7 +519,7 @@ class Database:
                 
                 if design_id:
                     cursor.execute("""
-                        SELECT plan_id, design_id, created_at, status
+                        SELECT plan_id, design_id, created_at, status, archived, display_name
                         FROM plans
                         WHERE design_id = ?
                         ORDER BY created_at DESC
@@ -525,7 +527,7 @@ class Database:
                     """, (design_id, limit))
                 else:
                     cursor.execute("""
-                        SELECT plan_id, design_id, created_at, status
+                        SELECT plan_id, design_id, created_at, status, archived, display_name
                         FROM plans
                         ORDER BY created_at DESC
                         LIMIT ?
@@ -537,6 +539,54 @@ class Database:
             logger.exception("列出执行计划失败: {}", e)
             raise DatabaseError(f"列出执行计划失败: {e}") from e
     
+    def set_plan_archived(self, plan_id: str, archived: bool) -> bool:
+        """设置计划归档标记。返回是否命中计划行。"""
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE plans SET archived = ? WHERE plan_id = ?",
+                    (1 if archived else 0, plan_id),
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.exception("设置计划归档状态失败: {}", e)
+            raise DatabaseError(f"设置计划归档状态失败: {e}") from e
+
+    def rename_plan(self, plan_id: str, display_name: str) -> bool:
+        """设置计划备注名（可读名称，用于列表展示）。返回是否命中计划行。"""
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE plans SET display_name = ? WHERE plan_id = ?",
+                    (display_name, plan_id),
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.exception("重命名计划失败: {}", e)
+            raise DatabaseError(f"重命名计划失败: {e}") from e
+
+    def delete_plan(self, plan_id: str) -> bool:
+        """删除计划及其全部步骤与事件；审计日志保留作为历史记录。
+
+        返回是否命中计划行；未命中时调用方应返回 404。
+        """
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM steps WHERE plan_id = ?", (plan_id,))
+                cursor.execute("DELETE FROM step_events WHERE plan_id = ?", (plan_id,))
+                cursor.execute("DELETE FROM plans WHERE plan_id = ?", (plan_id,))
+                deleted = cursor.rowcount > 0
+                conn.commit()
+                return deleted
+        except Exception as e:
+            logger.exception("删除计划失败: {}", e)
+            raise DatabaseError(f"删除计划失败: {e}") from e
+
     def get_steps(self, plan_id: str) -> List[Dict[str, Any]]:
         """获取计划的所有步骤"""
         try:

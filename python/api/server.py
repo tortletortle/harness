@@ -671,6 +671,9 @@ async def get_plans(limit: int = 10):
                 "design_id": p.get("design_id", ""),
                 "segments": [],
                 "created_at": p.get("created_at", ""),
+                "status": p.get("status", ""),
+                "display_name": p.get("display_name") or "",
+                "archived": bool(p.get("archived", 0)),
             })
         return {
             "success": True,
@@ -1558,6 +1561,68 @@ async def execute_plan_background(plan, resume: bool = False):
         debug_log(f"execute_plan_background FINISHED for plan {plan.plan_id}")
 
 
+
+@app.post("/api/plan/{plan_id}/archive", dependencies=[Depends(require_token)])
+async def archive_plan(plan_id: str, request: Optional[Dict[str, Any]] = None):
+    """归档 / 取消归档计划（归档不删除数据，仅从默认列表隐藏）。"""
+    try:
+        body = request or {}
+        archived = bool(body.get("archived", True))
+        if not state.database.get_plan_status(plan_id):
+            raise HTTPException(status_code=404, detail="执行计划不存在")
+        if not state.database.set_plan_archived(plan_id, archived):
+            raise HTTPException(status_code=500, detail="归档状态写入失败")
+        return {"success": True, "plan_id": plan_id, "archived": archived}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("归档计划失败: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/plan/{plan_id}/rename", dependencies=[Depends(require_token)])
+async def rename_plan(plan_id: str, request: Optional[Dict[str, Any]] = None):
+    """重命名计划（可读备注名，用于列表展示替代 UUID）。"""
+    try:
+        body = request or {}
+        name = (body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="缺少名称")
+        if len(name) > 100:
+            raise HTTPException(status_code=400, detail="名称过长（不超过 100 字符）")
+        if not state.database.get_plan_status(plan_id):
+            raise HTTPException(status_code=404, detail="执行计划不存在")
+        if not state.database.rename_plan(plan_id, name):
+            raise HTTPException(status_code=500, detail="重命名写入失败")
+        return {"success": True, "plan_id": plan_id, "name": name}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("重命名计划失败: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/plan/{plan_id}", dependencies=[Depends(require_token)])
+async def delete_plan(plan_id: str):
+    """删除执行计划（连同其全部步骤与事件；审计日志保留作为历史记录）。
+
+    Running/Paused 状态的计划必须先暂停，不允许直接删除。
+    """
+    try:
+        current_status = state.database.get_plan_status(plan_id)
+        if not current_status:
+            raise HTTPException(status_code=404, detail="执行计划不存在")
+        if current_status in ("Running", "Paused"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"计划正在执行（{current_status}），请先暂停后再删除",
+            )
+        if not state.database.delete_plan(plan_id):
+            raise HTTPException(status_code=500, detail="删除计划失败")
+        return {"success": True, "plan_id": plan_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("删除计划失败: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/plan/{plan_id}/rollback", dependencies=[Depends(require_token)])
 async def rollback_plan(plan_id: str, request: Optional[Dict[str, Any]] = None):
