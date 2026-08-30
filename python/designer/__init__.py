@@ -612,7 +612,7 @@ class DefaultDesigner(Designer):
             # 修订失败必须显式暴露：静默返回原设计书会让用户以为反馈已生效。
             raise GenerationError(f"设计书修订失败: {e}") from e
     
-    async def generate_plan(self, design: DesignDocument) -> ExecutionPlan:
+    async def generate_plan(self, design: DesignDocument, project_memory: str = "") -> ExecutionPlan:
         """生成执行计划（带重试机制）"""
         
         # 检查缓存（使用 design_id 作为键）
@@ -700,7 +700,12 @@ class DefaultDesigner(Designer):
 【输出要求】只返回 JSON，不要添加任何解释文字或 markdown 标记；保持简洁，避免冗长的描述。
 """
         
-        user_content = f"""设计书：
+        _memory_section = (
+            f"\n\n**项目工作记忆（上次执行状态，供参考；避免重复已完成的工作，优先修复遗留问题）：**\n{project_memory}\n"
+            if project_memory
+            else ""
+        )
+        user_content = f"""设计书：{_memory_section}
 
 **用户需求：**
 {design.user_request}

@@ -16,6 +16,7 @@ from .web_fetcher import WebFetcher
 from .super_search import SuperSearch
 from .code_context import CodeContext
 from .test_runner import TestRunner
+from .project_memory import ProjectMemory
 
 from logging_config import get_logger
 
@@ -370,6 +371,8 @@ class ToolRegistry:
         self.register_tool("code_context", CodeContext)
                         # 测试运行：白名单模板执行器（设计稿 §23.2，补全 test 位）
         self.register_tool("test_runner", TestRunner)
+        # 项目工作记忆：执行状态持久化到工作区，让后续任务"接着干"（用户定位：只服务完成项目）
+        self.register_tool("project_memory", ProjectMemory)
     
     def register_tool(self, tool_id: str, tool_class, aliases: List[str] = None):
         """注册工具。aliases 中的旧名可继续被 get_tool/execute_tool 解析。"""

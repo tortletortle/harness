@@ -651,7 +651,14 @@ async def approve_design(design_id: str, request: ApprovalRequest):
             await broadcast_log(f"设计书 {design_id} 已批准，开始生成执行计划...")
             
             # 生成执行计划
-            plan = await state.designer.generate_plan(design)
+            # 项目工作记忆：注入上次执行状态，让计划"接着干"而不是从零开始
+            try:
+                from tools.workspace import resolve_workspace_root as _rwr
+                _mem_path = _rwr() / "PROJECT_MEMORY.md"
+                _project_memory = _mem_path.read_text(encoding="utf-8", errors="replace")[-3000:] if _mem_path.exists() else ""
+            except Exception:
+                _project_memory = ""
+            plan = await state.designer.generate_plan(design, project_memory=_project_memory)
             
             # 保存到数据库
             state.database.save_plan(plan)
@@ -746,10 +753,18 @@ async def execute_plan(plan_id: str):
         # 否则两个并发请求可以同时通过检查，产出两个后台任务争抢同一份 DB 和文件系统。
         async with state.execution_lock:
             if state.current_execution:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"已有任务在执行中: {state.current_execution}",
-                )
+                # 认领残留自愈：进程重启可能发生在 claim 之后、执行任务死亡之前，
+                # 留下"current_execution 残留 + 计划非 Running"僵局（孤儿恢复不覆盖此态）。
+                # 只有被认领计划确实 Running 时才视为真冲突（409）；否则释放残留并放行。
+                claimed = state.current_execution
+                claimed_status = state.database.get_plan_status(claimed)
+                if claimed_status == "Running":
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"已有任务在执行中: {claimed}",
+                    )
+                logger.warning("释放残留执行认领: {}（计划 DB 状态: {}，非 Running）", claimed, claimed_status)
+                state.current_execution = None
             state.current_execution = plan_id
 
         # 在后台执行
@@ -874,10 +889,18 @@ async def resume_plan(plan_id: str):
 
         async with state.execution_lock:
             if state.current_execution:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"已有任务在执行中: {state.current_execution}",
-                )
+                # 认领残留自愈：进程重启可能发生在 claim 之后、执行任务死亡之前，
+                # 留下"current_execution 残留 + 计划非 Running"僵局（孤儿恢复不覆盖此态）。
+                # 只有被认领计划确实 Running 时才视为真冲突（409）；否则释放残留并放行。
+                claimed = state.current_execution
+                claimed_status = state.database.get_plan_status(claimed)
+                if claimed_status == "Running":
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"已有任务在执行中: {claimed}",
+                    )
+                logger.warning("释放残留执行认领: {}（计划 DB 状态: {}，非 Running）", claimed, claimed_status)
+                state.current_execution = None
             state.current_execution = plan_id
 
         asyncio.create_task(execute_plan_background(plan, resume=True))
@@ -1613,6 +1636,23 @@ async def execute_plan_background(plan, resume: bool = False):
             debug_log(f"update_plan failed during exception handling: {inner}")
         await broadcast_log(f"执行失败: {str(e)}", "error")
     finally:
+        # 项目工作记忆：计划结束时把执行状态写入工作区，让后续任务"接着干"
+        try:
+            from tools.project_memory import save_entry as _pm_save
+            _steps_rows = state.database.get_steps(str(plan.plan_id)) or []
+            _plan_final = state.database.get_plan_status(str(plan.plan_id)) or "未知"
+            _mem_lines = [f"计划 {str(plan.plan_id)[:8]} 执行结束（最终状态: {_plan_final}）"]
+            for _s in _steps_rows:
+                _line = f"- 步骤{_s.get('step_order')} [{_s.get('tool')}] {_s.get('status')}"
+                if _s.get('failure_reason'):
+                    _line += f"（原因: {_s.get('failure_reason')}）"
+                if _s.get('description'):
+                    _line += f" —— {_s.get('description')}"
+                _mem_lines.append(_line)
+            _pm_save("执行摘要", chr(10).join(_mem_lines))
+            debug_log(f"项目记忆已更新: {plan.plan_id}")
+        except Exception as _mem_err:
+            debug_log(f"项目记忆写入失败: {_mem_err}")
         try:
             from utils import usage_tracker as _usage_tracker_cleanup
             _usage_tracker_cleanup.clear_context()
