@@ -113,17 +113,35 @@ _DESIGN_JSON = json.dumps({
 }, ensure_ascii=False)
 
 
+class _MemCache:
+    """内存版设计书缓存：隔离仓库根的 data/design_cache.json（落盘缓存会让重跑命中旧设计）"""
+
+    def __init__(self):
+        self._d = {}
+
+    def get(self, user_request, fingerprint=None):
+        return self._d.get((user_request, fingerprint))
+
+    def set(self, user_request, data, fingerprint=None):
+        self._d[(user_request, fingerprint)] = data
+
+
+def _make_designer_with_cache(provider):
+    llm = LLMClient()
+    llm.register_provider(provider)
+    designer = DefaultDesigner(llm, {"primary": {"provider": "deterministic", "model": "m", "temperature": 0.3}})
+    designer.design_cache = _MemCache()
+    return designer
+
+
 def test_designer_generate_design_injects_memory(tmp_ws):
     import asyncio
-    from llm_client import LLMClient
     from designer import DefaultDesigner
 
     CodeContext.remember("部署前必须跑 release-checklist 回归。", title="发布检查单")
 
-    llm = LLMClient()
     provider = _CapturingProvider(_DESIGN_JSON)
-    llm.register_provider(provider)
-    designer = DefaultDesigner(llm, {"primary": {"provider": "deterministic", "model": "m", "temperature": 0.3}})
+    designer = _make_designer_with_cache(provider)
 
     design = asyncio.run(designer.generate_design("部署 发布 检查 相关的需求"))
     assert design is not None
@@ -135,13 +153,9 @@ def test_designer_generate_design_injects_memory(tmp_ws):
 
 def test_designer_generate_design_no_memory_no_section(tmp_ws):
     import asyncio
-    from llm_client import LLMClient
-    from designer import DefaultDesigner
 
-    llm = LLMClient()
     provider = _CapturingProvider(_DESIGN_JSON)
-    llm.register_provider(provider)
-    designer = DefaultDesigner(llm, {"primary": {"provider": "deterministic", "model": "m", "temperature": 0.3}})
+    designer = _make_designer_with_cache(provider)
 
     asyncio.run(designer.generate_design("一个全新的从未见过的需求"))
 

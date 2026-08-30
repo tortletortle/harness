@@ -6891,5 +6891,220 @@
     "hits": 0,
     "fingerprint": null,
     "user_request": "273e91ae-404d-4537-8652-91b099beced2"
+  },
+  "e193703a98f5ccb2661ded0371a45e0d": {
+    "design": {
+      "plan_id": "5bf7812c-1f6f-40df-8e06-d8060228b1f3",
+      "design_id": "14b89ac9-d04b-4502-8e0d-770231380caa",
+      "created_at": "2026-08-30T09:32:13.474276",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "64b4d822-3831-4f3b-baa3-5824bb3910de",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "cc807ad7-c8d2-4da0-b04f-70367fb64185",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788082333.4742763,
+    "last_access": 1788082333.4742763,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "14b89ac9-d04b-4502-8e0d-770231380caa"
+  },
+  "9b6a25e137a6f1cd8abb88ad1c720c90": {
+    "design": {
+      "plan_id": "7aabd112-9754-45c8-8b6a-122da79c2964",
+      "design_id": "6b20e23a-3604-4817-9ee8-f0fe624d6fa9",
+      "created_at": "2026-08-30T09:32:25.574445",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "2ce427bb-e64a-4d83-a5ff-1554c1a39e4f",
+          "description": "创建",
+          "steps": [
+            {
+              "step_id": "9ff03897-9a93-4e03-b686-e1f0243a9926",
+              "order": 1,
+              "description": "创建 counter",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "counter.py",
+                "content": "def value():\n    return 0"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "aa5f7f68-9f81-47b7-998f-ed4c5ed5f23a",
+              "order": 2,
+              "description": "创建测试",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "test_counter.py",
+                "content": "test"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "test_counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "d92cb8fc-943d-407d-ab2c-92bff88ab3d7",
+          "description": "修改并验证",
+          "steps": [
+            {
+              "step_id": "2623dcb6-fc8d-4bfa-971b-90a13b03209b",
+              "order": 3,
+              "description": "修改 counter",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "counter.py",
+                "instruction": "return 0 to 1",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "counter.py",
+                  "text": "return 1"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "8cb128d7-1adb-48b1-a2ff-06a83bc683ef",
+              "order": 4,
+              "description": "运行测试",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "pytest",
+                "test_path": "test_counter.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "exit_code",
+                  "equals": 0
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "counter.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788082345.5744452,
+    "last_access": 1788082345.5744452,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "6b20e23a-3604-4817-9ee8-f0fe624d6fa9"
   }
 }
