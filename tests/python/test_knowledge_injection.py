@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from llm_client import LLMClient
 from tools.code_context import CodeContext
 
 
