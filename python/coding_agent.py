@@ -321,6 +321,7 @@ class CodingAgentTool(BaseAgentTool):
                 tool_id=tool_id,
                 instruction=f"{self.agent_id}:{instruction}",
                 inputs=inputs,
+                plan_id=context.plan_id or None,
                 step_id=str(request.work_item_id) if request.work_item_id else None,
                 success=bool(result.get("success")),
                 blocked=False,

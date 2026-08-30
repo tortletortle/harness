@@ -223,7 +223,7 @@ class DefaultExecutor(ExecutorAI):
                 if agent_capability is not None:
                     result = await asyncio.wait_for(
                         self._run_agent_capability(
-                            agent_capability, step, tool_id, effective_inputs, grant_id
+                            agent_capability, step, tool_id, effective_inputs, grant_id, plan_id
                         ),
                         timeout=max(self.step_timeout, self.agent_step_timeout),
                     )
@@ -400,6 +400,7 @@ class DefaultExecutor(ExecutorAI):
         tool_id: str,
         inputs: Dict[str, Any],
         grant_id: Optional[str],
+        plan_id: str = "",
     ) -> Dict[str, Any]:
         """把 agent_tool Capability 接入步骤执行：
 
@@ -449,6 +450,7 @@ class DefaultExecutor(ExecutorAI):
             model=model,
             grant_id=grant_id,
             system_prompt=str(inputs.get("system_prompt") or ""),
+            plan_id=str(plan_id or ""),
         )
         cap_result = await self.capability_registry.run(tool_id, request, context)
         agent_output = (

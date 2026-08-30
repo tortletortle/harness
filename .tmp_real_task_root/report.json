@@ -1,0 +1,119 @@
+{
+  "steps": [],
+  "design_id": "b9733c6c-b291-413b-847c-3013e649489f",
+  "design_tool_assessment": null,
+  "plan_id": "b8777447-e90f-48e3-88b8-e03ee6defcee",
+  "plan_steps": [
+    {
+      "tool": "file_creator",
+      "description": "创建 calculator.py 初始版本",
+      "inputs": {
+        "path": "calculator.py",
+        "content": "def add(a, b): return a + b\ndef div(a, b): return None if b == 0 else a / b"
+      },
+      "acceptance": [
+        {
+          "type": "file_exists",
+          "path": "calculator.py",
+          "kind": "file"
+        },
+        {
+          "type": "content_contains",
+          "path": "calculator.py",
+          "text": "def add(a, b): return a + b"
+        },
+        {
+          "type": "content_contains",
+          "path": "calculator.py",
+          "text": "return None if b == 0 else a / b"
+        }
+      ]
+    },
+    {
+      "tool": "file_creator",
+      "description": "创建 test_calculator.py 测试套件",
+      "inputs": {
+        "path": "test_calculator.py",
+        "content": "import pytest\nfrom calculator import div\ndef test_div(): assert div(10, 2) == 5\ndef test_div_zero_raises():\n    with pytest.raises(ValueError):\n        div(1, 0)"
+      },
+      "acceptance": [
+        {
+          "type": "file_exists",
+          "path": "test_calculator.py",
+          "kind": "file"
+        },
+        {
+          "type": "content_contains",
+          "path": "test_calculator.py",
+          "text": "import pytest"
+        },
+        {
+          "type": "content_contains",
+          "path": "test_calculator.py",
+          "text": "pytest.raises(ValueError)"
+        }
+      ]
+    },
+    {
+      "tool": "coding_agent",
+      "description": "修改 div 函数抛出 ValueError",
+      "inputs": {
+        "path": "calculator.py",
+        "instruction": "把 div 函数的除零行为从返回 None 改为抛 ValueError，即 raise ValueError('division by zero')",
+        "allowed_tools": [
+          "text_editor",
+          "test_runner"
+        ],
+        "max_turns": 2,
+        "test_suite": "pytest",
+        "test_path": "test_calculator.py"
+      },
+      "acceptance": [
+        {
+          "type": "content_contains",
+          "path": "calculator.py",
+          "text": "raise ValueError"
+        },
+        {
+          "type": "content_contains",
+          "path": "calculator.py",
+          "text": "def add(a, b): return a + b"
+        }
+      ]
+    },
+    {
+      "tool": "test_runner",
+      "description": "运行 pytest 验证所有测试",
+      "inputs": {
+        "suite": "pytest",
+        "test_path": "test_calculator.py"
+      },
+      "acceptance": [
+        {
+          "type": "exit_code",
+          "equals": 0
+        }
+      ]
+    }
+  ],
+  "elapsed_seconds": 36.7,
+  "files": {
+    "calculator_exists": true,
+    "calculator_content": "def add(a, b): return a + b\ndef div(a, b): return a / b if b != 0 else (_ for _ in ()).throw(ValueError('division by zero'))\n",
+    "test_exists": true
+  },
+  "audit": {
+    "total": 9,
+    "grant_ids": 3,
+    "actors": [
+      "agent:coding_agent",
+      "executor"
+    ],
+    "tools": [
+      "coding_agent",
+      "file_creator",
+      "test_runner",
+      "text_editor"
+    ]
+  }
+}

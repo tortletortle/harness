@@ -24,6 +24,7 @@ class AgentRuntimeContext:
     model: str
     grant_id: str
     system_prompt: str = ""
+    plan_id: str = ""
 
 
 class BaseAgentTool:
