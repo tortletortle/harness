@@ -93,11 +93,18 @@ def test_repo_map_contains_symbols(tmp_ws):
 
 
 def test_repo_map_respects_budget(tmp_ws):
-    result = CodeContext.repo_map(max_chars=150)
+    # 再加 4 个带标题的文档，让内容真实超出预算
+    for i in range(4):
+        (tmp_ws / "docs" / f"extra{i}.md").write_text(
+            f"# extra {i}\n\n## section one {i}\n\nbody content here\n\n## section two {i}\n\nmore body\n",
+            encoding="utf-8",
+        )
+    result = CodeContext.repo_map(max_chars=500)
     assert result["success"] is True
-    assert len(result["map"]) <= 400  # 预算 + 溢出说明
+    assert len(result["map"]) <= 500 + 120  # 预算 + 溢出说明行
     assert result["shown_files"] < result["files"]
     assert "app/models.py" in result["map"]
+    assert "预算已用完" in result["map"]
 
 
 def test_repo_map_paths_filter(tmp_ws):

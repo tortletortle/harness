@@ -1,23 +1,21 @@
-"""CodingAgentTool —— Grant 受限的单轮代码修改 Agent 原型。
+"""CodingAgentTool —— Grant 受限的代码修改 Agent（v2：有界多轮）。
 
-最小闭环（设计稿 §19"Agent 即工具"第二阶段第一步）：
+最小闭环（设计稿 §19"Agent 即工具"）+ 多轮迭代（§22.7 AgentSession 第一阶段）：
 
     WorkGraph 步骤 (tool=coding_agent)
-      → Runtime 签发 Grant（内部工具 text_editor + 目标文件资源，见
-        authorization.agent_step_grant_params）
-      → 受权读取目标文件（text_editor:read_file，authorize + 审计）
-      → 单次模型调用：只输出结构化 JSON（修改后的完整文件内容）
-      → 写入位置固定为步骤输入声明的 path（模型无法重定向）
-      → 受权写回（text_editor:write_file，authorize + 审计）
-      → 返回结构化 CapabilityResult，验收交给 AcceptanceRunner
+      → Runtime 签发 Grant（内部工具 text_editor[/test_runner] + 目标文件资源，
+        预算按 inputs.max_turns 扩展，见 authorization.agent_step_grant_params）
+      → 每轮：受权读取目标文件 → 单次模型调用（结构化 JSON，完整文件内容）
+        → 受权写回（写入位置固定为步骤声明的 path，模型无法重定向）
+      → 多轮时：写回后可用 test_runner 自测（Grant 声明了才启用），
+        测试输出作为结构化反馈进入下一轮提示词；通过即提前结束
+      → 返回结构化 CapabilityResult，最终验收仍归 AcceptanceRunner /
+        后续 test_runner 步骤（agent 不自我宣布成功）
 
-fail-closed 边界：
-- 无 Grant / Grant 过期 / 撤销 / 超预算 → 直接失败。
-- 模型输出 path 与目标不一致 → 不写入，判失败（模型不能重定向写位置）。
-- 内部工具未获 Grant 授权（tool_not_granted / budget_exceeded）→ 不执行，判失败。
-- 模型输出不是合法 JSON 或缺少 content → 安全失败，不伪装成功。
-
-本模块有意保持单轮：这里是契约/协议层，不是另一个递归 Agent 编排器。
+fail-closed 边界（与 1.3 一致）：
+- 无 Grant / 过期 / 撤销 / 超预算 → 失败；模型输出 path 不一致 → 不写入判失败；
+- 内部工具未授权 → 拒绝执行；非法 JSON → 安全失败。
+- max_turns 缺省 = 1：行为与单轮版完全一致（向后兼容）。
 """
 
 from __future__ import annotations
@@ -33,10 +31,12 @@ from llm_client import Message
 
 # 提供给模型的文件现状上限（字符），防止超大文件撑爆上下文。
 _MAX_FILE_CONTEXT_CHARS = 12000
+# 反馈里测试输出保留的字符数。
+_MAX_FEEDBACK_CHARS = 1500
 
 
 class CodingAgentTool(BaseAgentTool):
-    """单轮 coding agent：模型提议内容，Runtime 决定写哪里、能不能写。"""
+    """有界多轮 coding agent：模型提议内容，Runtime 决定写哪里、能不能写、能改几轮。"""
 
     # 声明的内部工具：通过 spec 暴露给 Runtime，由 Grant 签发方并入 allowed_tools。
     inner_tools = ("text_editor",)
@@ -65,13 +65,13 @@ class CodingAgentTool(BaseAgentTool):
     def spec(self) -> CapabilitySpec:
         return CapabilitySpec(
             id=self.agent_id,
-            version="0.1.0",
+            version="0.2.0",
             kind="agent_tool",
             required_permissions=(f"agent:{self.agent_id}",),
             side_effect="reversible",
             idempotent=False,
             budget_spec={
-                "max_model_calls": 1,
+                "max_model_calls": 1,  # 单轮缺省；多轮由 Runtime 按 inputs.max_turns 扩展
                 "inner_tools": list(self.inner_tools),
             },
             can_spawn_agents=False,
@@ -90,110 +90,161 @@ class CodingAgentTool(BaseAgentTool):
                 status="failed",
                 error="coding_agent 需要输入 path（Grant 资源声明的目标文件）",
             )
+        try:
+            max_turns = max(1, int(inputs.get("max_turns", 1)))
+        except (TypeError, ValueError):
+            max_turns = 1
 
-        # 1) 受权读取现状。
-        #    - 授权拒绝（denied）→ 立即失败：这是授权边界的直接信号；
-        #    - 文件不存在（File not found）→ 新建场景，空内容继续；
-        #    - 其他读取错误 → 失败：在未知现状时盲写整个文件不安全。
-        read_status, current_content, read_error = await self._inner_tool(
-            context, request, "read_file", {"path": target_path}
-        )
-        if read_status == "denied":
-            return CapabilityResult(
-                status="failed",
-                error=f"coding_agent 读取被拒绝: {read_error}",
-            )
-        if read_status == "error" and "File not found" not in str(read_error):
-            return CapabilityResult(
-                status="failed",
-                error=f"coding_agent 读取失败: {read_error}",
-            )
         facts: List[Dict[str, Any]] = [
             {"key": "coding_agent_target", "value": target_path},
-            {"key": "coding_agent_file_exists", "value": "true" if read_status == "ok" else "false"},
         ]
 
-        # 2) 单次模型调用（GrantLLMClient 在调用前强制预算）。
-        prompt = self._build_prompt(request, target_path, current_content)
-        client = GrantLLMClient(
-            context.llm_client,
-            context.authorization_manager,
-            context.grant_id,
-        )
-        try:
-            response = await client.chat(
-                provider_name=context.provider_name,
-                messages=[
-                    Message(role="system", content=context.system_prompt or self.description),
-                    Message(role="user", content=prompt),
-                ],
-                model=context.model,
-                temperature=0.0,
-                max_tokens=4000,
-            )
-        except PermissionError as exc:
-            return CapabilityResult(status="failed", error=str(exc), facts=facts)
-        except Exception as exc:
-            return CapabilityResult(
-                status="failed",
-                error=f"coding_agent 模型调用失败: {exc}",
-                facts=facts,
-            )
+        feedback = ""
+        last_test_exit: Optional[int] = None
+        turns_used = 0
 
-        parsed = _parse_result(response.content)
-        if parsed is None:
-            # 模型输出无法解析时安全失败，不把自然语言伪装成完成。
-            return CapabilityResult(
-                status="failed",
-                error="coding_agent 返回不是合法 JSON",
-                facts=facts,
+        for turn in range(1, max_turns + 1):
+            # ---- 每轮第一步：受权读取现状 ----
+            read_status, read_result, read_error = await self._inner_tool(
+                context, request, "text_editor", "read_file", {"path": target_path}
             )
+            if read_status == "denied":
+                return CapabilityResult(
+                    status="failed",
+                    error=f"coding_agent 读取被拒绝: {read_error}",
+                    facts=facts,
+                )
+            if read_status == "error" and "File not found" not in str(read_error):
+                return CapabilityResult(
+                    status="failed",
+                    error=f"coding_agent 读取失败: {read_error}",
+                    facts=facts,
+                )
+            current_content = (read_result or {}).get("content", "") if read_status == "ok" else ""
+            if turn == 1:
+                facts.append(
+                    {"key": "coding_agent_file_exists", "value": "true" if read_status == "ok" else "false"}
+                )
 
-        output = parsed.get("output")
-        if isinstance(output, dict):
-            proposed_path = output.get("path")
-            new_content = output.get("content")
-        elif isinstance(output, str):
-            proposed_path = None
-            new_content = output
-        else:
-            return CapabilityResult(
-                status="failed",
-                error="coding_agent 输出缺少 content 字段",
-                facts=facts,
+            # ---- 单次模型调用（GrantLLMClient 在调用前强制预算）----
+            prompt = self._build_prompt(request, target_path, current_content, feedback)
+            client = GrantLLMClient(
+                context.llm_client,
+                context.authorization_manager,
+                context.grant_id,
             )
-        if not isinstance(new_content, str):
-            return CapabilityResult(
-                status="failed",
-                error="coding_agent 的 content 不是字符串",
-                facts=facts,
-            )
+            try:
+                response = await client.chat(
+                    provider_name=context.provider_name,
+                    messages=[
+                        Message(role="system", content=context.system_prompt or self.description),
+                        Message(role="user", content=prompt),
+                    ],
+                    model=context.model,
+                    temperature=0.0,
+                    max_tokens=4000,
+                )
+            except PermissionError as exc:
+                facts.append({"key": "coding_agent_turns_used", "value": turns_used})
+                return CapabilityResult(status="failed", error=str(exc), facts=facts)
+            except Exception as exc:
+                facts.append({"key": "coding_agent_turns_used", "value": turns_used})
+                return CapabilityResult(
+                    status="failed",
+                    error=f"coding_agent 模型调用失败: {exc}",
+                    facts=facts,
+                )
 
-        # 3) 写入位置由 Runtime 决定；模型声明的 path 只能与目标一致，不能重定向。
-        if proposed_path and str(proposed_path).replace("\\", "/") != target_path.replace("\\", "/"):
-            return CapabilityResult(
-                status="failed",
-                error=f"模型试图写入非授权路径: {proposed_path}（目标: {target_path}）",
-                facts=facts,
-            )
+            parsed = _parse_result(response.content)
+            if parsed is None:
+                facts.append({"key": "coding_agent_turns_used", "value": turns_used})
+                return CapabilityResult(
+                    status="failed",
+                    error=f"第 {turn} 轮返回不是合法 JSON",
+                    facts=facts,
+                )
 
-        # 4) 受权写回。写入被拒绝时文件保持原状（先拒绝后执行，无部分写入）。
-        write_status, _, write_error = await self._inner_tool(
-            context, request, "write_file", {"path": target_path, "content": new_content}
-        )
-        if write_status != "ok":
-            return CapabilityResult(
-                status="failed",
-                error=f"coding_agent 写入被拒绝: {write_error}",
-                facts=facts,
+            output = parsed.get("output")
+            if isinstance(output, dict):
+                proposed_path = output.get("path")
+                new_content = output.get("content")
+            elif isinstance(output, str):
+                proposed_path = None
+                new_content = output
+            else:
+                facts.append({"key": "coding_agent_turns_used", "value": turns_used})
+                return CapabilityResult(
+                    status="failed",
+                    error=f"第 {turn} 轮输出缺少 content 字段",
+                    facts=facts,
+                )
+            if not isinstance(new_content, str):
+                facts.append({"key": "coding_agent_turns_used", "value": turns_used})
+                return CapabilityResult(
+                    status="failed",
+                    error=f"第 {turn} 轮的 content 不是字符串",
+                    facts=facts,
+                )
+
+            # 写入位置由 Runtime 决定；模型声明的 path 只能与目标一致。
+            if proposed_path and str(proposed_path).replace("\\", "/") != target_path.replace("\\", "/"):
+                facts.append({"key": "coding_agent_turns_used", "value": turns_used})
+                return CapabilityResult(
+                    status="failed",
+                    error=f"模型试图写入非授权路径: {proposed_path}（目标: {target_path}）",
+                    facts=facts,
+                )
+
+            # ---- 受权写回 ----
+            write_status, _, write_error = await self._inner_tool(
+                context, request, "text_editor", "write_file",
+                {"path": target_path, "content": new_content},
             )
+            if write_status != "ok":
+                facts.append({"key": "coding_agent_turns_used", "value": turns_used})
+                return CapabilityResult(
+                    status="failed",
+                    error=f"coding_agent 写入被拒绝: {write_error}",
+                    facts=facts,
+                )
+            turns_used = turn
+
+            # ---- 多轮自测：Grant 声明了 test_runner 且提供了测试参数才启用 ----
+            # 注意：测试失败（exit_code 非零）是合法反馈而非工具错误。
+            if "test_runner" not in (request.allowed_tools or []):
+                break
+            suite = str(inputs.get("test_suite") or "").strip()
+            test_path = str(inputs.get("test_path") or "").strip()
+            if not suite:
+                break
+            tr_status, tr_payload, tr_extra = await self._inner_tool(
+                context, request, "test_runner", "run",
+                {"suite": suite, "test_path": test_path},
+            )
+            tr_result = tr_payload if tr_status == "ok" else (tr_extra or {})
+            if not isinstance(tr_result, dict) or tr_result.get("exit_code") is None:
+                # 被拒绝（denied）或基础设施失败（命令不存在等）→ 无有效反馈，
+                # 停止自测循环，交给外层验收。
+                facts.append({"key": "coding_agent_selftest", "value": f"skipped: {tr_status}"})
+                break
+            last_test_exit = tr_result.get("exit_code")
+            if last_test_exit == 0:
+                facts.append({"key": "coding_agent_selftest", "value": "passed"})
+                break
+            feedback = (
+                f"第 {turn} 轮修改后自测未通过（exit_code={last_test_exit}）。\n"
+                f"测试输出摘要：\n{_tail(tr_result.get('stderr') or tr_result.get('stdout') or '', _MAX_FEEDBACK_CHARS)}\n"
+                "请修复问题后重新输出完整文件内容。"
+            )
+            facts.append({"key": f"coding_agent_turn{turn}_test_exit", "value": last_test_exit})
 
         grant = context.authorization_manager.get(context.grant_id)
-        size = len(new_content.encode("utf-8"))
-        facts.append({"key": "coding_agent_bytes_written", "value": size})
+        facts.append({"key": "coding_agent_turns_used", "value": turns_used})
+        if last_test_exit is not None:
+            facts.append({"key": "coding_agent_last_test_exit", "value": last_test_exit})
         return CapabilityResult(
             status="completed",
-            output={"path": target_path, "bytes": size, "content": new_content},
+            output={"path": target_path, "turns": turns_used},
             artifacts=[f"file://{target_path}"],
             facts=facts,
             usage=grant.usage() if grant else {},
@@ -204,31 +255,35 @@ class CodingAgentTool(BaseAgentTool):
         self,
         context: AgentRuntimeContext,
         request: CapabilityRequest,
+        tool_id: str,
         instruction: str,
         inputs: Dict[str, Any],
-    ) -> Tuple[str, Any, Optional[str]]:
+    ) -> Tuple[str, Optional[Dict[str, Any]], Any]:
         """内部工具调用：先 authorize（消耗 Grant 次数），再同步执行并写审计。
 
-        返回 (status, content, error)；status ∈ {"ok", "denied", "error"}，
-        denied 表示 Grant 授权拒绝（结构化原因在 error），error 表示工具执行失败。
+        返回 (status, result, extra)；status ∈ {"ok", "denied", "error"}，
+        result 为工具完整结果字典（ok 时），extra 为拒绝原因或失败结果。
+        注意：对 test_runner，"测试失败（exit_code 非零）"是 ok 结果——
+        工具成功执行了测试；真正的反馈判断由调用方按 exit_code 处理。
         """
         decision = context.authorization_manager.authorize(
-            context.grant_id, "text_editor", instruction, inputs
+            context.grant_id, tool_id, instruction, inputs
         )
         if not decision.allowed:
-            return "denied", None, f"{decision.reason}: {decision.message}"
+            return "denied", None, {"reason": decision.reason, "message": decision.message}
         result = await asyncio.to_thread(
-            self.tool_registry.execute_tool, "text_editor", instruction, inputs
+            self.tool_registry.execute_tool, tool_id, instruction, inputs
         )
-        self._audit(context, request, instruction, inputs, result)
+        self._audit(context, request, tool_id, instruction, inputs, result)
         if result.get("success"):
-            return "ok", result.get("content", ""), None
-        return "error", None, str(result.get("error", "text_editor 调用失败"))
+            return "ok", result, None
+        return "error", None, result
 
     def _audit(
         self,
         context: AgentRuntimeContext,
         request: CapabilityRequest,
+        tool_id: str,
         instruction: str,
         inputs: Dict[str, Any],
         result: Dict[str, Any],
@@ -237,7 +292,7 @@ class CodingAgentTool(BaseAgentTool):
             return
         try:
             self.database.save_audit_log(
-                tool_id="text_editor",
+                tool_id=tool_id,
                 instruction=f"{self.agent_id}:{instruction}",
                 inputs=inputs,
                 step_id=str(request.work_item_id) if request.work_item_id else None,
@@ -252,7 +307,12 @@ class CodingAgentTool(BaseAgentTool):
             pass
 
     @staticmethod
-    def _build_prompt(request: CapabilityRequest, target_path: str, current_content: str) -> str:
+    def _build_prompt(
+        request: CapabilityRequest,
+        target_path: str,
+        current_content: str,
+        feedback: str = "",
+    ) -> str:
         inputs = request.inputs or {}
         instruction = str(inputs.get("instruction") or request.goal)
         if current_content:
@@ -261,12 +321,14 @@ class CodingAgentTool(BaseAgentTool):
             current_block = f"文件当前内容：\n```\n{current_content}\n```"
         else:
             current_block = "文件当前不存在，需要新建。"
+        feedback_block = f"\n上一轮反馈：\n{feedback}\n" if feedback else ""
         return (
             "只完成当前 WorkItem，不创建子 Agent，不扩大权限，不读写目标以外的文件。\n"
             f"目标：{request.goal}\n"
             f"修改指令：{instruction}\n"
             f"目标文件：{target_path}\n"
-            f"{current_block}\n\n"
+            f"{current_block}"
+            f"{feedback_block}\n"
             "只输出 JSON（不要输出其他文字）：\n"
             '{"status":"completed|needs_input|failed",'
             '"output":{"path":"' + target_path + '","content":"修改后的完整文件内容"},'
@@ -274,6 +336,11 @@ class CodingAgentTool(BaseAgentTool):
             "output.content 必须是修改后的完整文件内容（不是 diff、不是片段）；"
             "output.path 必须与目标文件一致。"
         )
+
+
+def _tail(text: str, limit: int) -> str:
+    text = text or ""
+    return text if len(text) <= limit else "...[截断]\n" + text[-limit:]
 
 
 __all__ = ["CodingAgentTool"]

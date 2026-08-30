@@ -24,7 +24,7 @@ from authorization import AuthorizationManager, GrantLimits, agent_step_grant_pa
 from capabilities import CapabilityRegistry, CapabilityRequest, CapabilityResult
 from coding_agent import CodingAgentTool
 from executor import DefaultExecutor
-from llm_client import DeterministicProvider, LLMClient
+from llm_client import DeterministicProvider, LLMClient, LLMProvider, LLMResponse
 from models import Step
 from tools import get_registry
 
@@ -269,7 +269,7 @@ def test_agent_step_grant_params_scope():
     step = _make_step()
     extra, limits = agent_step_grant_params(step, agent)
     assert extra == ["text_editor"]
-    assert limits.max_tool_calls == 1 + 4
+    assert limits.max_tool_calls == 1 + 3  # 默认单轮：1 外层 + 3 内部调用额度
     assert limits.max_model_calls == 1
 
     # 普通工具步骤：inputs.allowed_tools 必须被忽略，防止借道扩权。
@@ -347,3 +347,141 @@ async def test_coding_agent_inner_calls_are_audited_with_grant(monkeypatch, tmp_
     inner = [r for r in rows if r[2] == "agent:coding_agent"]
     assert {r[1] for r in inner} == {"coding_agent:read_file", "coding_agent:write_file"}
     assert all(r[0] == "text_editor" for r in inner)
+
+
+class _SeqProvider(LLMProvider):
+    """按调用次序返回不同响应的多轮测试桩。"""
+
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    @property
+    def name(self):
+        return "sequence"
+
+    async def chat(self, messages, model, temperature=0.7, max_tokens=4000, **kwargs):
+        self.calls.append(messages)
+        idx = min(len(self.calls) - 1, len(self.responses) - 1)
+        return LLMResponse(content=self.responses[idx], model=model, finish_reason="stop")
+
+    async def health_check(self):
+        return True
+
+
+def _make_seq_env(monkeypatch, tmp_path, responses):
+    monkeypatch.setenv("EAS_WORKSPACE_ROOT", str(tmp_path))
+    manager = AuthorizationManager(workspace_root=tmp_path)
+    llm = LLMClient()
+    provider = _SeqProvider(responses)
+    llm.register_provider(provider)
+    agent = CodingAgentTool(
+        llm_client=llm,
+        authorization_manager=manager,
+        tool_registry=get_registry(),
+        provider_name="sequence",
+        model="test-model",
+    )
+    registry = CapabilityRegistry()
+    registry.register(agent)
+    executor = DefaultExecutor(
+        llm_client=llm,
+        model_config={"primary": {"provider": "sequence", "model": "test-model"}},
+        tool_registry=get_registry(),
+        authorization_manager=manager,
+        capability_registry=registry,
+    )
+    return manager, agent, executor, provider
+
+
+@pytest.mark.asyncio
+async def test_coding_agent_multi_turn_self_test_loop(tmp_path, monkeypatch):
+    """第 1 轮改错 → 自测失败 → 反馈进第 2 轮 → 改对 → 自测通过提前结束。"""
+    _seed_file(tmp_path)
+    (tmp_path / "test_app.py").write_text(
+        "def test_value():\n    src = open('src/app.py', encoding='utf-8').read()\n"
+        "    assert 'hello, world' in src\n",
+        encoding="utf-8",
+    )
+    wrong = _model_response(content=ORIGINAL)  # 第 1 轮没改
+    right = _model_response(content=EDITED)    # 第 2 轮改对
+    manager, agent, executor, provider = _make_seq_env(monkeypatch, tmp_path, [wrong, right])
+    step = _make_step(
+        max_turns=2,
+        allowed_tools=["text_editor", "test_runner"],
+        test_suite="pytest",
+        test_path="test_app.py",
+    )
+    grant = manager.issue_for_step(
+        "plan-multi",
+        step,
+        extra_allowed_tools=["text_editor", "test_runner"],
+        limits=GrantLimits(max_tool_calls=7, max_model_calls=2),
+    )
+
+    result = await executor.execute_step(step, grant_id=grant.grant_id, plan_id="plan-multi")
+
+    assert result["success"], result
+    assert "hello, world" in (tmp_path / "src" / "app.py").read_text(encoding="utf-8")
+    # 两轮模型调用；外层 1 + 2*(读+写) + 1 次自测 = 6 次工具调用
+    assert grant.used_model_calls == 2
+    assert grant.used_tool_calls == 7  # 1 外层 + 2*(读+写) + 2 次自测（最后一轮也自测）
+    facts = {f["key"]: f["value"] for f in result["output"]["agent_facts"]}
+    assert facts["coding_agent_turns_used"] == 2
+    assert facts["coding_agent_selftest"] == "passed"
+    # 第 2 轮提示词应携带第 1 轮的自测反馈
+    second_prompt = provider.calls[1][-1].content
+    assert "上一轮反馈" in second_prompt and "exit_code=1" in second_prompt
+
+
+@pytest.mark.asyncio
+async def test_coding_agent_multi_turn_budget_exhaustion(tmp_path, monkeypatch):
+    _seed_file(tmp_path)
+    (tmp_path / "test_app.py").write_text(
+        "def test_value():\n    src = open('src/app.py', encoding='utf-8').read()\n"
+        "    assert 'hello, world' in src\n",
+        encoding="utf-8",
+    )
+    always_wrong = _model_response(content=ORIGINAL)
+    manager, agent, executor, provider = _make_seq_env(
+        monkeypatch, tmp_path, [always_wrong, always_wrong, always_wrong, always_wrong]
+    )
+    step = _make_step(
+        max_turns=3,
+        allowed_tools=["text_editor", "test_runner"],
+        test_suite="pytest",
+        test_path="test_app.py",
+    )
+    grant = manager.issue_for_step(
+        "plan-budget3",
+        step,
+        extra_allowed_tools=["text_editor", "test_runner"],
+        limits=GrantLimits(max_tool_calls=10, max_model_calls=3),
+    )
+
+    result = await executor.execute_step(step, grant_id=grant.grant_id, plan_id="plan-budget3")
+
+    # agent 完成了 3 轮工作（completed），但内容没改对 → executor 验收失败
+    assert result["success"] is False
+    assert result["acceptance_status"] == "failed"
+    assert grant.used_model_calls == 3
+    facts = {f["key"]: f["value"] for f in result["output"]["agent_facts"]}
+    assert facts["coding_agent_turns_used"] == 3
+    assert facts["coding_agent_last_test_exit"] == 1
+    # 文件内容始终是原始内容（模型一直返回旧内容）
+    assert (tmp_path / "src" / "app.py").read_text(encoding="utf-8") == ORIGINAL
+
+
+def test_agent_step_grant_params_multi_turn_budget(tmp_path):
+    agent = CodingAgentTool(
+        llm_client=None,
+        authorization_manager=None,
+        tool_registry=None,
+        provider_name="p",
+        model="m",
+    )
+    step = _make_step(max_turns=3, allowed_tools=["text_editor", "test_runner"])
+    extra, limits = agent_step_grant_params(step, agent)
+    assert "text_editor" in extra and "test_runner" in extra
+    assert limits.max_model_calls == 3
+    assert limits.max_tool_calls == 1 + 9

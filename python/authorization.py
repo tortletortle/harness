@@ -468,14 +468,11 @@ def agent_step_grant_params(step: Any, capability: Any = None) -> Tuple[List[str
         if name and name not in extra:
             extra.append(name)
     try:
-        inner_calls = max(1, int(inputs.get("max_inner_tool_calls", 4)))
+        turns = max(1, int(inputs.get("max_turns", 1)))
     except (TypeError, ValueError):
-        inner_calls = 4
-    try:
-        model_calls = max(1, int(budget.get("max_model_calls", 1)))
-    except (TypeError, ValueError):
-        model_calls = 1
-    return extra, GrantLimits(max_tool_calls=1 + inner_calls, max_model_calls=model_calls)
+        turns = 1
+    # 预算按轮次扩展：每轮 1 次模型调用 + 读/写/自测三类内部调用（外层调度另计 1 次）。
+    return extra, GrantLimits(max_tool_calls=1 + turns * 3, max_model_calls=turns)
 
 
 __all__ = [

@@ -1,0 +1,164 @@
+"""
+LLM 用量记录与预算检查（P0 强化）
+
+设计（参考 token budget 实践：按 agent/工作流做 token 记账是最直接的成本控制）：
+- llm_client.LLMClient.chat 统一钩子：每个 provider 调用后记一行账；
+- 上下文通过 threading.local 传递（phase / plan_id），由调用方
+  （server 执行循环、设计端点）在进入/退出时 set/clear；
+- 独立 SQLite 库 data/usage/llm_usage.db——不侵入主数据库 schema；
+- 记账绝不抛异常、绝不阻断主链路（观察性副作用）。
+"""
+
+import sqlite3
+import threading
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+from tools import workspace as _ws
+from logging_config import get_logger
+
+logger = get_logger(__name__)
+
+_local = threading.local()
+_write_lock = threading.Lock()
+
+
+def set_context(**kwargs: Any) -> None:
+    """绑定当前调用的上下文（plan_id / phase 等），直到 clear_context。"""
+    ctx = getattr(_local, "ctx", None)
+    if ctx is None:
+        ctx = {}
+        _local.ctx = ctx
+    ctx.update({k: v for k, v in kwargs.items() if v is not None})
+
+
+def clear_context() -> None:
+    """清空上下文（执行循环 finally 中调用）。"""
+    _local.ctx = {}
+
+
+def get_context() -> Dict[str, Any]:
+    return dict(getattr(_local, "ctx", {}) or {})
+
+
+def _db_path() -> Any:
+    return _ws.resolve_workspace_root() / "data" / "usage" / "llm_usage.db"
+
+
+def _open_db() -> sqlite3.Connection:
+    path = _db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path), timeout=5)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS llm_usage ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "ts TEXT, provider TEXT, model TEXT, phase TEXT, plan_id TEXT, "
+        "input_tokens INTEGER, output_tokens INTEGER, total_tokens INTEGER)"
+    )
+    return conn
+
+
+def _normalize_tokens(usage: Any) -> tuple:
+    """归一化 OpenAI（prompt/completion/total）与 Anthropic（input/output）两种口径。"""
+    if usage is None:
+        usage = {}
+    if not isinstance(usage, dict):
+        usage = dict(getattr(usage, "__dict__", {}) or {})
+    input_t = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+    output_t = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+    total = int(usage.get("total_tokens") or (input_t + output_t))
+    return input_t, output_t, total
+
+
+def record_usage(
+    provider: str,
+    model: str,
+    usage: Any,
+    phase: Optional[str] = None,
+    plan_id: Optional[str] = None,
+) -> None:
+    """记录一次 LLM 调用的 token 用量。永不抛异常。"""
+    try:
+        input_t, output_t, total = _normalize_tokens(usage)
+        ctx = get_context()
+        phase = phase or ctx.get("phase") or "adhoc"
+        plan_id = plan_id or ctx.get("plan_id")
+        ts = datetime.now().isoformat(timespec="seconds")
+        with _write_lock:
+            conn = _open_db()
+            try:
+                conn.execute(
+                    "INSERT INTO llm_usage (ts, provider, model, phase, plan_id, "
+                    "input_tokens, output_tokens, total_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (ts, str(provider or ""), str(model or ""), str(phase),
+                     str(plan_id) if plan_id else None, input_t, output_t, total),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception as e:  # 观察性副作用：失败只记日志
+        logger.debug("usage 记录失败（忽略）: {}", e)
+
+
+def plan_total_tokens(plan_id: str) -> int:
+    """指定计划累计消耗的 token 总量（无记录返回 0）。"""
+    try:
+        conn = _open_db()
+        try:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(total_tokens), 0) FROM llm_usage WHERE plan_id = ?",
+                (str(plan_id),),
+            ).fetchone()
+            return int(row[0] or 0)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.debug("usage 查询失败（按 0 处理）: {}", e)
+        return 0
+
+
+def get_summary(plan_id: Optional[str] = None, limit: int = 50) -> Dict[str, Any]:
+    """用量汇总 + 最近记录（供 GET /api/usage）。只读；失败抛给调用方。"""
+    limit = max(1, min(int(limit or 50), 500))
+    conn = _open_db()
+    try:
+        where = "WHERE plan_id = ?" if plan_id else ""
+        params = (str(plan_id),) if plan_id else ()
+        row = conn.execute(
+            f"SELECT COUNT(*), COALESCE(SUM(input_tokens), 0), "
+            f"COALESCE(SUM(output_tokens), 0), COALESCE(SUM(total_tokens), 0) "
+            f"FROM llm_usage {where}",
+            params,
+        ).fetchone()
+        by_phase = [
+            {"phase": r[0], "total_tokens": int(r[1] or 0), "calls": int(r[2] or 0)}
+            for r in conn.execute(
+                f"SELECT phase, SUM(total_tokens), COUNT(*) FROM llm_usage {where} "
+                f"GROUP BY phase ORDER BY SUM(total_tokens) DESC",
+                params,
+            ).fetchall()
+        ]
+        recent = [
+            {
+                "ts": r[0], "provider": r[1], "model": r[2], "phase": r[3],
+                "plan_id": r[4], "input_tokens": int(r[5] or 0),
+                "output_tokens": int(r[6] or 0), "total_tokens": int(r[7] or 0),
+            }
+            for r in conn.execute(
+                f"SELECT ts, provider, model, phase, plan_id, input_tokens, "
+                f"output_tokens, total_tokens FROM llm_usage {where} "
+                f"ORDER BY id DESC LIMIT {int(limit)}",
+                params,
+            ).fetchall()
+        ]
+        return {
+            "plan_id": plan_id,
+            "calls": int(row[0] or 0),
+            "input_tokens": int(row[1] or 0),
+            "output_tokens": int(row[2] or 0),
+            "total_tokens": int(row[3] or 0),
+            "by_phase": by_phase,
+            "recent": recent,
+        }
+    finally:
+        conn.close()

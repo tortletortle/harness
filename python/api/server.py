@@ -204,6 +204,10 @@ async def lifespan(app: FastAPI):
         state.retry_max_attempts = retry_cfg.get("max_attempts", 3)
         state.retry_backoff_factor = retry_cfg.get("backoff_factor", 2)
 
+        # P0 预算：计划级 token 预算（0 = 不限制；超限自动转 Paused，可 /resume 恢复）
+        budget_cfg = state.config.get("budget", {})
+        state.budget_max_tokens_per_plan = int(budget_cfg.get("max_tokens_per_plan", 0) or 0)
+
         # 工具级审批策略（P0-a）：required_tools 列出需要人工批准的工具 ID。
         # 默认空列表 = 全部自动执行（向后兼容，现有测试/流程不变）。
         approval_cfg = state.config.get("approval", {})
@@ -1351,6 +1355,10 @@ async def execute_plan_background(plan, resume: bool = False):
         print(f"[BG] plan={plan.plan_id} status=Running", flush=True)
         await broadcast_log(f"{'恢复' if resume else '开始'}执行计划: {plan.plan_id}", "info")
 
+        # P0 用量记账：为本次执行绑定 plan 上下文，执行期内所有 LLM 调用自动归账
+        from utils import usage_tracker as _usage_tracker
+        _usage_tracker.set_context(plan_id=str(plan.plan_id), phase="executor")
+
         branch_version = getattr(plan, 'current_branch', 1) or 1
         resume_from_step_id = str(getattr(plan, 'resume_from_step_id', None)) if getattr(plan, 'resume_from_step_id', None) else None
 
@@ -1358,6 +1366,25 @@ async def execute_plan_background(plan, resume: bool = False):
             current_status = state.database.get_plan_status(str(plan.plan_id))
             if current_status == "Paused":
                 debug_log(f"Plan {plan.plan_id} is Paused, stopping execution loop")
+
+            # P0 预算闸门（与 Paused 检查同位：超限 → Paused，可 /resume 恢复继续）
+            _budget_limit = getattr(state, "budget_max_tokens_per_plan", 0) or 0
+            if _budget_limit > 0:
+                _used_tokens = _usage_tracker.plan_total_tokens(str(plan.plan_id))
+                if _used_tokens >= _budget_limit:
+                    _budget_msg = (
+                        f"[BUDGET] 计划 {plan.plan_id} token 预算超限"
+                        f"（已用 {_used_tokens} ≥ 上限 {_budget_limit}），自动暂停；"
+                        f"提高 config budget.max_tokens_per_plan 后可 /resume 继续"
+                    )
+                    logger.warning(_budget_msg)
+                    await broadcast_log(_budget_msg, "warning")
+                    _require_write(
+                        state.database.update_plan_state_machine(str(plan.plan_id), "Paused"),
+                        f"计划 {plan.plan_id} 状态 → Paused（token 预算超限）",
+                    )
+                    await broadcast_plan_update(str(plan.plan_id))
+                    break
                 await broadcast_log(f"计划 {plan.plan_id} 已暂停", "info")
                 _require_write(
                     state.database.update_plan_state_machine(str(plan.plan_id), "Paused"),
@@ -1586,6 +1613,11 @@ async def execute_plan_background(plan, resume: bool = False):
             debug_log(f"update_plan failed during exception handling: {inner}")
         await broadcast_log(f"执行失败: {str(e)}", "error")
     finally:
+        try:
+            from utils import usage_tracker as _usage_tracker_cleanup
+            _usage_tracker_cleanup.clear_context()
+        except Exception:
+            pass
         async with state.execution_lock:
             state.current_execution = None
         # P0-a 安全网：计划已终止（完成/失败/异常），批量拒绝其未决审批，
@@ -1725,6 +1757,21 @@ async def get_audit_logs(limit: int = 100, plan_id: Optional[str] = None):
         }
     except Exception as e:
         logger.exception("查询审计日志失败: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/usage", dependencies=[Depends(require_token)])
+async def get_usage(limit: int = 50, plan_id: Optional[str] = None):
+    """LLM token 用量：总量汇总 + 按阶段分布 + 最近记录（P0 强化）。"""
+    try:
+        from utils import usage_tracker as _usage_tracker
+        summary = _usage_tracker.get_summary(plan_id=plan_id, limit=limit)
+        summary["success"] = True
+        budget_limit = getattr(state, "budget_max_tokens_per_plan", 0) or 0
+        summary["budget_max_tokens_per_plan"] = budget_limit
+        return summary
+    except Exception as e:
+        logger.exception("查询用量失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

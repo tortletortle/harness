@@ -1,34 +1,34 @@
 {
-  "51dcd8a67f1354951317baff551f2002": {
+  "e1b30040c02b673eed18d195672b27a3": {
     "design": {
-      "plan_id": "74a53cde-6bce-4868-bfd6-7e8c431e4b08",
-      "design_id": "043f9d01-d3d0-45f3-94c6-b0cdc1cf150c",
-      "created_at": "2026-08-30T07:42:48.987345",
+      "plan_id": "984da9ae-02eb-46e9-bffb-b8d381a51444",
+      "design_id": "bc6983e3-2671-4fd9-a307-ac1c1f1a3787",
+      "created_at": "2026-08-30T08:10:56.777204",
       "status": "Pending",
       "segments": [
         {
-          "segment_id": "60f7e054-2103-442b-a29c-77f83077522f",
-          "description": "创建文本文件",
+          "segment_id": "7dd2b341-040c-4ae4-8257-6586b4791196",
+          "description": "创建指定文件",
           "steps": [
             {
-              "step_id": "8fc50396-f5b7-4836-b92a-2b9d4e9eeb6f",
+              "step_id": "cdb51b13-393a-46d8-9394-d333699a02f8",
               "order": 1,
-              "description": "创建a.txt文件",
+              "description": "创建 a.txt",
               "tool": "file_creator",
               "inputs": {
-                "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-209\\verify_p1_workdir0\\a.txt",
+                "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-222\\verify_p1_workdir0\\a.txt",
                 "content": "hello"
               },
               "check_criteria": "执行成功",
               "acceptance": [
                 {
                   "type": "file_exists",
-                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-209\\verify_p1_workdir0\\a.txt",
+                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-222\\verify_p1_workdir0\\a.txt",
                   "kind": "file"
                 },
                 {
                   "type": "content_contains",
-                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-209\\verify_p1_workdir0\\a.txt",
+                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-222\\verify_p1_workdir0\\a.txt",
                   "text": "hello"
                 }
               ],
@@ -46,24 +46,24 @@
               "is_obsolete": false
             },
             {
-              "step_id": "19ca0918-06e9-4619-a3e1-f07a71076cdc",
+              "step_id": "36bf72c6-ca36-4942-a1b5-2e9f47bcfd72",
               "order": 2,
-              "description": "创建b.txt文件",
+              "description": "创建 b.txt",
               "tool": "file_creator",
               "inputs": {
-                "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-209\\verify_p1_workdir0\\b.txt",
+                "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-222\\verify_p1_workdir0\\b.txt",
                 "content": "world"
               },
               "check_criteria": "执行成功",
               "acceptance": [
                 {
                   "type": "file_exists",
-                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-209\\verify_p1_workdir0\\b.txt",
+                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-222\\verify_p1_workdir0\\b.txt",
                   "kind": "file"
                 },
                 {
                   "type": "content_contains",
-                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-209\\verify_p1_workdir0\\b.txt",
+                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-222\\verify_p1_workdir0\\b.txt",
                   "text": "world"
                 }
               ],
@@ -84,17 +84,17 @@
         }
       ],
       "implementation_list": [
-        "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-209\\verify_p1_workdir0\\a.txt",
-        "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-209\\verify_p1_workdir0\\b.txt"
+        "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-222\\verify_p1_workdir0\\a.txt",
+        "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-222\\verify_p1_workdir0\\b.txt"
       ],
       "dynamic_insertions": [],
       "current_branch": 1,
       "resume_from_step_id": null,
       "paused_at_step_id": null
     },
-    "timestamp": 1788075768.9883459,
-    "last_access": 1788075768.9883459,
+    "timestamp": 1788077456.7772043,
+    "last_access": 1788077456.7772043,
     "hits": 0,
-    "user_request": "043f9d01-d3d0-45f3-94c6-b0cdc1cf150c"
+    "user_request": "bc6983e3-2671-4fd9-a307-ac1c1f1a3787"
   }
 }

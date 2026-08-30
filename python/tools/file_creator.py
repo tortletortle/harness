@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from pathlib import Path
 from typing import Any, Dict
 
+from tools.lint_gate import lint_python
 from tools.workspace import resolve_workspace_path
 
 # 默认超时（秒）。文件IO一般不会真正卡死，但网络盘/异常磁盘故障时可能长时间阻塞，
@@ -69,10 +70,21 @@ class FileCreator:
         }
 
     @staticmethod
-    def _create_file_impl(path: str, content: str = "", encoding: str = "utf-8") -> Dict[str, Any]:
+    def _create_file_impl(path: str, content: str = "", encoding: str = "utf-8", force_write: bool = False) -> Dict[str, Any]:
         """创建文件"""
         try:
             file_path = resolve_workspace_path(path)
+
+            # SWE-agent 式语法门禁：不让语法错误的 .py 新文件落盘
+            gate = lint_python(str(file_path), content, None)
+            if not gate.allowed and not force_write:
+                return {
+                    "success": False,
+                    "message": f"创建被拒绝：{gate.detail}",
+                    "error": "Syntax check failed",
+                    "syntax_error": gate.detail,
+                    "blocked": True,
+                }
 
             # 确保父目录存在
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,9 +106,9 @@ class FileCreator:
             }
 
     @staticmethod
-    def create_file(path: str, content: str = "", encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:
+    def create_file(path: str, content: str = "", encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT, force_write: bool = False) -> Dict[str, Any]:
         """创建文件（带超时）"""
-        return _run_with_timeout(FileCreator._create_file_impl, timeout, path, content, encoding)
+        return _run_with_timeout(FileCreator._create_file_impl, timeout, path, content, encoding, force_write)
 
     @staticmethod
     def _create_directory_impl(path: str, parents: bool = True) -> Dict[str, Any]:
@@ -135,7 +147,8 @@ class FileCreator:
                 path=path,
                 content=content,
                 encoding=encoding,
-                timeout=timeout
+                timeout=timeout,
+                force_write=bool(inputs.get("force_write", False))
             )
         elif instruction == "create_directory":
             return FileCreator.create_directory(

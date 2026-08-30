@@ -148,3 +148,7 @@ authorization:
     - .env.*
     - .git/**
   allowed_hosts: []
+
+# P0 强化：计划级 token 预算（0 = 不限制；超限自动转 Paused，可 /resume 继续）
+budget:
+  max_tokens_per_plan: 0

@@ -218,6 +218,12 @@ class OpenAIProvider(LLMProvider):
             return False
 
 
+try:
+    from utils.usage_tracker import record_usage
+except Exception:  # pragma: no cover - 用量模块缺失不应影响 LLM 调用
+    record_usage = None
+
+
 class LLMClient:
     """统一的LLM客户端"""
     
@@ -241,8 +247,16 @@ class LLMClient:
         provider = self.providers.get(provider_name)
         if not provider:
             raise ValueError(f"Provider {provider_name} not found")
-        
-        return await provider.chat(messages, model, temperature, max_tokens, **kwargs)
+
+        response = await provider.chat(messages, model, temperature, max_tokens, **kwargs)
+
+        # P0 用量记账：所有 provider 调用统一在此记录；失败绝不影响主链路
+        if record_usage is not None:
+            try:
+                record_usage(provider_name, model, getattr(response, "usage", None))
+            except Exception:
+                pass
+        return response
     
     async def health_check(self, provider_name: str) -> bool:
         """检查provider健康状态"""

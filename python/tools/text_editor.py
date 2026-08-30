@@ -5,8 +5,9 @@
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
+from tools.lint_gate import lint_python
 from tools.workspace import resolve_workspace_path
 
 # 默认超时（秒）。文件IO一般不会真正卡死，但网络盘/异常磁盘故障时可能长时间阻塞，
@@ -37,9 +38,9 @@ class TextEditor:
         return {
             "tool_id": "text_editor",
             "name": "文本编辑工具",
-            "description": "编辑文本文件内容（相对路径基于工作区根目录解析）",
+            "description": "编辑文本文件内容（相对路径基于工作区根目录解析）；.py 写入带语法门禁，force_write 可跳过",
             "category": "generation",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "capabilities": {
                 "instructions": [
                     {
@@ -122,7 +123,7 @@ class TextEditor:
         return _run_with_timeout(TextEditor._read_file_impl, timeout, path, encoding)
 
     @staticmethod
-    def _append_to_file_impl(path: str, content: str, encoding: str = "utf-8") -> Dict[str, Any]:
+    def _append_to_file_impl(path: str, content: str, encoding: str = "utf-8", force_write: bool = False) -> Dict[str, Any]:
         """追加内容到文件"""
         try:
             file_path = Path(path)
@@ -130,18 +131,35 @@ class TextEditor:
             # 读取现有内容
             if file_path.exists():
                 existing = file_path.read_text(encoding=encoding)
+                old_content: Optional[str] = existing
             else:
                 existing = ""
+                old_content = None
 
             # 追加内容
             new_content = existing + content
+
+            # SWE-agent 式语法门禁：不让语法错误的 .py 内容落盘
+            gate = lint_python(path, new_content, old_content)
+            if not gate.allowed and not force_write:
+                return {
+                    "success": False,
+                    "message": f"写入被拒绝：{gate.detail}",
+                    "error": "Syntax check failed",
+                    "syntax_error": gate.detail,
+                    "blocked": True,
+                }
+
             file_path.write_text(new_content, encoding=encoding)
 
-            return {
+            result = {
                 "success": True,
                 "message": "内容追加成功",
                 "new_size": len(new_content)
             }
+            if gate.allowed and gate.detail:
+                result["syntax_warning"] = gate.detail
+            return result
         except Exception as e:
             return {
                 "success": False,
@@ -150,12 +168,12 @@ class TextEditor:
             }
 
     @staticmethod
-    def append_to_file(path: str, content: str, encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:
+    def append_to_file(path: str, content: str, encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT, force_write: bool = False) -> Dict[str, Any]:
         """追加内容到文件（带超时）"""
-        return _run_with_timeout(TextEditor._append_to_file_impl, timeout, path, content, encoding)
+        return _run_with_timeout(TextEditor._append_to_file_impl, timeout, path, content, encoding, force_write)
 
     @staticmethod
-    def _replace_in_file_impl(path: str, old_text: str, new_text: str, encoding: str = "utf-8") -> Dict[str, Any]:
+    def _replace_in_file_impl(path: str, old_text: str, new_text: str, encoding: str = "utf-8", force_write: bool = False) -> Dict[str, Any]:
         """替换文件中的文本"""
         try:
             file_path = Path(path)
@@ -177,15 +195,30 @@ class TextEditor:
                 }
 
             new_content = content.replace(old_text, new_text)
+
+            # SWE-agent 式语法门禁：替换不许把合法的 .py 改出语法错误
+            gate = lint_python(path, new_content, content)
+            if not gate.allowed and not force_write:
+                return {
+                    "success": False,
+                    "message": f"写入被拒绝：{gate.detail}",
+                    "error": "Syntax check failed",
+                    "syntax_error": gate.detail,
+                    "blocked": True,
+                }
+
             file_path.write_text(new_content, encoding=encoding)
 
             count = content.count(old_text)
 
-            return {
+            result = {
                 "success": True,
                 "message": f"替换成功，共{count}处",
                 "count": count
             }
+            if gate.allowed and gate.detail:
+                result["syntax_warning"] = gate.detail
+            return result
         except Exception as e:
             return {
                 "success": False,
@@ -194,9 +227,9 @@ class TextEditor:
             }
 
     @staticmethod
-    def replace_in_file(path: str, old_text: str, new_text: str, encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:
+    def replace_in_file(path: str, old_text: str, new_text: str, encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT, force_write: bool = False) -> Dict[str, Any]:
         """替换文件中的文本（带超时）"""
-        return _run_with_timeout(TextEditor._replace_in_file_impl, timeout, path, old_text, new_text, encoding)
+        return _run_with_timeout(TextEditor._replace_in_file_impl, timeout, path, old_text, new_text, encoding, force_write)
 
     @staticmethod
     def _insert_at_line_impl(path: str, line_number: int, content: str, encoding: str = "utf-8") -> Dict[str, Any]:
@@ -211,7 +244,8 @@ class TextEditor:
                     "error": "File not found"
                 }
 
-            lines = file_path.read_text(encoding=encoding).splitlines(keepends=True)
+            original_text = file_path.read_text(encoding=encoding)
+            lines = original_text.splitlines(keepends=True)
 
             if line_number < 1 or line_number > len(lines) + 1:
                 return {
@@ -224,13 +258,28 @@ class TextEditor:
             lines.insert(line_number - 1, content + "\n")
 
             new_content = "".join(lines)
+
+            # SWE-agent 式语法门禁
+            gate = lint_python(path, new_content, original_text)
+            if not gate.allowed and not force_write:
+                return {
+                    "success": False,
+                    "message": f"写入被拒绝：{gate.detail}",
+                    "error": "Syntax check failed",
+                    "syntax_error": gate.detail,
+                    "blocked": True,
+                }
+
             file_path.write_text(new_content, encoding=encoding)
 
-            return {
+            result = {
                 "success": True,
                 "message": f"在第{line_number}行插入成功",
                 "line_number": line_number
             }
+            if gate.allowed and gate.detail:
+                result["syntax_warning"] = gate.detail
+            return result
         except Exception as e:
             return {
                 "success": False,
@@ -239,12 +288,12 @@ class TextEditor:
             }
 
     @staticmethod
-    def insert_at_line(path: str, line_number: int, content: str, encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:
+    def insert_at_line(path: str, line_number: int, content: str, encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT, force_write: bool = False) -> Dict[str, Any]:
         """在指定行插入内容（带超时）"""
-        return _run_with_timeout(TextEditor._insert_at_line_impl, timeout, path, line_number, content, encoding)
+        return _run_with_timeout(TextEditor._insert_at_line_impl, timeout, path, line_number, content, encoding, force_write)
 
     @staticmethod
-    def _write_file_impl(path: str, content: str, encoding: str = "utf-8") -> Dict[str, Any]:
+    def _write_file_impl(path: str, content: str, encoding: str = "utf-8", force_write: bool = False) -> Dict[str, Any]:
         """写入文件（创建或覆盖）"""
         try:
             file_path = Path(path)
@@ -252,15 +301,30 @@ class TextEditor:
             # 确保父目录存在
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
+            # SWE-agent 式语法门禁
+            old_content = file_path.read_text(encoding=encoding) if file_path.exists() else None
+            gate = lint_python(path, content, old_content)
+            if not gate.allowed and not force_write:
+                return {
+                    "success": False,
+                    "message": f"写入被拒绝：{gate.detail}",
+                    "error": "Syntax check failed",
+                    "syntax_error": gate.detail,
+                    "blocked": True,
+                }
+
             # 写入内容
             file_path.write_text(content, encoding=encoding)
 
-            return {
+            result = {
                 "success": True,
                 "message": "文件写入成功",
                 "path": str(file_path),
                 "size": len(content)
             }
+            if gate.allowed and gate.detail:
+                result["syntax_warning"] = gate.detail
+            return result
         except Exception as e:
             return {
                 "success": False,
@@ -269,9 +333,9 @@ class TextEditor:
             }
 
     @staticmethod
-    def write_file(path: str, content: str, encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:
+    def write_file(path: str, content: str, encoding: str = "utf-8", timeout: float = DEFAULT_TIMEOUT, force_write: bool = False) -> Dict[str, Any]:
         """写入文件（创建或覆盖，带超时）"""
-        return _run_with_timeout(TextEditor._write_file_impl, timeout, path, content, encoding)
+        return _run_with_timeout(TextEditor._write_file_impl, timeout, path, content, encoding, force_write)
 
     @staticmethod
     def execute(instruction: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
@@ -281,6 +345,7 @@ class TextEditor:
         在入口统一解析一次，所有指令实现收到的都是实际路径。
         """
         timeout = inputs.get("timeout", DEFAULT_TIMEOUT)
+        force_write = bool(inputs.get("force_write", False))
         if "path" in inputs:
             inputs = {**inputs, "path": str(resolve_workspace_path(inputs["path"]))}
         if instruction == "write" or instruction == "write_file":
@@ -290,7 +355,8 @@ class TextEditor:
                 path=inputs.get("path", ""),
                 content=content,
                 encoding=inputs.get("encoding", "utf-8"),
-                timeout=timeout
+                timeout=timeout,
+                force_write=force_write
             )
         elif instruction == "read_file":
             return TextEditor.read_file(
@@ -303,7 +369,8 @@ class TextEditor:
                 path=inputs.get("path", ""),
                 content=inputs.get("content", ""),
                 encoding=inputs.get("encoding", "utf-8"),
-                timeout=timeout
+                timeout=timeout,
+                force_write=force_write
             )
         elif instruction == "replace_in_file":
             return TextEditor.replace_in_file(
@@ -311,7 +378,8 @@ class TextEditor:
                 old_text=inputs.get("old_text", ""),
                 new_text=inputs.get("new_text", ""),
                 encoding=inputs.get("encoding", "utf-8"),
-                timeout=timeout
+                timeout=timeout,
+                force_write=force_write
             )
         elif instruction == "insert_at_line":
             return TextEditor.insert_at_line(
@@ -319,7 +387,8 @@ class TextEditor:
                 line_number=inputs.get("line_number", 1),
                 content=inputs.get("content", ""),
                 encoding=inputs.get("encoding", "utf-8"),
-                timeout=timeout
+                timeout=timeout,
+                force_write=force_write
             )
         else:
             return {

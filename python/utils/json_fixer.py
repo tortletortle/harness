@@ -224,7 +224,7 @@ def fix_and_validate_plan_json(text: str) -> Tuple[Optional[dict], Optional[str]
 AGENT_TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
     "coding_agent": {
         "required_inputs": ("path", "instruction", "allowed_tools"),
-        "allowed_tools": {"text_editor"},
+        "allowed_tools": {"text_editor", "test_runner"},
         "require_acceptance": True,
     },
 }

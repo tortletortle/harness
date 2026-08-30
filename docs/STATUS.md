@@ -37,12 +37,13 @@
 
 1. **工具数量**（最大短板）：已有 10 个基础工具（含 2026-08-30 新增的 super_search 超级搜索与 code_context 代码上下文）（文件、命令、装包、Git、文本编辑、
    网络下载、人工干预）。没有数据库操作、Docker、API 测试等，很多真实任务无法自动化。
-2. **计划状态推送**：目前仅日志走 WebSocket，计划/步骤状态靠前端 2 秒轮询。
+2. **计划状态推送**：~~仅日志走 WebSocket~~（2026-08-30 注：plan_update WebSocket 广播已实现——broadcast_plan_update 覆盖全部状态写入点并带版本号防乱序，轮询保留为前端兜底）。
    （工作区已有一个未提交的 `Database.get_plan_status_summary()` 草稿，是为广播准备的）
 3. **知识库**：`python/knowledge/` 为空壳，未实现任何检索/记忆能力。
    （2026-08-30 注：已通过内置工具 `code_context` 落地第一步——工作区仓库地图、
    SQLite FTS5 全文检索与知识笔记长期记忆，见 docs/CODE_CONTEXT.md；
    跨任务记忆编排与向量检索仍是待办）
+   （2026-08-30 注②：LLM token 用量记账 + 计划级预算闸门已落地——GET /api/usage 查询，config budget.max_tokens_per_plan 配置上限，超限自动转 Paused；text_editor/file_creator 语法门禁与 command_runner Docker 沙箱同步落地，详见 docs/HARDENING_2026-08-30.md）
 4. **架构分层与代码分布脱节**：`designer/`、`executor/`、`dispatcher/`、`toolmanager/`
    目录只有空 `__init__.py`，真实逻辑集中在 `api/server.py`（约 1500 行）与
    `utils/interfaces.py`。文档与目录结构反映的是设计愿景而非现实。
