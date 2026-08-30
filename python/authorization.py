@@ -14,7 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from logging_config import get_logger
@@ -157,8 +157,15 @@ class AuthorizationManager:
         workspace_root: Optional[Path | str] = None,
         subject: str = "runtime",
         approval_required: bool = False,
+        extra_allowed_tools: Optional[Iterable[str]] = None,
+        limits: Optional[GrantLimits] = None,
     ) -> CapabilityGrant:
-        """Issue a grant for one step; the returned object stays inside Runtime."""
+        """Issue a grant for one step; the returned object stays inside Runtime.
+
+        extra_allowed_tools / limits 供 agent_tool 步骤使用（见
+        agent_step_grant_params）：agent 需要在同一 Grant 下调用声明的内部
+        工具，且单步可能产生多次工具调用；普通步骤传默认值即可。
+        """
         root = Path(workspace_root).resolve() if workspace_root else self.workspace_root
         tool = str(getattr(step, "tool", "")).split(":", 1)[0]
         inputs = getattr(step, "inputs", {}) or {}
@@ -169,19 +176,24 @@ class AuthorizationManager:
             *self._extract_resources(inputs, root, self.allow_absolute_paths),
         ]))
         hosts = self._extract_hosts(inputs)
+        allowed_tools = {tool} if tool else set()
+        for extra in extra_allowed_tools or ():
+            name = str(extra).strip()
+            if name:
+                allowed_tools.add(name)
         issued = datetime.utcnow()
         grant = CapabilityGrant(
             grant_id=uuid.uuid4().hex,
             plan_id=str(plan_id),
             step_id=str(getattr(step, "step_id", "")),
             subject=subject,
-            allowed_tools=frozenset({tool}) if tool else frozenset(),
+            allowed_tools=frozenset(allowed_tools),
             allowed_resources=tuple(resources),
             denied_resources=self.deny_resources,
             allowed_hosts=self.allowed_hosts,
             workspace_root=str(root),
             allow_absolute_paths=self.allow_absolute_paths,
-            limits=self.default_limits,
+            limits=limits or self.default_limits,
             approval_required=bool(approval_required),
             issued_at=issued,
             expires_at=issued + timedelta(seconds=self.default_ttl_seconds),
@@ -390,4 +402,45 @@ class AuthorizationManager:
         return str(host).strip().lower().removeprefix("https://").removeprefix("http://").rstrip("/")
 
 
-__all__ = ["CapabilityGrant", "GrantDecision", "GrantLimits", "AuthorizationManager"]
+def agent_step_grant_params(step: Any, capability: Any = None) -> Tuple[List[str], Optional[GrantLimits]]:
+    """根据步骤与 Capability spec 计算 Grant 签发参数（Runtime 专用）。
+
+    - 仅 kind=agent_tool 的步骤允许声明额外工具与预算：agent 需要
+      在同一 Grant 下调用 spec 声明的内部工具；普通工具步骤忽略
+      inputs.allowed_tools，防止借道扩权。
+    - agent 预算：1 次外层调度 + inputs.max_inner_tool_calls（默认 4）
+      次内部调用；模型调用次数以 spec.budget_spec.max_model_calls 为准
+      （单轮 agent = 1）。
+    """
+    spec = capability.spec() if capability is not None else None
+    if spec is None or getattr(spec, "kind", "") != "agent_tool":
+        return [], None
+    inputs = getattr(step, "inputs", {}) or {}
+    extra: List[str] = []
+    for item in (inputs.get("allowed_tools") or []):
+        name = str(item).strip()
+        if name and name not in extra:
+            extra.append(name)
+    budget = spec.budget_spec or {}
+    for item in budget.get("inner_tools", ()):
+        name = str(item).strip()
+        if name and name not in extra:
+            extra.append(name)
+    try:
+        inner_calls = max(1, int(inputs.get("max_inner_tool_calls", 4)))
+    except (TypeError, ValueError):
+        inner_calls = 4
+    try:
+        model_calls = max(1, int(budget.get("max_model_calls", 1)))
+    except (TypeError, ValueError):
+        model_calls = 1
+    return extra, GrantLimits(max_tool_calls=1 + inner_calls, max_model_calls=model_calls)
+
+
+__all__ = [
+    "CapabilityGrant",
+    "GrantDecision",
+    "GrantLimits",
+    "AuthorizationManager",
+    "agent_step_grant_params",
+]

@@ -38,8 +38,9 @@ from database import Database, DatabaseError
 from models import DesignDocument, ExecutionPlan, PlanSegment, Step, StepStatus, PlanStatus
 from api.auth import load_token, require_token, verify_token
 from api.approval import ApprovalManager, ApprovalTimeout
-from authorization import AuthorizationManager
+from authorization import AuthorizationManager, agent_step_grant_params
 from capabilities import CapabilityRegistry, ToolCapabilityAdapter
+from coding_agent import CodingAgentTool
 print("[SERVER MODULE LOADED]", __file__)
 from logging_config import get_logger
 
@@ -210,6 +211,22 @@ async def lifespan(app: FastAPI):
         )
         # Executor 通过同一个 manager 执行调用前授权检查。
         state.executor.authorization_manager = state.authorization_manager
+
+        # Agent 即工具（第二阶段第一步）：把 coding_agent 注册进统一
+        # Capability 清单。必须在 authorization_manager 定稿后构建，
+        # 绑定最终 manager；Executor 通过 registry 识别 agent_tool 步骤。
+        executor_primary = state.config.get("models", {}).get("executor", {}).get("primary", {})
+        state.capability_registry.register(
+            CodingAgentTool(
+                llm_client=state.llm_client,
+                authorization_manager=state.authorization_manager,
+                tool_registry=state.tool_registry,
+                provider_name=executor_primary.get("provider", ""),
+                model=executor_primary.get("model", ""),
+                database=state.database,
+            )
+        )
+        state.executor.capability_registry = state.capability_registry
 
         logger.info("EAS 2.0 API 服务启动成功")
 
@@ -1116,11 +1133,21 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
 
     # Runtime Grant：审批（若有）结束后、工具调用前签发一次性授权。
     # Grant 本体只留在 Runtime 内存；事件只记录 id 与用量摘要，不把授权放入模型上下文。
+    # agent_tool 步骤：把 spec 声明的内部工具并入 allowed_tools，
+    # 并用单轮模型预算覆盖默认 limits（agent_step_grant_params 对普通步骤返回空值）。
+    agent_capability = (
+        state.capability_registry.get(tool_id_for_approval)
+        if state.capability_registry is not None
+        else None
+    )
+    agent_extra_tools, agent_limits = agent_step_grant_params(step_model, agent_capability)
     grant = state.authorization_manager.issue_for_step(
         plan_id=plan_id,
         step=step_model,
         subject="executor",
         approval_required=False,
+        extra_allowed_tools=agent_extra_tools,
+        limits=agent_limits,
     )
     state.database.add_step_event(
         step_id, plan_id, "grant_issued",

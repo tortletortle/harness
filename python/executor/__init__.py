@@ -7,7 +7,7 @@ Executor - 执行器
 3. 处理错误
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import asyncio
 from pathlib import Path
 from datetime import datetime
@@ -18,6 +18,8 @@ from llm_client import LLMClient, Message
 from tools import get_registry
 from acceptance_runner import AcceptanceRunner
 from authorization import AuthorizationManager
+from agent_tools import AgentRuntimeContext
+from capabilities import CapabilityRegistry, CapabilityRequest
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -55,7 +57,7 @@ class DefaultExecutor(ExecutorAI):
     # （file_creator / text_editor / manual_tool）或自身超时机制失效的情况。
     DEFAULT_STEP_TIMEOUT = 120
 
-    def __init__(self, llm_client: LLMClient, model_config: Dict[str, Any], tool_registry=None, database=None, authorization_manager: AuthorizationManager = None) -> None:
+    def __init__(self, llm_client: LLMClient, model_config: Dict[str, Any], tool_registry=None, database=None, authorization_manager: AuthorizationManager = None, capability_registry: Optional[CapabilityRegistry] = None) -> None:
         self.llm_client = llm_client
         self.model_config = model_config
         self.tool_registry = tool_registry if tool_registry else get_registry()
@@ -65,10 +67,16 @@ class DefaultExecutor(ExecutorAI):
         # Runtime 注入时启用调用前 Grant 校验；直接使用 Executor 的旧调用
         # 不传 manager，保持旧接口兼容（真实 API 路径始终传入）。
         self.authorization_manager = authorization_manager
+        # 可选：统一 Capability 清单。kind=agent_tool 的步骤分发给
+        # Capability 契约执行（单轮模型 + Grant 受限内部工具），
+        # 结果并入下方同一验收路径；不传时仅支持普通工具（旧接口兼容）。
+        self.capability_registry = capability_registry
         # 确定性验收器：由执行器持有，结构化 acceptance 规则优先于 LLM 自检。
         self.acceptance_runner = AcceptanceRunner()
         # 支持通过 model_config 覆盖默认超时，未配置则用类默认值。
         self.step_timeout = model_config.get("step_timeout", self.DEFAULT_STEP_TIMEOUT) if model_config else self.DEFAULT_STEP_TIMEOUT
+        # agent 步骤包含一次真实模型调用，超时阈值单独放宽。
+        self.agent_step_timeout = model_config.get("agent_step_timeout", 300) if model_config else 300
 
     @property
     def name(self) -> str:
@@ -204,18 +212,28 @@ class DefaultExecutor(ExecutorAI):
                         "grant_usage": decision.usage,
                     }
 
-            # 执行工具
+            # 执行：agent_tool 步骤走统一 Capability 契约（单轮模型 + Grant
+            # 受限内部工具），普通步骤走同步工具线程。
             # execute_tool 是同步的，内部会跑 subprocess（command_runner 默认超时 60s）。
             # 直接调用会堵住整个事件循环，期间 API 和 WebSocket 全部无响应（前端表现为假死）。
             # 外层再包一层 wait_for 作为统一熔断：即便某个工具自身的超时机制失效或
             # 卡在系统调用上，也不会无限期挂住整个执行循环。
+            agent_capability = self._agent_capability(tool_id)
             try:
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.tool_registry.execute_tool, tool_id, instruction, effective_inputs
-                    ),
-                    timeout=self.step_timeout,
-                )
+                if agent_capability is not None:
+                    result = await asyncio.wait_for(
+                        self._run_agent_capability(
+                            agent_capability, step, tool_id, effective_inputs, grant_id
+                        ),
+                        timeout=max(self.step_timeout, self.agent_step_timeout),
+                    )
+                else:
+                    result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.tool_registry.execute_tool, tool_id, instruction, effective_inputs
+                        ),
+                        timeout=self.step_timeout,
+                    )
             except asyncio.TimeoutError:
                 logger.error("步骤执行超时（{}秒）", self.step_timeout)
                 self._audit(
@@ -361,6 +379,95 @@ class DefaultExecutor(ExecutorAI):
                 # P2 错误分类：未知异常按可重试处理，由重试上限兜底
                 "retryable": True,
             }
+
+    def _agent_capability(self, tool_id: str):
+        """返回 tool_id 对应的 agent_tool Capability；不存在或非 agent 类型时返回 None。"""
+        if self.capability_registry is None:
+            return None
+        capability = self.capability_registry.get(tool_id)
+        if capability is None:
+            return None
+        try:
+            kind = capability.spec().kind
+        except Exception:
+            return None
+        return capability if kind == "agent_tool" else None
+
+    async def _run_agent_capability(
+        self,
+        capability,
+        step: Step,
+        tool_id: str,
+        inputs: Dict[str, Any],
+        grant_id: Optional[str],
+    ) -> Dict[str, Any]:
+        """把 agent_tool Capability 接入步骤执行：
+
+        - Runtime Grant（grant_id）原样透传，agent 内部所有副作用
+          （模型调用、内部工具）都走同一 Grant 的预算与资源检查；
+        - 返回值对齐工具结果字典（success/output/error），使下方
+          验收/校验/审计路径无需区分普通工具与 Agent。
+        """
+        if self.authorization_manager is None:
+            return {
+                "success": False,
+                "output": None,
+                "error": "agent 步骤需要 Runtime Grant 环境（authorization_manager 未配置）",
+                "blocked": False,
+            }
+        if not grant_id:
+            return {
+                "success": False,
+                "output": None,
+                "error": "agent 步骤必须携带 Runtime Grant",
+                "blocked": True,
+                "blocked_reason": "grant_required",
+            }
+        request = CapabilityRequest(
+            work_item_id=str(step.step_id),
+            goal=step.description,
+            inputs=inputs,
+            artifact_refs=[],
+            allowed_tools=list(inputs.get("allowed_tools") or []),
+            acceptance=list(step.acceptance or []),
+            grant_id=grant_id,
+        )
+        try:
+            provider = self.model_config["primary"]["provider"]
+            model = self.model_config["primary"]["model"]
+        except (KeyError, TypeError):
+            return {
+                "success": False,
+                "output": None,
+                "error": "agent 执行缺少模型配置（models.executor.primary）",
+                "blocked": False,
+            }
+        context = AgentRuntimeContext(
+            llm_client=self.llm_client,
+            authorization_manager=self.authorization_manager,
+            provider_name=provider,
+            model=model,
+            grant_id=grant_id,
+            system_prompt=str(inputs.get("system_prompt") or ""),
+        )
+        cap_result = await self.capability_registry.run(tool_id, request, context)
+        agent_output = (
+            cap_result.output
+            if isinstance(cap_result.output, dict)
+            else ({"result": cap_result.output} if cap_result.output is not None else {})
+        )
+        result: Dict[str, Any] = {
+            "success": cap_result.status == "completed",
+            "output": {"agent_status": cap_result.status, **agent_output},
+            "message": f"agent {tool_id} -> {cap_result.status}",
+            "error": cap_result.error,
+            "blocked": False,
+            "agent_facts": cap_result.facts,
+            "agent_artifacts": cap_result.artifacts,
+        }
+        if cap_result.usage:
+            result["grant_usage"] = cap_result.usage
+        return result
 
     def _infer_instruction(self, tool_id: str, inputs: Dict[str, Any]) -> str:
         """
