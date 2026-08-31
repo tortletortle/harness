@@ -398,13 +398,16 @@ export class ApiClient {
   }
 
   /**
-   * AI 助手对话
+   * AI 助手对话（应用内置 chat 会话层：服务端会话记忆 + Grant 约束工具调用）
    */
-  async chat(message: string, history: Array<{role: string, content: string}>): Promise<string> {
+  async chat(
+    message: string,
+    sessionId?: string | null
+  ): Promise<{ reply: string; sessionId: string; toolCalls: Array<{ tool: string; ok: boolean }> }> {
     const response = await authFetch(`${API_BASE}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history }),
+      body: JSON.stringify({ message, session_id: sessionId ?? undefined }),
     });
 
     if (!response.ok) {
@@ -412,11 +415,16 @@ export class ApiClient {
     }
 
     const data = await response.json();
-    if (!data.success) {
-      throw new Error(data.detail || data.error || '对话失败');
-    }
-
-    return data.response;
+    return {
+      reply: data.reply ?? '',
+      sessionId: data.session_id ?? '',
+      toolCalls: (data.tool_calls_made ?? []).map(
+        (tc: { tool: string; result?: { success?: boolean } }) => ({
+          tool: tc.tool,
+          ok: tc.result?.success === true,
+        })
+      ),
+    };
   }
 
   /**

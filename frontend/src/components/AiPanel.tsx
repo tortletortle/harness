@@ -2,7 +2,7 @@
  * AI 助手面板（右侧）
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { X, Send, Bot } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { apiClient } from '../api/client';
@@ -18,6 +18,7 @@ export function AiPanel() {
     { role: 'assistant', content: '你好！我是 AI 助手，可以帮你分析任务、解答问题。有什么需要帮助的吗？' }
   ]);
   const [input, setInput] = useState('');
+  const sessionIdRef = useRef<string | null>(null);
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -27,13 +28,15 @@ export function AiPanel() {
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     
     try {
-      // 调用真实 API
-      const history = messages.map(m => ({ role: m.role, content: m.content }));
-      const response = await apiClient.chat(userMessage, history);
-      
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: response 
+      // 调用真实 API（服务端会话记忆 + Grant 约束的工具调用）
+      const result = await apiClient.chat(userMessage, sessionIdRef.current);
+      sessionIdRef.current = result.sessionId || sessionIdRef.current;
+      const toolNote = result.toolCalls.length
+        ? `\n（已调用工具: ${result.toolCalls.map(tc => tc.tool + (tc.ok ? '' : '×')).join('、')}）`
+        : '';
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: result.reply + toolNote
       }]);
     } catch (error) {
       setMessages(prev => [...prev, { 

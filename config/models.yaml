@@ -12,30 +12,30 @@ models:
   codegen:
     fallback:
       max_tokens: 16000
-      model: step-3.5-flash
-      provider: stepfun
+      model: claude-sonnet-5
+      provider: bbapi
       temperature: 0.2
     primary:
       max_tokens: 16000
-      model: step-3.7-flash
-      provider: stepfun
+      model: claude-haiku-4.5-20251001
+      provider: newapi
       temperature: 0.2
   designer:
     fallback:
       max_tokens: 16000
-      model: step-3.5-flash
-      provider: stepfun
+      model: claude-sonnet-5
+      provider: bbapi
       temperature: 0.3
     primary:
       max_tokens: 16000
-      model: step-3.7-flash
-      provider: stepfun
+      model: claude-haiku-4.5-20251001
+      provider: newapi
       temperature: 0.3
   executor:
     primary:
       max_tokens: 4000
-      model: step-3.5-flash-2603
-      provider: stepfun
+      model: claude-haiku-4.5-20251001
+      provider: newapi
       temperature: 0.1
   knowledge:
     fallback:

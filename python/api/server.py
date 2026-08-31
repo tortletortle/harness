@@ -44,6 +44,7 @@ from capabilities import CapabilityRegistry, HumanCapabilityAdapter, ToolCapabil
 from coding_agent import CodingAgentTool
 from mcp_client import MCPStdioClient, load_mcp_server_configs
 from mcp_adapter import MCPToolAdapter
+from chat import ChatManager
 print("[SERVER MODULE LOADED]", __file__)
 from logging_config import get_logger
 
@@ -69,11 +70,6 @@ class ConfigUpdateRequest(BaseModel):
     """更新配置请求"""
     api_keys: Dict[str, str]
     base_urls: Dict[str, str]
-
-class ChatRequest(BaseModel):
-    """AI助手对话请求"""
-    message: str
-    history: List[Dict[str, str]] = []
 
 # ===== 全局状态 =====
 
@@ -101,6 +97,8 @@ class AppState:
         self.authorization_manager: AuthorizationManager = AuthorizationManager()
         # plan_update 广播自增版本号（P1-b）：前端丢弃过期推送，防止乱序覆盖
         self.plan_update_version: int = 0
+        # 应用内置对话助手（chat 会话层）：lifespan 中初始化
+        self.chat_manager: Optional[ChatManager] = None
 
 state = AppState()
 
@@ -327,6 +325,27 @@ async def lifespan(app: FastAPI):
         )
         # Executor 通过同一个 manager 执行调用前授权检查。
         state.executor.authorization_manager = state.authorization_manager
+
+        # 应用内置对话助手（chat 会话层）：与执行链路共用 LLM / Capability /
+        # 授权体系；chat.provider/model 未配置时回落到 designer 主模型。
+        _chat_cfg = state.config.setdefault("chat", {})
+        if not _chat_cfg.get("provider"):
+            _designer_primary = (
+                (state.config.get("models", {}) or {}).get("designer", {}) or {}
+            ).get("primary", {}) or {}
+            _chat_cfg.setdefault("provider", _designer_primary.get("provider", "newapi"))
+            _chat_cfg.setdefault("model", _designer_primary.get("model", ""))
+        state.chat_manager = ChatManager(
+            state.llm_client,
+            state.capability_registry,
+            state.authorization_manager,
+            state.config,
+        )
+        logger.info(
+            "对话助手已就绪: provider={} model={}",
+            _chat_cfg.get("provider"),
+            _chat_cfg.get("model"),
+        )
 
         # 设计期搜索授权与审计（§23.3）：ToolRegistryAgent 的网络抓取
         # 走 design_search Grant，不再旁路授权体系。
@@ -2123,39 +2142,6 @@ async def delete_design(design_id: str):
         raise
     except Exception as e:
         logger.exception("删除设计书失败: {}", e)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/chat", dependencies=[Depends(require_token)])
-async def chat(request: ChatRequest):
-    """AI 助手对话"""
-    try:
-        # 构建消息列表
-        messages = []
-        for msg in request.history:
-            messages.append(Message(role=msg['role'], content=msg['content']))
-        messages.append(Message(role='user', content=request.message))
-        
-        # 获取模型配置 - 使用 designer 配置
-        model_config = state.config.get('agents', {}).get('designer', {}).get('primary', {})
-        provider = model_config.get('provider', 'newapi')
-        model = model_config.get('model', 'claude-haiku-4-5-20251001')
-        
-        # 调用 LLM
-        response = await state.llm_client.chat(
-            provider_name=provider,
-            messages=messages,
-            model=model,
-            temperature=0.7,
-            max_tokens=2000,
-        )
-        
-        return {
-            "success": True,
-            "response": response.content
-        }
-
-    except Exception as e:
-        logger.exception("AI 助手对话失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/restart", dependencies=[Depends(require_token)])
