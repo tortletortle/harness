@@ -1,0 +1,16 @@
+{
+  "step-3.7-flash": {
+    "valid": 4,
+    "repaired": 0,
+    "invalid": 1,
+    "semantic_ok": 4,
+    "avg_latency": 3.5
+  },
+  "step-2x-large": {
+    "valid": 0,
+    "repaired": 0,
+    "invalid": 5,
+    "semantic_ok": 0,
+    "avg_latency": null
+  }
+}

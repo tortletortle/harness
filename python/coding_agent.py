@@ -180,6 +180,13 @@ class CodingAgentTool(BaseAgentTool):
 
             parsed = _parse_result(response.content)
             if parsed is None:
+                # 修复尝试：尾逗号 / 字符串内裸换行等已知噪声（json_repair，保守策略）
+                from json_repair import parse_loose
+                repaired = parse_loose(response.content)
+                if isinstance(repaired, dict):
+                    parsed = repaired
+                    facts.append({"key": "coding_agent_json_repaired", "value": f"turn{turn}"})
+            if parsed is None:
                 facts.append({"key": "coding_agent_turns_used", "value": turns_used})
                 return CapabilityResult(
                     status="failed",
