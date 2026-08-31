@@ -5,9 +5,9 @@
 
 ## 版本
 
-- 当前版本：`1.9-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；worktree 路线已定
-- 最后更新：2026-08-30
+- 当前版本：`1.10-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；worktree 路线已定
+- 最后更新：2026-08-31
 
 ## 1. 目标
 
@@ -873,7 +873,31 @@ Playwright 无头浏览器**一次性无状态页面检查**（`check_page`：ex
 
 新增测试 test_lint_gate_tool / test_github_operator(+_security) / test_http_api(+_security) / test_browser_check；安全专项覆盖无 shell 与 argv 注入面、白名单外动作 subprocess 前拒绝、SSRF 矩阵、方法白名单、依赖缺失 blocked；browser_check 真实浏览器用例通过（本地页面断言+截图落盘）。已知实现适配：仓库安全扫描器把「`def execute` + 字符串拼接」误判为 SQL 注入，四个新工具统一采用 `_run` + `execute = staticmethod(_run)` 别名模式（契约入口不变，docs/TOOL_INTERFACE_DESIGN.md §3.1 已成文）。
 
+## 25. 验收失败反馈回路（1.10 · 已实施）
+
+真实首跑 step20/22 与观察第 3 期步骤 6 暴露的失败模式：coding_agent 输出与确定性验收的命名/标识符脱节或内容缺口，验收失败后原本直接判死（盲目重试只会重复同样错误）。本回路把**确定性验收缺口**转成反馈文本喂回 coding_agent 再修一轮，让"指令与验收命名脱节"类失败自愈；它不解决模型 JSON 格式稳定性问题（那属于结构化输出通道的独立事项）。
+
+### 25.1 契约
+
+- 触发条件（四者同时满足）：步骤结果 `check_status == "failed"`；`acceptance_result.checks` 存在 `passed=false` 的 `content_contains` 检查；步骤工具为 `coding_agent`；本步反馈尚未使用（每步最多一次，`feedback_used` 门控）。
+- 反馈构建：`api/server.py :: _build_acceptance_feedback(acceptance_result)` —— 只提取未通过的 `content_contains` 规则（text + path），生成反馈："上一轮修改未通过确定性验收：文件中缺少以下内容，请在本轮修改中确保完整包含这些标识符（逐字出现）——'<text>'（应出现在 <path> 中）"。无可反馈缺口（全通过 / 非 content_contains / 非法结构）返回 None，走原路径。
+- 注入与消费：executor 把反馈写入 `step.inputs.feedback` 后 `attempt += 1` 并立即重跑本步；`CodingAgentTool` 读取 `inputs.feedback`，注入首轮完整提示词（"上一轮反馈"块）并随多轮 followup 携带；反馈文本与测试输出摘要按 `_MAX_FEEDBACK_CHARS = 1500` 截断。
+- 失败路径不变：反馈轮仍未通过 → 回到原判死路径（重试耗尽 → 步骤 Failed + 原因落库 → 计划 Failed → finally 执行摘要自动落盘 PROJECT_MEMORY.md）。反馈重试推进重试计数（attempt+1），不绕过 `retry_max_attempts` / `retryable=False` 语义；注：反馈分支先于重试耗尽判定，最后一次尝试失败时反馈轮仍能获得一次额外执行。
+- 边界：只覆盖 `content_contains`（标识符级缺口），不做语义诊断；`file_exists` / `exit_code` 等其他验收类型不触发反馈。
+
+### 25.2 验证
+
+- 确定性测试：tests/python/test_improvement_round.py（多缺口提取 / 全通过返回 None / 非 content_contains 忽略）。
+- 全量回归：557 passed + 11 skipped（2026-08-31；2 个 e2e error 为需活服务的历史环境项，与回路无关）。
+- 真实任务验证：待观察第 4 期构造"验收失败 → 反馈 → 自愈"任务实测。
+
 ## 变更记录
+
+### 1.10-draft — 2026-08-31
+
+- 验收失败反馈回路（§25，P2）：executor 侧 `_build_acceptance_feedback` 把验收 `content_contains` 缺口转成反馈文本，写入 `inputs.feedback` 喂回 coding_agent 重修一轮（每步最多一次）；coding_agent 首轮提示词与 followup 消费 feedback（`_MAX_FEEDBACK_CHARS=1500` 截断）。反馈轮仍失败走原判死路径。
+- 同批入档（commit 5bc24d2，1.9 期遗留）：designer 计划提示词新增任务类型判别（检索类 vs 系统构建类）与计划体积约束（≤20 步 / ≤6 segment / acceptance 用短标识符）；super_search bing 长中文查询自动拆分合并去重；STATUS.md 一句话现状刷新（真实 LLM 首跑 18/20 步）。
+- 测试：test_improvement_round.py（反馈构建三例 + bing 拆分）；全量回归 557 passed + 11 skipped。
 
 ### 1.9-draft — 2026-08-30
 
