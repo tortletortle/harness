@@ -17,6 +17,7 @@ class Message(BaseModel):
     role: str  # "user", "assistant", "system", "tool"
     content: str
     tool_call_id: Optional[str] = None  # 用于tool角色的消息
+    tool_calls: Optional[List[Dict[str, Any]]] = None  # assistant 消息携带的函数调用请求（多轮工具调用）
 
 
 class LLMResponse(BaseModel):
@@ -294,6 +295,9 @@ class OpenAICompatibleProvider(LLMProvider):
             # 如果是tool消息，添加tool_call_id
             if msg.role == "tool" and msg.tool_call_id:
                 msg_dict["tool_call_id"] = msg.tool_call_id
+            # assistant 消息携带的函数调用请求（多轮工具调用回传）
+            if msg.role == "assistant" and msg.tool_calls:
+                msg_dict["tool_calls"] = msg.tool_calls
             api_messages.append(msg_dict)
         
         # 构建请求
