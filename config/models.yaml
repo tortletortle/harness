@@ -166,7 +166,6 @@ mcp_servers:
     request_timeout: 120
     env:
       OPENAPI_MCP_HEADERS: '{"Authorization": "Bearer REDACTED-ROTATE-CREDENTIAL", "Notion-Version": "2022-06-28"}'
-    enabled: true
 
 # 应用内置助手（/api/chat）：会话式工具调用，走 Grant 预算约束
 chat:
