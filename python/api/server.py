@@ -1018,6 +1018,37 @@ async def reject_tool_call(plan_id: str, approval_id: str, request: Optional[App
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _build_acceptance_feedback(acceptance_result) -> Optional[str]:
+    """把验收失败规则转成给 coding_agent 的反馈文本；无可反馈缺口返回 None。
+
+    acceptance_result 形如 {"passed": bool, "checks": [{"type", "path", "text", "passed", ...}]}。
+    只提取 passed=False 的 content_contains 规则（命名/内容缺口），供反馈重试使用。
+    """
+    try:
+        if not isinstance(acceptance_result, dict):
+            return None
+        missing = []
+        for check in acceptance_result.get("checks") or []:
+            if not isinstance(check, dict) or check.get("passed") is not False:
+                continue
+            rtype = str(check.get("type", ""))
+            if rtype != "content_contains":
+                continue
+            evidence = check.get("evidence") or {}
+            text = str(check.get("text") or evidence.get("text") or "").strip()
+            path = str(check.get("path") or evidence.get("path") or "").strip()
+            if text:
+                missing.append(f"'{text}'（应出现在 {path or '目标文件'} 中）")
+        if not missing:
+            return None
+        return (
+            "上轮修改未通过确定性验收：文件中缺少以下内容，"
+            "请在本轮修改中确保完整包含这些标识符（逐字出现）——" + "；".join(missing)
+        )
+    except Exception:
+        return None
+
+
 def _require_write(ok: bool, what: str) -> None:
     """状态写入必须成功；False（未命中/非法状态）与异常同样致命，向上抛给外层统一清理。"""
     if not ok:
@@ -1472,6 +1503,7 @@ async def execute_plan_background(plan, resume: bool = False):
             max_attempts = getattr(state, "retry_max_attempts", 3)
             backoff_factor = getattr(state, "retry_backoff_factor", 2)
             attempt = 0
+            feedback_used = False
             result = None
             logger.info(f"STEP_LOOP_START step_id={step_id} max_attempts={max_attempts}")
             while True:
@@ -1516,6 +1548,25 @@ async def execute_plan_background(plan, resume: bool = False):
                     break
 
                 if result.get("check_status") == "failed":
+                    # P2 反馈回路：验收缺口作为 feedback 喂回 coding_agent 再修一轮
+                    # （每步最多一次；重试仍失败则走下方原判死路径）。
+                    # 真实首跑 step20/22 的失败模式（指令与验收命名脱节）可在此自愈。
+                    feedback_text = _build_acceptance_feedback(result.get("acceptance_result"))
+                    if (
+                        feedback_text
+                        and step.get("tool") == "coding_agent"
+                        and not feedback_used
+                    ):
+                        feedback_used = True
+                        step_inputs = dict(step.get("inputs") or {})
+                        step_inputs["feedback"] = feedback_text
+                        step = {**step, "inputs": step_inputs}
+                        await broadcast_log(
+                            f"[FEEDBACK] 步骤 {step_id} 验收未通过，缺口已反馈给 coding_agent 重试一轮",
+                            "warning",
+                        )
+                        attempt += 1
+                        continue
                     error = result.get("error", "check failed")
                     failure_reason = error
                     debug_log(f"Step {step_id} check failed: {error}")

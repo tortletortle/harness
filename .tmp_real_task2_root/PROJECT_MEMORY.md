@@ -25,3 +25,8 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 响应状态码: 503
 响应内容: {"error":{"message":"No available accounts: no available accounts","type":"api_error","param":"","code":null}}） —— 修改 test_users.py 适配新签名
 - 步骤2 [test_runner] Pending —— 运行 pytest 验证测试通过
+
+## [2026-08-31 01:35:08] 执行摘要
+计划 370fe341 执行结束（最终状态: Completed）
+- 步骤1 [coding_agent] Success —— 修改 test_users.py 适配新签名
+- 步骤2 [test_runner] Success —— 运行 pytest 验证测试通过

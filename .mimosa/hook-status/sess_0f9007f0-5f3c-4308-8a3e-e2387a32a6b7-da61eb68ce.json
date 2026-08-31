@@ -1,10 +1,10 @@
 {
   "schemaVersion": "mimosa-hook-status/v1",
-  "recordedAt": "2026-08-30T17:17:17.123Z",
+  "recordedAt": "2026-08-30T17:24:51.990Z",
   "sessionId": "sess_0f9007f0-5f3c-4308-8a3e-e2387a32a6b7",
   "event": "PostToolUse",
-  "toolName": "Write",
-  "file": "tools/README.md",
+  "toolName": "Edit",
+  "file": "C:/Users/tortl/.zcode/cli/memories/projects/harness-f5528bb1a54d8a5c/memory/MEMORY.md",
   "outcome": "clear",
   "coverage": "complete",
   "findingCount": 0,

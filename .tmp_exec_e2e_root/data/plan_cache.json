@@ -1,0 +1,101 @@
+{
+  "6f0650ba69c2a152427dbb6f8201b160": {
+    "design": {
+      "plan_id": "e06dcdd6-5435-43f8-ac01-7838187e8d9c",
+      "design_id": "6c9717ca-2936-4e3b-9f2f-85d37669fd30",
+      "created_at": "2026-08-31T05:55:39.440699",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "5436950d-d773-4055-a0ae-b1aadc52aab3",
+          "description": "创建目标目录文件",
+          "steps": [
+            {
+              "step_id": "e8cebdb7-5788-4b39-a622-eedaa0698f90",
+              "order": 1,
+              "description": "创建 a.txt 写入 hello",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-3\\verify_p1_workdir0\\a.txt",
+                "content": "hello"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-3\\verify_p1_workdir0\\a.txt",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-3\\verify_p1_workdir0\\a.txt",
+                  "text": "hello"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "0bb9ef95-ccd2-4319-b3ba-aeb3d7cbad78",
+              "order": 2,
+              "description": "创建 b.txt 写入 world",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-3\\verify_p1_workdir0\\b.txt",
+                "content": "world"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-3\\verify_p1_workdir0\\b.txt",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-3\\verify_p1_workdir0\\b.txt",
+                  "text": "world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-3\\verify_p1_workdir0\\a.txt",
+        "C:\\Users\\tortl\\AppData\\Local\\Temp\\pytest-of-tortl\\pytest-3\\verify_p1_workdir0\\b.txt"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788155739.4420238,
+    "last_access": 1788155739.4420238,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "6c9717ca-2936-4e3b-9f2f-85d37669fd30"
+  }
+}

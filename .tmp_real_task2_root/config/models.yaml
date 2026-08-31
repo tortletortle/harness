@@ -34,8 +34,8 @@ models:
   executor:
     primary:
       max_tokens: 4000
-      model: claude-haiku-4-5-20251001
-      provider: newapi
+      model: step-3.7-flash
+      provider: stepfun
       temperature: 0.1
   knowledge:
     fallback:

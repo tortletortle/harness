@@ -1,6 +1,6 @@
 {
   "steps": [],
-  "plan_id": "dfa01a06-1287-43b6-bc52-9abd442a45c3",
+  "plan_id": "370fe341-628f-4063-8556-a8e82c8a355b",
   "plan_steps": [
     {
       "order": 1,
@@ -13,10 +13,10 @@
       "description": "运行 pytest 验证测试通过"
     }
   ],
-  "elapsed_seconds": 15.5,
+  "elapsed_seconds": 118.9,
   "files": {
     "models.py": "class User:\n    def __init__(self, user_id, name, email):\n        self.user_id = user_id\n        self.name = name\n        self.email = email",
     "service.py": "from models import User\n\ndef create_user(name, email, user_id):\n    return User(name, email, user_id)\n",
-    "test_users.py": "from service import create_user\n\ndef test_create_user():\n    u = create_user('alice', 'a@x.com')\n    assert u.name == 'alice'\n    assert u.email == 'a@x.com'"
+    "test_users.py": "from service import create_user\n\ndef test_create_user():\n    u = create_user('u1', 'alice', 'a@x.com')\n    assert u.user_id == 'u1'\n    assert u.name == 'alice'\n    assert u.email == 'a@x.com'"
   }
 }

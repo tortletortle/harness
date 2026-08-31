@@ -99,7 +99,8 @@ class CodingAgentTool(BaseAgentTool):
             {"key": "coding_agent_target", "value": target_path},
         ]
 
-        feedback = ""
+        # P2 反馈回路：执行器的验收缺口通过 inputs.feedback 注入首轮提示词
+        feedback = str(inputs.get("feedback") or "")
         last_test_exit: Optional[int] = None
         turns_used = 0
 
@@ -143,7 +144,7 @@ class CodingAgentTool(BaseAgentTool):
             # ---- 模型调用（GrantLLMClient 在调用前强制预算）----
             if messages is None:
                 # 首轮：完整初始提示词（此后作为稳定前缀复用，提高上游缓存命中）
-                prompt = self._build_prompt(request, target_path, current_content, "", repo_map_block)
+                prompt = self._build_prompt(request, target_path, current_content, feedback, repo_map_block)
                 messages = [
                     Message(role="system", content=context.system_prompt or self.description),
                     Message(role="user", content=prompt),

@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "mimosa-finding-history/v1",
+  "runId": "20260830T172520964Z-41092-8b6a4227c676",
+  "runStatus": "inconclusive",
+  "errors": [
+    "candidate-select:scripts/start_api.py: candidate_limit_exceeded: 19 changed reviewable file(s) were not scanned because the limit is 20",
+    "baseline-read:tests/python/test_plan_contract_consistency.py: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:tests/python/test_project_memory.py: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:tests/python/test_save_plan_fk.py: baseline_snapshot_unreadable: file is missing from task baseline",
+    "scan:python/tools/lint_gate.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:python/tools/__init__.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:python/executor/__init__.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:python/utils/json_fixer.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:python/designer/__init__.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:tests/python/test_lint_gate_tool.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:python/tools/github_operator.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:python/capabilities.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:tests/python/test_github_operator.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:tests/python/test_github_operator_security.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:python/tools/http_api.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:tests/python/test_http_api.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:tests/python/test_http_api_security.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:python/tools/browser_check.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:tests/python/test_browser_check.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:tests/python/test_toolmgmt.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:tests/python/test_plan_contract_consistency.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:tests/python/test_project_memory.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "scan:tests/python/test_save_plan_fk.py: scanner_failed: spawnSync D:\\tortle\\app\\note\\node.exe ETIMEDOUT",
+    "supply-chain-check:.: stop_budget_exhausted: focused supply-chain check was not run before the gate budget"
+  ],
+  "target": ".",
+  "revision": "ac4587a860e6f645185b6d7e4f3a35391a906b92",
+  "diffHash": "6ff880eebb0c7675916255f2d3c5dad7002a2dec82495ba38e6229d8f57b4adc",
+  "rulesVersion": "unavailable",
+  "recordedAt": "2026-08-30T17:25:20.964Z",
+  "timing": {
+    "startedAt": "2026-08-30T17:25:17.674Z",
+    "completedAt": "2026-08-30T17:25:20.964Z",
+    "durationMs": 3290
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "modelCalls": 0,
+    "measurement": "known-zero"
+  },
+  "findings": {
+    "total": 2,
+    "bySeverity": {
+      "high": 2
+    },
+    "byStatus": {
+      "static_verified": 2
+    }
+  },
+  "coverage": {
+    "status": "partial",
+    "reasonCounts": {
+      "candidate_limit_exceeded": 1,
+      "baseline_snapshot_unreadable": 3,
+      "scanner_failed": 19,
+      "stop_budget_exhausted": 1,
+      "project_check_failed": 24
+    }
+  },
+  "evidenceBoundary": "static_only",
+  "immutableReport": ".mimosa/reports/task-review-sess_0f9007f0-5f3c-4308-8a3e-e2387a32a6b7-20260830T172520964Z-41092-8b6a4227c676.json"
+}

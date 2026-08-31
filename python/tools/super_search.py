@@ -237,13 +237,39 @@ def _search_duckduckgo(query: str, max_results: int, timeout: float) -> List[Dic
     return _parse_ddg_html(html_str)[:max_results]
 
 
-def _search_bing(query: str, max_results: int, timeout: float) -> List[Dict[str, str]]:
-    """Bing 网页版（无 API Key）。"""
+def _bing_fetch(query: str, max_results: int, timeout: float) -> List[Dict[str, str]]:
+    """单次 Bing 查询。"""
     html_str = _http_fetch(
         "https://www.bing.com/search?" + urlencode({"q": query, "count": max_results}),
         timeout=timeout,
     )
     return _parse_bing_html(html_str)[:max_results]
+
+
+def _search_bing(query: str, max_results: int, timeout: float) -> List[Dict[str, str]]:
+    """Bing 网页版（无 API Key）。
+
+    长中文查询（>20 字符）自动拆分为两个子查询并合并去重——
+    真实测试发现 bing 对长中文多厂商查询的相关性会崩坏（返回单字字典页）。
+    """
+    if len(query) > 20 and re.search(r"[\u4e00-\u9fff]", query):
+        mid = len(query) // 2
+        cut = query.find(" ", mid)
+        if cut == -1 or cut < 4 or cut > len(query) - 4:
+            cut = mid
+        parts = [p.strip() for p in (query[:cut], query[cut:]) if p.strip()]
+        merged: List[Dict[str, str]] = []
+        seen = set()
+        for part in parts:
+            for item in _bing_fetch(part, max_results, timeout):
+                key = _norm_url(item.get("url", "")) or item.get("url", "")
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(item)
+        return merged[:max_results]
+
+    return _bing_fetch(query, max_results, timeout)
 
 
 def _search_tavily(query: str, max_results: int, timeout: float) -> List[Dict[str, str]]:

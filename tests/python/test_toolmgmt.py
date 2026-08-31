@@ -165,6 +165,79 @@ def test_validate_tool_contracts():
     ok, err = validate_tool_contracts(wrong_acceptance)
     assert not ok and "exit_code" in err
 
+    # lint_gate 契约（1.9）：缺 path 打回；acceptance 类型不对打回
+    lint_missing = {
+        "segments": [
+            {
+                "description": "s",
+                "steps": [
+                    {
+                        "description": "d",
+                        "tool": "lint_gate",
+                        "inputs": {},
+                        "acceptance": [{"type": "exit_code", "equals": 0}],
+                    }
+                ],
+            }
+        ]
+    }
+    ok, err = validate_tool_contracts(lint_missing)
+    assert not ok and "path" in err
+
+    lint_wrong_acceptance = {
+        "segments": [
+            {
+                "description": "s",
+                "steps": [
+                    {
+                        "description": "d",
+                        "tool": "lint_gate",
+                        "inputs": {"path": "a.py"},
+                        "acceptance": [{"type": "file_exists", "path": "a.py"}],
+                    }
+                ],
+            }
+        ]
+    }
+    ok, err = validate_tool_contracts(lint_wrong_acceptance)
+    assert not ok and "exit_code" in err
+
+    # browser_check 契约（1.9）：缺 url 打回；缺 acceptance 打回
+    browser_missing_url = {
+        "segments": [
+            {
+                "description": "s",
+                "steps": [
+                    {
+                        "description": "d",
+                        "tool": "browser_check",
+                        "inputs": {"expect_text": "x"},
+                        "acceptance": [{"type": "exit_code", "equals": 0}],
+                    }
+                ],
+            }
+        ]
+    }
+    ok, err = validate_tool_contracts(browser_missing_url)
+    assert not ok and "url" in err
+
+    browser_no_acceptance = {
+        "segments": [
+            {
+                "description": "s",
+                "steps": [
+                    {
+                        "description": "d",
+                        "tool": "browser_check",
+                        "inputs": {"url": "http://example.com", "expect_text": "x"},
+                    }
+                ],
+            }
+        ]
+    }
+    ok, err = validate_tool_contracts(browser_no_acceptance)
+    assert not ok and "acceptance" in err
+
     # 非 test_runner 步骤不受影响；agent 契约校验与其互不干扰
     ok, err = validate_tool_contracts(
         {"segments": [{"description": "s", "steps": [{"description": "d", "tool": "file_creator", "inputs": {"path": "a.txt", "content": "x"}}]}]}
