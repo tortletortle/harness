@@ -692,6 +692,7 @@ class DefaultDesigner(Designer):
 - browser_check 步骤契约：inputs 必含 url（完整页面地址），并给至少一项断言（expect_text / expect_selector）或截图 output；acceptance 必含 {"type":"exit_code","equals":0}；只做只读页面检查，不能点击/填表/提交。
 - 用户需求或审批反馈中明确限定了可用工具时（如"只使用 file_creator"），该限定优先级最高：白名单只是上限，不得额外引入其他工具。
 - 步骤顺序必须尊重依赖关系：先创建被后续步骤使用的文件，再修改它，最后运行验证它的测试；test_runner 步骤必须排在其验证对象的创建/修改步骤之后。
+- 验收写法要求：content_contains 只匹配稳定的行为性标记（新增断言、函数名、关键逻辑行），不要精确匹配调用的参数顺序或完整调用形状——实现可能用不同但正确的写法；能跑测试的场景，最后一步必须用 test_runner 的 exit_code 做行为级验证。
 
 【coding_agent 步骤契约（必须全部满足，否则计划会被拒绝）】
 1. inputs 必须包含：path（要修改的单个文件，相对路径）、instruction（一句话修改指令）、allowed_tools 固定为 ["text_editor"]

@@ -1,16 +1,16 @@
 {
-  "step-3.7-flash": {
-    "valid": 4,
+  "step-router-v1": {
+    "valid": 5,
     "repaired": 0,
-    "invalid": 1,
-    "semantic_ok": 4,
-    "avg_latency": 3.5
+    "invalid": 0,
+    "semantic_ok": 5,
+    "avg_latency": 13.5
   },
-  "step-2x-large": {
-    "valid": 0,
+  "step-3.5-flash-2603": {
+    "valid": 5,
     "repaired": 0,
-    "invalid": 5,
-    "semantic_ok": 0,
-    "avg_latency": null
+    "invalid": 0,
+    "semantic_ok": 5,
+    "avg_latency": 4.7
   }
 }
