@@ -41,6 +41,8 @@ from api.approval import ApprovalManager, ApprovalTimeout
 from authorization import AuthorizationManager, GrantLimits, agent_step_grant_params
 from capabilities import CapabilityRegistry, HumanCapabilityAdapter, ToolCapabilityAdapter
 from coding_agent import CodingAgentTool
+from mcp_client import MCPStdioClient, load_mcp_server_configs
+from mcp_adapter import MCPToolAdapter
 print("[SERVER MODULE LOADED]", __file__)
 from logging_config import get_logger
 
@@ -180,6 +182,44 @@ async def lifespan(app: FastAPI):
         state.capability_registry.register(
             HumanCapabilityAdapter(state.tool_registry, "manual_tool")
         )
+
+        # MCP 生态（设计稿 1.11）：启动配置的外部 MCP server，把其工具包装成
+        # Capability（kind=deterministic_tool，side_effect=external），走 Grant 边界。
+        # 单个 server 接入失败只记日志，不影响主服务。
+        state.mcp_clients = []
+        for _mcp_name, _mcp_entry in load_mcp_server_configs(state.config).items():
+            _mcp_client = None
+            try:
+                _mcp_client = MCPStdioClient(
+                    _mcp_name,
+                    _mcp_entry["command"],
+                    _mcp_entry["args"],
+                    env=_mcp_entry.get("env"),
+                    cwd=_mcp_entry.get("cwd"),
+                    request_timeout=float(_mcp_entry.get("request_timeout", 30)),
+                )
+                await _mcp_client.start()
+                state.mcp_clients.append(_mcp_client)
+                _mcp_registered = 0
+                for _tool in _mcp_client.tools:
+                    _adapter = MCPToolAdapter(_mcp_client, _mcp_name, _tool)
+                    if state.capability_registry.get(_adapter.tool_id) is None:
+                        state.capability_registry.register(_adapter)
+                        _mcp_registered += 1
+                await broadcast_log(
+                    f"MCP server {_mcp_name} 已接入（{len(_mcp_client.tools)} 个工具，注册 {_mcp_registered}）",
+                    "success",
+                )
+            except Exception as _mcp_err:
+                await broadcast_log(
+                    f"MCP server {_mcp_name} 接入失败（不影响主服务）: {_mcp_err}",
+                    "warning",
+                )
+                if _mcp_client is not None:
+                    try:
+                        await _mcp_client.stop()
+                    except Exception:
+                        pass
         
         # 初始化 Dispatcher（携带 CapabilityRegistry：工具目录合并 agent_tool，
         # Designer 的设计书/计划生成因此能看到 coding_agent）
@@ -275,7 +315,12 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # 关闭时清理（当前无需要释放的资源，占位以便未来扩展）
+    # 关闭时清理：停掉 MCP 客户端
+    for _client in getattr(state, 'mcp_clients', []) or []:
+        try:
+            await _client.stop()
+        except Exception:
+            pass
     logger.info("EAS 2.0 API 服务已停止")
 
 

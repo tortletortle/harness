@@ -219,7 +219,7 @@ def test_auto_select_includes_stepfun_when_key_resolvable(monkeypatch):
     monkeypatch.delenv("BRAVE_API_KEY", raising=False)
     monkeypatch.delenv("SERPER_API_KEY", raising=False)
     monkeypatch.setattr(ss, "_stepfun_key", lambda: "sk-test")
-    assert _auto_select_engines() == ["duckduckgo", "bing", "stepfun"]
+    assert _auto_select_engines() == ["stepfun", "duckduckgo", "bing"]
 
 
 # ===== 正文抽取 =====

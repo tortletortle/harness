@@ -152,3 +152,15 @@ authorization:
 # P0 强化：计划级 token 预算（0 = 不限制；超限自动转 Paused，可 /resume 继续）
 budget:
   max_tokens_per_plan: 0
+
+
+# MCP 生态集成：外部 MCP server 的工具会包装成 Capability 并走 Grant 边界（设计稿 1.11）。
+# enabled: false 或缺省 command 的条目会被跳过；单 server 接入失败不影响主服务。
+mcp_servers:
+  notion:
+    command: cmd
+    args: ["/c", "npx", "-y", "@notionhq/notion-mcp-server"]
+    request_timeout: 120
+    env:
+      OPENAPI_MCP_HEADERS: '{"Authorization": "Bearer REDACTED-ROTATE-CREDENTIAL", "Notion-Version": "2022-06-28"}'
+    enabled: true

@@ -393,6 +393,9 @@ _ENGINE_FUNCS = {
 
 _API_KEY_ENGINES = {"tavily": "TAVILY_API_KEY", "brave": "BRAVE_API_KEY", "serper": "SERPER_API_KEY"}
 
+# 引擎权重（合并排序用）：用户偏好的源在同分时排前。1.0 = 中性。
+_ENGINE_WEIGHTS: Dict[str, float] = {"stepfun": 1.25}
+
 
 def _normalize_engines(engines: Any) -> Optional[List[str]]:
     """engines 参数归一化与校验：None/空 → None（自动选择）；非法值直接报错。"""
@@ -413,10 +416,11 @@ def _normalize_engines(engines: Any) -> Optional[List[str]]:
 
 
 def _auto_select_engines() -> List[str]:
-    """默认引擎：无键引擎优先，已配置密钥的 API 引擎自动追加。"""
-    selected = ["duckduckgo", "bing"]
+    """默认引擎：stepfun 为首选（用户偏好，中文质量好且快），无键引擎兜底，已配置密钥的 API 引擎追加。"""
+    selected: List[str] = []
     if _stepfun_key():
         selected.append("stepfun")
+    selected.extend(["duckduckgo", "bing"])
     for name, env_key in _API_KEY_ENGINES.items():
         if os.environ.get(env_key):
             selected.append(name)
@@ -469,7 +473,7 @@ def _merge_and_rank(items: List[Dict[str, Any]], limit: int) -> List[Dict[str, A
             }
         if engine not in b["engines"]:
             b["engines"].add(engine)
-            b["score"] += max(1.0, float(limit) - position)
+            b["score"] += max(1.0, float(limit) - position) * _ENGINE_WEIGHTS.get(engine, 1.0)
         if not b["title"] and it.get("title"):
             b["title"] = it["title"]
         if len(it.get("snippet") or "") > len(b["snippet"]):
