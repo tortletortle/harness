@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`1.12-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；worktree 路线已定
+- 当前版本：`1.13-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；test_passes 测试即验收类型（削接缝动作 B 第一级，§27）已实施；worktree 路线已定
 - 最后更新：2026-08-31
 
 ## 1. 目标
@@ -919,7 +919,55 @@ Playwright 无头浏览器**一次性无状态页面检查**（`check_page`：ex
 - coding_agent/patch 相关选择集（-k "coding_agent or patch"）42 项：41 passed + 1 skipped。
 - 全量回归（2026-08-31，commit c86cb4b）：595 passed + 11 skipped；2 个 e2e error 为需活上游的历史环境项（test_exec_e2e 经真实 LLM 生成设计书，上游分发渠道当日 503 无可用 channel），与本次接线无关，与 §25.2 记录的基线形态一致。
 
+## 27. 验收类型 test_passes：测试即验收（1.13 · 已实施）
+
+削接缝动作 B 第一级。§25 反馈回路是管道，本节给它接入行为级上游：acceptance 新增确定性类型
+`test_passes`，用 test_runner 同源白名单模板直接执行测试，exit 0 才算通过——行为对不对由
+pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做标识符级检查的定义性缺口
+（第 3 期"位置兼容路径"失败模式的验收侧根治方向）。
+
+### 27.1 契约
+
+- 规格：`{"type": "test_passes", "suite": "pytest", "test_path": "tests/test_api.py",
+  "args": [...], "timeout": 300}`；suite 必填；`test_pass` / `tests_pass` 为别名。
+- fail-closed：缺 suite、未登记模板、args 非列表、argv 构造失败、超时、命令无法执行一律 failed。
+- 安全边界与 test_runner 工具（§23.2）完全一致：命令模板只来自服务端（config
+  `test_runner.commands` 注入或内置 pytest/npm），argv 列表拼接无 shell，注入面构造性不存在；
+  args 仅作为独立 argv 项追加；cwd 固定工作区根。
+- 执行边界：timeout 默认 300s、上限 900s；stdout/stderr 尾部（各 2000 字符）进 evidence。
+- 实现位置：python/acceptance_runner.py `_check_test_passes`，复用 tools.test_runner 的
+  build_argv / get_templates——模板语义单一来源，验收白名单与工具白名单不会漂移。
+
+### 27.2 与 §25 反馈回路的接线
+
+- `_build_acceptance_feedback` 扩展：failed 的 test_passes 检查转为反馈块
+  （suite / test_path / exit code + 输出尾部，限 1200 字符防膨胀）；与 content_contains 缺口
+  共存时合并为一条反馈（测试块在前、内容块在后）；file_exists / exit_code / diff_scope 仍不进反馈。
+- 生效范围不变：仅 coding_agent 步骤、每步最多一轮反馈（§25 语义）。
+
+### 27.3 验证
+
+- tests/python/test_acceptance_test_passes.py 9 项（subprocess 全 mock）：通过 / 失败
+  evidence、未登记模板与缺 suite fail-closed、超时、args 逐项追加、别名、timeout 上限 900、
+  非法 args。
+- test_improvement_round.py 新增 2 项：test_passes 反馈块、测试+内容混合反馈。
+- 全量回归（2026-08-31）：605 passed + 8 skipped；2 个 e2e error 为需活上游的历史环境项
+  （与 §25.2 / §26.4 记录的基线形态一致）。
+
+
 ## 变更记录
+
+### 1.13-draft — 2026-08-31
+
+- **验收类型 test_passes（削接缝动作 B 第一级，§27）**：acceptance 新增"测试即验收"——
+  用 test_runner 同源白名单模板执行测试（suite 必填，test_pass/tests_pass 别名），exit 0 才通过；
+  fail-closed（缺 suite / 未登记模板 / 非法 args / 超时 / 命令不存在一律失败）；timeout 默认 300s、
+  上限 900s；输出尾部进 evidence。`_build_acceptance_feedback` 扩展：test_passes 失败转反馈块
+  （输出尾部限 1200 字符），与 content_contains 缺口合并回流 coding_agent（§25 语义不变：
+  仅 coding_agent 步骤、每步一轮）。
+- 测试：test_acceptance_test_passes.py 9 项 + 反馈构建 2 项；全量回归 605 passed + 8 skipped
+  （2 个 e2e error 为需活上游的历史环境项）。
+- 附带：untrack .mimosa 运行态（finding-ledger / hook-state，.gitignore 规则已覆盖）。
 
 ### 1.12-draft — 2026-08-31
 
