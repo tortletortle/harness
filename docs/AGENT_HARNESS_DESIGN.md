@@ -5,7 +5,7 @@
 
 ## 版本
 
-- 当前版本：`1.10-draft`
+- 当前版本：`1.11-draft`
 - 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；worktree 路线已定
 - 最后更新：2026-08-31
 
@@ -892,6 +892,15 @@ Playwright 无头浏览器**一次性无状态页面检查**（`check_page`：ex
 - 真实任务验证：待观察第 4 期构造"验收失败 → 反馈 → 自愈"任务实测。
 
 ## 变更记录
+
+### 1.11-draft — 2026-08-31
+
+- **JSON 输出稳定性加固**：新增 json_repair 模块（尾逗号修复、字符串字面量内裸控制字符转义状态机、markdown 剥离、宽容解析 parse_loose——不引入依赖、不做危险猜测）；coding_agent 解析失败先走修复再进入反馈重试。第 3 期步骤 6 连续两轮 JSON 失败的根因即此类噪声。
+- **executor 模型切换**：step-3.7-flash → step-3.5-flash-2603。实验（同一多行代码 JSON 任务 × 5 次）：3.7-flash 直接合法 4/5（1 次不可解析），3.5-flash-2603 5/5 直接合法 + 5/5 语义正确，平均延迟 4.7s。数据：docs/json_stability_experiment.json。
+- **save_plan 幂等修复**：计划失败后重新审批（同 plan_id 重存）被 step_events → steps 外键挡住 500；重存前先清该计划的 step_events（失败原因保留在步骤行不丢失）。回归：test_save_plan_fk.py。
+- **计划提示词：验收写法指引**——content_contains 只匹配行为性标记（新增断言/函数名/关键逻辑行），禁止精确匹配调用参数顺序；能跑测试的场景最后一步必须用 test_runner 的 exit_code 做行为级验证。与 1.10 验收失败反馈回路互补（反馈解决"怎么修"，指引解决"验收别错杀"）。
+- 验证：json_repair 8 项 + save_plan FK 回归 + 计划提示词注入断言全过；第 7 跑真实任务 7/7 全绿收敛（pytest 全绿），执行摘要 Completed 自动落盘。
+- 观察期累计：3 期 / 11+ 次真实执行 / 9 个真缺陷修复 / 2 个结构性缺口实证——全部记录于本稿与 Notion 归档。
 
 ### 1.10-draft — 2026-08-31
 
