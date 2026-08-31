@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`1.11-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；worktree 路线已定
+- 当前版本：`1.12-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；worktree 路线已定
 - 最后更新：2026-08-31
 
 ## 1. 目标
@@ -891,7 +891,40 @@ Playwright 无头浏览器**一次性无状态页面检查**（`check_page`：ex
 - 全量回归：557 passed + 11 skipped（2026-08-31；2 个 e2e error 为需活服务的历史环境项，与回路无关）。
 - 真实任务验证：待观察第 4 期构造"验收失败 → 反馈 → 自愈"任务实测。
 
+## 26. coding_agent 输出模式契约：patch 模式（1.12 · 已实施）
+
+1.11 观察期实证的根因之一：代码内容进 JSON 字符串需要完整转义，转义摩擦直接制造解析失败（第 3 期步骤 6 连续两轮 JSON 失败）。削接缝动作 A 把 coding_agent 的输出契约从"JSON 里带文件全文"扩展为 search/replace 补丁块（Aider 式纯文本标记），代码内容从此不进 JSON。与 json_repair 的分工：json_repair 修控制面 JSON（1.11），patcher 处理代码内容（本节）。
+
+### 26.1 模式选择与兼容
+
+- 优先级：步骤级 `inputs.output_mode` > 环境变量 `EAS_CODING_AGENT_OUTPUT_MODE` > 默认 `full`；非法值静默回退 `full`（fail-safe，默认行为与 1.11 完全一致，向后兼容）。
+- facts 新增 `coding_agent_output_mode`，单次执行的实际输出模式可审计。
+
+### 26.2 patch 模式契约（python/patcher.py）
+
+- 块格式：`<<<<<<< SEARCH` / `=======` / `>>>>>>> REPLACE`。SEARCH 空段 = 新建文件（仅当文件不存在或为空时合法，否则 `file_exists_conflict`）；SEARCH 非空必须逐字命中且全文唯一（0 次 → `not_found`，≥2 次 → `ambiguous`）；精确失败先做 CRLF→LF 行尾归一再匹配，仍失败才报错。
+- 多块按出现顺序依次应用，前一块输出作为后一块输入；块外解释文字一律忽略，允许 markdown 围栏包裹整个补丁；不做空白容忍/模糊匹配——宁可报错走 feedback 重试，也不静默改错位置。
+- 错误四分类：`parse_error` / `not_found` / `ambiguous` / `file_exists_conflict`，错误附 SEARCH 首行作为定位线索。
+
+### 26.3 与多轮回路的接线
+
+- 补丁错误不立即判死：非最后一轮时错误文本经 `error_feedback_text` 进 feedback 通道回流下一轮（fact 记 `coding_agent_turn{N}_patch_error`）；最后一轮才 failed（"补丁未应用"）。
+- 应用成功记 `coding_agent_turn{N}_blocks_applied`（块数）。
+- 空内容防护按模式适配：会把文件清空的补丁被拒，反馈文本改为 patch 语义（基于文件当前内容重新输出补丁块）；自测未过的重试语按模式区分（patch："重新输出补丁块（基于文件当前内容）"；full："重新输出完整文件内容"）。
+- 顺带修复：空内容防护分支重复追加 assistant 消息（同一 assistant 内容出现两次）；消息回填统一交循环顶部。
+
+### 26.4 验证
+
+- tests/python/test_coding_agent_patch.py 6 项：块解析与应用矩阵（新建/多块/围栏剥离/行尾归一）、错误分类与 feedback 回流、模式选择优先级与非法值回退。
+- coding_agent/patch 相关选择集（-k "coding_agent or patch"）42 项：41 passed + 1 skipped。
+- 全量回归（2026-08-31，commit c86cb4b）：595 passed + 11 skipped；2 个 e2e error 为需活上游的历史环境项（test_exec_e2e 经真实 LLM 生成设计书，上游分发渠道当日 503 无可用 channel），与本次接线无关，与 §25.2 记录的基线形态一致。
+
 ## 变更记录
+
+### 1.12-draft — 2026-08-31
+
+- **coding_agent 输出模式契约（削接缝动作 A，§26）**：新增 patch 输出模式——search/replace 补丁块（Aider 式）经确定性补丁应用器 python/patcher.py 应用，代码内容不再进 JSON 字符串（转义摩擦根除）；步骤级 `inputs.output_mode` > 环境变量 `EAS_CODING_AGENT_OUTPUT_MODE` > 默认 full（向后兼容，非法值回退）。补丁错误（not_found/ambiguous/parse_error/file_exists_conflict）走 feedback 通道回流重试而非直接判死；空内容防护与自测重试语按模式适配；顺带修复空内容防护分支 assistant 消息重复追加缺陷。
+- 测试：test_coding_agent_patch.py 6 项；全量回归 595 passed + 11 skipped（2 个 e2e error 为需活上游的历史环境项，见 §25.2 / §26.4）。
 
 ### 1.11-draft — 2026-08-31
 
