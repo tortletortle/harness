@@ -16,10 +16,22 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from logging_config import get_logger
 from tools.workspace import resolve_workspace_path, resolve_workspace_root
+from tools.test_runner import TestRunner, get_templates
 
 logger = get_logger(__name__)
 
 _DEFAULT_MAX_READ_BYTES = 2 * 1024 * 1024
+
+# test_passes 验收（动作 B 第一级：测试即验收）的执行边界。
+_ACCEPTANCE_TEST_TIMEOUT_DEFAULT = 300.0
+_ACCEPTANCE_TEST_TIMEOUT_MAX = 900.0
+_TEST_OUTPUT_TAIL = 2000
+
+
+def _tail(text: str | None, limit: int) -> str:
+    """输出尾部截断：超长只保留尾部，供 evidence 与反馈回路使用。"""
+    text = text or ""
+    return text if len(text) <= limit else "...[截断]\n" + text[-limit:]
 
 
 @dataclass
@@ -52,6 +64,8 @@ class AcceptanceRunner:
         "artifact_exists": "file_exists",
         "command_exit_code": "exit_code",
         "diff_scope_valid": "diff_scope",
+        "test_pass": "test_passes",
+        "tests_pass": "test_passes",
     }
 
     def __init__(
@@ -125,6 +139,8 @@ class AcceptanceRunner:
                 return self._check_exit_code(spec, tool_result)
             if check_type == "diff_scope":
                 return self._check_diff_scope(spec)
+            if check_type == "test_passes":
+                return self._check_test_passes(spec)
             return self._failed(
                 requested_type or "unknown",
                 "未知验收类型（fail-closed）",
@@ -214,6 +230,79 @@ class AcceptanceRunner:
             "exit_code",
             passed,
             "缺少工具 returncode" if actual is None else ("exit code 不匹配" if not passed else ""),
+            evidence,
+        )
+
+    def _check_test_passes(self, spec: Dict[str, Any]) -> Dict[str, Any]:
+        """动作 B 第一级：测试即验收（test_passes）。
+
+        用服务端白名单模板（与 tools.test_runner 同源）执行测试，exit 0 才算通过。
+        安全边界与 test_runner 工具一致：命令模板只来自服务端，步骤输入只能提供
+        suite 名 / test_path / 追加 args（独立 argv 项，无 shell，注入面构造性不存在）。
+        失败时输出尾部进 evidence，供 §25 反馈回路喂回 coding_agent。
+        """
+        suite = str(spec.get("suite") or "").strip()
+        if not suite:
+            return self._failed("test_passes", "缺少 suite（测试模板名）")
+        templates = get_templates()
+        if suite not in templates:
+            return self._failed(
+                "test_passes",
+                "未登记的测试模板: {}（可用: {}）".format(suite, ", ".join(sorted(templates)) or "无"),
+            )
+        args = spec.get("args")
+        if args is not None and not isinstance(args, list):
+            return self._failed("test_passes", "args 必须是列表")
+        try:
+            argv = TestRunner.build_argv(suite, {"test_path": spec.get("test_path"), "args": args})
+        except (KeyError, IndexError, ValueError) as exc:
+            return self._failed("test_passes", "测试命令构造失败（fail-closed）: {}".format(exc))
+        try:
+            timeout = float(spec.get("timeout") or _ACCEPTANCE_TEST_TIMEOUT_DEFAULT)
+        except (TypeError, ValueError):
+            timeout = _ACCEPTANCE_TEST_TIMEOUT_DEFAULT
+        timeout = min(max(1.0, timeout), _ACCEPTANCE_TEST_TIMEOUT_MAX)
+        cwd = str(self.workspace_root)
+        logger.info("test_passes 验收执行: {} (cwd={})", argv, cwd)
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                shell=False,
+            )
+        except subprocess.TimeoutExpired:
+            return self._check(
+                "test_passes",
+                False,
+                "测试超时（{:g}秒）".format(timeout),
+                {"suite": suite, "argv": argv, "timeout": timeout, "cwd": cwd},
+            )
+        except OSError as exc:
+            return self._check(
+                "test_passes",
+                False,
+                "测试命令无法执行: {}".format(exc),
+                {"suite": suite, "argv": argv, "cwd": cwd},
+            )
+        rc = completed.returncode
+        evidence = {
+            "suite": suite,
+            "test_path": str(spec.get("test_path") or ""),
+            "argv": argv,
+            "exit_code": rc,
+            "cwd": cwd,
+            "stdout_tail": _tail(completed.stdout, _TEST_OUTPUT_TAIL),
+            "stderr_tail": _tail(completed.stderr, _TEST_OUTPUT_TAIL),
+        }
+        return self._check(
+            "test_passes",
+            rc == 0,
+            "" if rc == 0 else "测试运行失败（exit {}）".format(rc),
             evidence,
         )
 

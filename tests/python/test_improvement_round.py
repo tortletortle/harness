@@ -50,6 +50,46 @@ def test_build_acceptance_feedback_never_raises():
 
 
 
+def test_build_acceptance_feedback_test_passes():
+    from api.server import _build_acceptance_feedback
+
+    result = {
+        "passed": False,
+        "checks": [
+            {
+                "type": "test_passes",
+                "passed": False,
+                "evidence": {
+                    "suite": "pytest",
+                    "test_path": "tests/test_api.py",
+                    "exit_code": 1,
+                    "stderr_tail": "AssertionError: expected 3 != 2",
+                },
+            }
+        ],
+    }
+    feedback = _build_acceptance_feedback(result)
+    assert feedback is not None
+    assert "pytest" in feedback and "tests/test_api.py" in feedback
+    assert "AssertionError" in feedback
+
+
+def test_build_acceptance_feedback_mixed_test_and_content():
+    from api.server import _build_acceptance_feedback
+
+    result = {
+        "passed": False,
+        "checks": [
+            {"type": "test_passes", "passed": False, "evidence": {"suite": "pytest", "exit_code": 2, "stdout_tail": "1 failed"}},
+            {"type": "content_contains", "path": "src/a.py", "text": "component_list", "passed": False},
+        ],
+    }
+    feedback = _build_acceptance_feedback(result)
+    assert feedback is not None
+    assert "测试未全部通过" in feedback
+    assert "逐字出现" in feedback
+
+
 # ===== stepfun /v1/search 引擎（阶跃网页搜索） =====
 
 def test_stepfun_engine_parse(monkeypatch, tmp_path):
