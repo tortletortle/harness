@@ -158,6 +158,9 @@ budget:
 # enabled: false 或缺省 command 的条目会被跳过；单 server 接入失败不影响主服务。
 mcp_servers:
   notion:
+    # 已知问题：@notionhq/notion-mcp-server 在 asyncio 客户端下 tools/list 超时/断连
+    # （同步手动喂协议正常）——stdio 时序待专项调试，调通后改回 enabled: true
+    enabled: false
     command: cmd
     args: ["/c", "npx", "-y", "@notionhq/notion-mcp-server"]
     request_timeout: 120

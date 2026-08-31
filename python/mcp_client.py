@@ -54,6 +54,7 @@ class MCPStdioClient:
         self.server_info: Dict[str, Any] = {}
         self.tools: List[Dict[str, Any]] = []
         self._next_id = 1
+        self._restarts = 0
         self._pending: Dict[int, asyncio.Future] = {}
         self._stderr_task: Optional[asyncio.Task] = None
         self._reader_task: Optional[asyncio.Task] = None
@@ -77,7 +78,10 @@ class MCPStdioClient:
         self._reader_task = asyncio.create_task(self._read_loop())
         self._stderr_task = asyncio.create_task(self._drain_stderr())
         await self.initialize()
-        self.tools = await self.list_tools()
+        # 某些 server（如 @notionhq/notion-mcp-server）在 initialize 后需要短暂
+        # 稳定期：立即跟随的请求会被对端关闭连接（真实观察，第 2 期续作验证）。
+        await asyncio.sleep(0.5)
+        self.tools = await self._list_tools_with_retry()
         logger.info("MCP server {} 就绪（{} 个工具）", self.name, len(self.tools))
 
     async def initialize(self) -> Dict[str, Any]:
@@ -97,6 +101,19 @@ class MCPStdioClient:
         result = await self._request("tools/list", {})
         tools = result.get("tools", []) if isinstance(result, dict) else []
         return [t for t in tools if isinstance(t, dict) and t.get("name")]
+
+    async def _list_tools_with_retry(self) -> List[Dict[str, Any]]:
+        # 断线自愈：连接被对端关闭时，重启 server 并重试一次
+        try:
+            return await self.list_tools()
+        except RuntimeError as exc:
+            if "连接关闭" not in str(exc) or self._restarts >= 1:
+                raise
+            logger.warning("MCP {} 连接被关闭，自愈重启一次", self.name)
+            self._restarts += 1
+            await self.stop()
+            await self.start()
+            return self.tools
 
     async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         return await self._request("tools/call", {"name": name, "arguments": dict(arguments or {})})
