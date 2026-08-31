@@ -16,6 +16,7 @@ import sys
 from contextlib import asynccontextmanager
 
 from fastapi import (
+    Body,
     Depends,
     FastAPI,
     HTTPException,
@@ -103,6 +104,76 @@ class AppState:
 
 state = AppState()
 
+# ===== 配置加载 =====
+
+def _deep_merge_dict(base: dict, override: dict) -> dict:
+    """递归合并：override 覆盖 base，嵌套 dict 深合并，其余类型直接覆盖。"""
+    merged = dict(base or {})
+    for k, v in (override or {}).items():
+        if isinstance(v, dict) and isinstance(merged.get(k), dict):
+            merged[k] = _deep_merge_dict(merged[k], v)
+        else:
+            merged[k] = v
+    return merged
+
+
+def _load_models_config() -> dict:
+    """加载 config/models.yaml（可提交模板，key 为占位符），
+    并用 config/models.local.yaml（gitignored，存真实 key）深覆盖。
+
+    两个候选路径：服务从仓库根启动用 config/，从其他 cwd 启动用 ../config/。
+    """
+    candidates = [Path("config/models.yaml"), Path("../config/models.yaml")]
+    config_path = next((p for p in candidates if p.exists()), None)
+    if not config_path:
+        raise FileNotFoundError("配置文件 config/models.yaml 不存在")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
+
+    local_candidates = [Path("config/models.local.yaml"), Path("../config/models.local.yaml")]
+    local_path = next((p for p in local_candidates if p.exists()), None)
+    if local_path:
+        with open(local_path, "r", encoding="utf-8") as f:
+            local = yaml.safe_load(f) or {}
+        config = _deep_merge_dict(config, local)
+    return config
+
+
+# ===== 配置加载 =====
+
+def _deep_merge_dict(base: dict, override: dict) -> dict:
+    """递归合并：override 覆盖 base，嵌套 dict 深合并，其余类型直接覆盖。"""
+    merged = dict(base or {})
+    for k, v in (override or {}).items():
+        if isinstance(v, dict) and isinstance(merged.get(k), dict):
+            merged[k] = _deep_merge_dict(merged[k], v)
+        else:
+            merged[k] = v
+    return merged
+
+
+def _load_models_config() -> dict:
+    """加载 config/models.yaml（可提交模板，key 为占位符），
+    并用 config/models.local.yaml（gitignored，存真实 key）深覆盖。
+
+    两个候选路径：服务从仓库根启动用 config/，从其他 cwd 启动用 ../config/。
+    """
+    candidates = [Path("config/models.yaml"), Path("../config/models.yaml")]
+    config_path = next((p for p in candidates if p.exists()), None)
+    if not config_path:
+        raise FileNotFoundError("配置文件 config/models.yaml 不存在")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
+
+    local_candidates = [Path("config/models.local.yaml"), Path("../config/models.local.yaml")]
+    local_path = next((p for p in local_candidates if p.exists()), None)
+    if local_path:
+        with open(local_path, "r", encoding="utf-8") as f:
+            local = yaml.safe_load(f) or {}
+        config = _deep_merge_dict(config, local)
+    return config
+
+
 # ===== 启动和关闭（lifespan） =====
 
 @asynccontextmanager
@@ -111,16 +182,8 @@ async def lifespan(app: FastAPI):
     logger.info("正在启动 EAS 2.0 API 服务...")
 
     try:
-        # 加载配置
-        config_path = Path("config/models.yaml")
-        # 如果不存在，尝试父目录
-        if not config_path.exists():
-            config_path = Path("../config/models.yaml")
-        if not config_path.exists():
-            raise FileNotFoundError("配置文件 config/models.yaml 不存在")
-        
-        with open(config_path, "r", encoding="utf-8") as f:
-            state.config = yaml.safe_load(f)
+        # 加载配置（models.yaml 模板 + models.local.yaml 深覆盖，后者存真实 key 且不入库）
+        state.config = _load_models_config()
         
         # 初始化数据库
         db_path = Path("data/eas.db")
@@ -1941,6 +2004,32 @@ async def get_tools():
         logger.exception("查询工具列表失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/chat", dependencies=[Depends(require_token)])
+async def api_chat(request: dict = Body(...)):
+    """应用内置对话助手：对话 → 意图 → 工具调用（Grant 约束）→ 回复。"""
+    message = str((request or {}).get("message") or "").strip()
+    session_id = (request or {}).get("session_id")
+    if not message:
+        raise HTTPException(status_code=400, detail="message 不能为空")
+
+    session = state.chat_manager.get_or_create(session_id)
+    try:
+        result = await session.ask(message)
+    except Exception as e:
+        logger.exception("chat 会话异常: {}", e)
+        raise HTTPException(status_code=500, detail=f"chat 处理失败: {e}")
+    return {
+        "reply": result["reply"],
+        "session_id": result["session_id"],
+        "tool_calls_made": result["tool_calls_made"],
+    }
+
+
+@app.get("/api/chat/sessions", dependencies=[Depends(require_token)])
+async def api_chat_sessions(_t: str = Depends(require_token)):
+    return state.chat_manager.stats()
+
+
 @app.get("/api/capabilities", dependencies=[Depends(require_token)])
 async def get_capabilities():
     """获取统一 Capability 清单（普通工具 Adapter + 后续 Agent Tool）。"""
@@ -1988,17 +2077,21 @@ async def get_config():
 async def update_config(request: ConfigUpdateRequest):
     """更新配置"""
     try:
-        # 更新配置文件
-        config_path = Path("config/models.yaml")
+        # 安全：真实 key 只写 gitignored 的 models.local.yaml，绝不写回被跟踪的 models.yaml
+        local_path = Path("config/models.local.yaml")
+        if not local_path.exists():
+            local_path = Path("../config/models.local.yaml")
         
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
+        local = {}
+        if local_path.exists():
+            with open(local_path, "r", encoding="utf-8") as f:
+                local = yaml.safe_load(f) or {}
         
-        config["api_keys"] = request.api_keys
-        config["base_urls"] = request.base_urls
+        local["api_keys"] = request.api_keys
+        local["base_urls"] = request.base_urls
         
-        with open(config_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(config, f, allow_unicode=True)
+        with open(local_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(local, f, allow_unicode=True)
         
         await broadcast_log("配置已更新，需要重启服务生效", "warning")
         

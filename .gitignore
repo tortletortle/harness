@@ -93,3 +93,5 @@ temp/
 data/design_cache.json
 data/plan_cache.json
 data/usage/
+# 敏感配置（2026-08-31 密钥泄露修复）
+config/models.local.yaml

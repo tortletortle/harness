@@ -1,8 +1,8 @@
 api_keys:
-  bbapi: REDACTED-ROTATE-YOUR-KEY
-  hejuapi: REDACTED-ROTATE-YOUR-KEY
-  newapi: REDACTED-ROTATE-YOUR-KEY
-  stepfun: REDACTED-ROTATE-YOUR-KEY
+  bbapi: PUT-REAL-KEY-IN-config/models.local.yaml
+  hejuapi: PUT-REAL-KEY-IN-config/models.local.yaml
+  newapi: PUT-REAL-KEY-IN-config/models.local.yaml
+  stepfun: PUT-REAL-KEY-IN-config/models.local.yaml
 base_urls:
   bbapi: https://www.bb-api.com/v1
   hejuapi: https://www.hejuapi.com/v1
