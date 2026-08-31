@@ -361,7 +361,7 @@ def _search_stepfun(query: str, max_results: int, timeout: float) -> List[Dict[s
         raise EngineError("未配置 STEPFUN key（env STEPFUN_API_KEY 或 config/models.yaml api_keys.stepfun）")
     body = json.dumps({"query": query, "n": max_results}).encode("utf-8")
     data = json.loads(_http_fetch(
-        "https://api.stepfun.com/v1/search",
+        "https://api.stepfun.com/step_plan/v1/search",
         timeout=timeout,
         data=body,
         headers={

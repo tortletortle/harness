@@ -77,7 +77,7 @@ def test_stepfun_engine_parse(monkeypatch, tmp_path):
     assert len(items) == 1
     assert items[0]["title"] == "StepFun docs"
     assert items[0]["url"] == "https://docs.stepfun.com/"
-    assert captured["url"] == "https://api.stepfun.com/v1/search"
+    assert captured["url"] == "https://api.stepfun.com/step_plan/v1/search"
     assert captured["body"]["n"] == 5
     assert captured["headers"]["Authorization"] == "Bearer sk-test"
 
