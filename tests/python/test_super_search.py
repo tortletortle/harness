@@ -206,10 +206,20 @@ def test_auto_select_engines_with_api_keys(monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     monkeypatch.delenv("BRAVE_API_KEY", raising=False)
     monkeypatch.delenv("SERPER_API_KEY", raising=False)
+    # stepfun 的 key 走 config 文件解析——测试中固定关闭以隔离断言
+    monkeypatch.setattr(ss, "_stepfun_key", lambda: "")
     assert _auto_select_engines() == ["duckduckgo", "bing"]
     monkeypatch.setenv("TAVILY_API_KEY", "k1")
     monkeypatch.setenv("SERPER_API_KEY", "k2")
     assert _auto_select_engines() == ["duckduckgo", "bing", "tavily", "serper"]
+
+
+def test_auto_select_includes_stepfun_when_key_resolvable(monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.delenv("BRAVE_API_KEY", raising=False)
+    monkeypatch.delenv("SERPER_API_KEY", raising=False)
+    monkeypatch.setattr(ss, "_stepfun_key", lambda: "sk-test")
+    assert _auto_select_engines() == ["duckduckgo", "bing", "stepfun"]
 
 
 # ===== 正文抽取 =====

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """改进验证测试：验收反馈文本构建 + bing 长查询拆分。"""
+import json
 import sys
 
 sys.path.insert(0, "python")
@@ -45,6 +46,67 @@ def test_build_acceptance_feedback_never_raises():
 
     assert _build_acceptance_feedback(None) is None
     assert _build_acceptance_feedback({"checks": "garbage"}) is None
+
+
+
+
+# ===== stepfun /v1/search 引擎（阶跃网页搜索） =====
+
+def test_stepfun_engine_parse(monkeypatch, tmp_path):
+    monkeypatch.setattr("tools.workspace.resolve_workspace_root", lambda: tmp_path)
+    monkeypatch.delenv("STEPFUN_API_KEY", raising=False)
+    captured = {}
+
+    def fake_fetch(url, timeout=15, data=None, headers=None, max_bytes=1):
+        captured["url"] = url
+        captured["body"] = json.loads(data.decode("utf-8"))
+        captured["headers"] = headers
+        return json.dumps({
+            "query": captured["body"]["query"],
+            "results": [
+                {"url": "https://docs.stepfun.com/", "position": 1,
+                 "title": "StepFun docs", "time": "2026-03-20T00:00:00",
+                 "snippet": "official snippet", "content": "long content"},
+                {"url": "", "title": "no url", "snippet": "skipped"},
+            ],
+        })
+
+    monkeypatch.setattr(ss, "_http_fetch", fake_fetch)
+    monkeypatch.setattr(ss, "_stepfun_key", lambda: "sk-test")
+    items = ss._search_stepfun("AutoClaw 积分", 5, 10)
+    assert len(items) == 1
+    assert items[0]["title"] == "StepFun docs"
+    assert items[0]["url"] == "https://docs.stepfun.com/"
+    assert captured["url"] == "https://api.stepfun.com/v1/search"
+    assert captured["body"]["n"] == 5
+    assert captured["headers"]["Authorization"] == "Bearer sk-test"
+
+
+def test_stepfun_engine_missing_key_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr("tools.workspace.resolve_workspace_root", lambda: tmp_path)
+    monkeypatch.delenv("STEPFUN_API_KEY", raising=False)
+    (tmp_path / "config").mkdir(exist_ok=True)
+    import pytest
+    with pytest.raises(ss.EngineError):
+        ss._search_stepfun("q", 5, 10)
+
+
+def test_stepfun_config_key_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr(ss, "resolve_workspace_root", lambda: tmp_path)
+    monkeypatch.delenv("STEPFUN_API_KEY", raising=False)
+    cfg = tmp_path / "config"
+    cfg.mkdir(exist_ok=True)
+    yaml_text = "api_keys:" + chr(10) + "  stepfun: test-key-123" + chr(10)
+    (cfg / "models.yaml").write_text(yaml_text, encoding="utf-8")
+    assert ss._stepfun_key() == "test-key-123"
+
+
+def test_stepfun_registered_and_autoselect(monkeypatch, tmp_path):
+    monkeypatch.setattr(ss, "resolve_workspace_root", lambda: tmp_path)
+    monkeypatch.delenv("STEPFUN_API_KEY", raising=False)
+    assert "stepfun" in ss._ENGINE_FUNCS
+    monkeypatch.setattr(ss, "_stepfun_key", lambda: "k")
+    assert "stepfun" in ss._auto_select_engines()
 
 
 # ===== bing 长中文查询拆分 =====

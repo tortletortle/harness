@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from tools.web_fetcher import _validate_url
+from tools.workspace import resolve_workspace_root
 
 _DEFAULT_TIMEOUT = 15  # 秒，搜索引擎请求
 _MAX_ENGINE_BYTES = 2 * 1024 * 1024  # 单次引擎响应上限 2MB
@@ -336,9 +337,55 @@ def _search_serper(query: str, max_results: int, timeout: float) -> List[Dict[st
     ]
 
 
+def _stepfun_key() -> str:
+    """阶跃 API key：环境变量 STEPFUN_API_KEY 优先，回落 config/models.yaml api_keys.stepfun。"""
+    key = os.environ.get("STEPFUN_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        cfg_path = resolve_workspace_root() / "config" / "models.yaml"
+        if cfg_path.exists():
+            import yaml
+
+            cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+            return str((cfg.get("api_keys") or {}).get("stepfun") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _search_stepfun(query: str, max_results: int, timeout: float) -> List[Dict[str, str]]:
+    """阶跃星辰网页搜索 API（POST /v1/search，信源权威性优化，中文友好）。"""
+    key = _stepfun_key()
+    if not key:
+        raise EngineError("未配置 STEPFUN key（env STEPFUN_API_KEY 或 config/models.yaml api_keys.stepfun）")
+    body = json.dumps({"query": query, "n": max_results}).encode("utf-8")
+    data = json.loads(_http_fetch(
+        "https://api.stepfun.com/v1/search",
+        timeout=timeout,
+        data=body,
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {key}",
+        },
+    ))
+    results: List[Dict[str, str]] = []
+    for r in data.get("results") or []:
+        url = str(r.get("url") or "").strip()
+        if not url:
+            continue
+        results.append({
+            "title": str(r.get("title") or "").strip(),
+            "url": url,
+            "snippet": str(r.get("snippet") or r.get("content") or "")[:400],
+        })
+    return results
+
+
 _ENGINE_FUNCS = {
     "duckduckgo": _search_duckduckgo,
     "bing": _search_bing,
+    "stepfun": _search_stepfun,
     "tavily": _search_tavily,
     "brave": _search_brave,
     "serper": _search_serper,
@@ -368,6 +415,8 @@ def _normalize_engines(engines: Any) -> Optional[List[str]]:
 def _auto_select_engines() -> List[str]:
     """默认引擎：无键引擎优先，已配置密钥的 API 引擎自动追加。"""
     selected = ["duckduckgo", "bing"]
+    if _stepfun_key():
+        selected.append("stepfun")
     for name, env_key in _API_KEY_ENGINES.items():
         if os.environ.get(env_key):
             selected.append(name)
