@@ -149,7 +149,11 @@ class ChatSession:
                     tools=self.tool_defs or None,
                 )
                 self.messages.append(
-                    Message(role="assistant", content=response.content or "")
+                    Message(
+                        role="assistant",
+                        content=response.content or "",
+                        tool_calls=response.tool_calls,
+                    )
                 )
 
                 if not response.tool_calls:
@@ -213,6 +217,9 @@ class ChatSession:
         finally:
             pass
 
+        if not reply and tool_calls_made:
+            names = "、".join(dict.fromkeys(item["tool"] for item in tool_calls_made))
+            reply = f"（已完成工具调用：{names}。如需继续请补充说明。）"
         return {
             "reply": reply or "（无回复）",
             "tool_calls_made": tool_calls_made,
