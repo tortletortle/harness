@@ -31,6 +31,7 @@ MANIFEST
 *.pyc
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 .env
 .venv
