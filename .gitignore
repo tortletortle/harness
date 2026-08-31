@@ -79,3 +79,16 @@ temp/
 
 # full-flow e2e isolated workspace
 .tmp_fullflow_e2e_root/
+# Agent/IDE hook state
+.mimosa/
+
+# Isolated run workspaces & scratch
+.tmp_*_root/
+.tmp_*.txt
+.ruff_cache/
+.zcode/
+
+# Runtime caches & SQLite sidecars
+data/design_cache.json
+data/plan_cache.json
+data/usage/
