@@ -105,4 +105,10 @@ class ProjectMemory:
             except (TypeError, ValueError):
                 limit = 4000
             return recall(limit)
+        if instruction == "execute":
+            # Capability 统一入口的缺省指令：按参数形状分派
+            # （有 content → 保存；否则 → 读取）。
+            if "content" in inputs:
+                return save_entry(inputs.get("title"), inputs.get("content"))
+            return recall(int(inputs.get("limit_chars", 4000) or 4000))
         return {"success": False, "message": f"未知指令: {instruction}", "error": "Unknown instruction"}
