@@ -343,12 +343,17 @@ def _stepfun_key() -> str:
     if key:
         return key
     try:
-        cfg_path = resolve_workspace_root() / "config" / "models.yaml"
-        if cfg_path.exists():
-            import yaml
+        import yaml
 
+        # local 文件优先（真实 key），models.yaml 模板里的占位值跳过
+        for rel in ("config/models.local.yaml", "config/models.yaml"):
+            cfg_path = resolve_workspace_root() / rel
+            if not cfg_path.exists():
+                continue
             cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-            return str((cfg.get("api_keys") or {}).get("stepfun") or "").strip()
+            val = str((cfg.get("api_keys") or {}).get("stepfun") or "").strip()
+            if val and "PUT-REAL-KEY" not in val:
+                return val
     except Exception:
         pass
     return ""
