@@ -905,6 +905,7 @@ Playwright 无头浏览器**一次性无状态页面检查**（`check_page`：ex
 - 新增多轮确定性测试：两轮自测闭环（第 1 轮改错→自测失败→反馈→第 2 轮改对→自测通过）、预算耗尽（3 轮全部失败→completed+facts 记录 last_test_exit，交外层验收）、跨 segment step_order 全局唯一回归。
 - 已知边界：多轮自测的测试发现依赖 inputs.test_path 精确指向测试文件；真实 E2E 曾暴露 step_order 全局唯一 bug（同日修复）。完整 AgentSession/Turn/Attempt 分层仍为后续。
 - 跨次续作实证（1.8 补充）：上一期失败留下的半成品，经 PROJECT_MEMORY.md 记忆注入 → 计划自动生成 2 步续作 → AI 一轮改对 test_users.py → pytest 全绿收敛（118.9 秒）。同日 executor 从 newapi（503 账号池耗尽）切换到阶跃星辰 step-3.7-flash。已知轻微瑕疵：AI 修改 service.py 时参数名义顺序与 models.py 不一致（位置兼容、测试通过）——多文件一致性仍是后续课题。
+- 第 3 期观察（1.8 补充）：验证"失败 → 自动记忆 → 续作 → 收敛"完整产品路径。Run A：7 步重构任务，步骤 6 失败（coding_agent 连续两轮 JSON 解析失败），执行摘要全自动落盘 PROJECT_MEMORY.md（每步状态/失败原因/Pending 步骤，无需人工）。Run B：续作任务凭记忆生成 2 步计划 → coding_agent 修正 test_users.py（一轮自测通过）→ test_runner 全绿，双步 Success，98 秒。全程零人工干预——"失败后前功尽弃"的结构性缺口已有自动化答案。已知边界：记忆摘要为确定性规则生成（步骤状态+失败原因），不含语义级诊断；步骤 6 连续两轮 JSON 失败的原因（模型对多行代码输出的格式稳定性）待第 4 期深入。
 
 ### 1.6-draft — 2026-08-30
 
