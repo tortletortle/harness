@@ -44,7 +44,7 @@ class ChatSession:
         self.authorization_manager = authorization_manager
         self.config = config or {}
         self.created_at = time.time()
-        self.messages: List[Dict[str, Any]] = []
+        self.messages: List[Message] = []
 
         chat_cfg = self.config
         self.provider = str(chat_cfg.get("provider") or "")
@@ -129,11 +129,11 @@ class ChatSession:
 
     async def ask(self, user_text: str) -> Dict[str, Any]:
         """处理一轮用户输入，返回 {reply, tool_calls_made, session_id}。"""
-        if not any(m.get("role") == "system" for m in self.messages):
+        if not any(m.role == "system" for m in self.messages):
             self.messages.insert(
-                0, {"role": "system", "content": self._build_system_prompt()}
+                0, Message(role="system", content=self._build_system_prompt())
             )
-        self.messages.append({"role": "user", "content": str(user_text)})
+        self.messages.append(Message(role="user", content=str(user_text)))
         grant_id = self._issue_grant()
         tool_calls_made: List[Dict[str, Any]] = []
         reply = ""
@@ -148,10 +148,9 @@ class ChatSession:
                     max_tokens=4000,
                     tools=self.tool_defs or None,
                 )
-                assistant_msg: Dict[str, Any] = {"role": "assistant", "content": response.content or ""}
-                if response.tool_calls:
-                    assistant_msg["tool_calls"] = response.tool_calls
-                self.messages.append(assistant_msg)
+                self.messages.append(
+                    Message(role="assistant", content=response.content or "")
+                )
 
                 if not response.tool_calls:
                     reply = response.content or ""
@@ -203,11 +202,11 @@ class ChatSession:
 
                     tool_calls_made.append({"tool": name, "args": args, "result": tool_result})
                     self.messages.append(
-                        {
-                            "role": "tool",
-                            "content": json.dumps(tool_result, ensure_ascii=False)[:4000],
-                            "tool_call_id": tc.get("id"),
-                        }
+                        Message(
+                            role="tool",
+                            content=json.dumps(tool_result, ensure_ascii=False)[:4000],
+                            tool_call_id=tc.get("id"),
+                        )
                     )
             else:
                 reply = "（本轮工具调用轮次已达上限，请继续提问）"

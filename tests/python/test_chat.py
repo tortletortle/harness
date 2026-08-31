@@ -97,7 +97,7 @@ async def test_chat_tool_round_then_reply(chat_env, tmp_path):
     assert mem.exists() and "多轮闭环" in mem.read_text(encoding="utf-8")
     # provider 第 2 次调用收到工具结果消息
     assert len(provider.calls) == 2
-    roles = [m["role"] for m in provider.calls[1]["messages"]]
+    roles = [m.role for m in provider.calls[1]["messages"]]
     assert roles[-1] == "tool"
 
 
@@ -186,5 +186,5 @@ async def test_chat_memory_injected_into_first_prompt(chat_env, tmp_path):
 
     await session.ask("继续")
 
-    system = provider.calls[0]["messages"][0]["content"]
+    system = provider.calls[0]["messages"][0].content
     assert "上次执行：步骤 6 失败" in system
