@@ -45,6 +45,7 @@ from coding_agent import CodingAgentTool
 from mcp_client import MCPStdioClient, load_mcp_server_configs
 from mcp_adapter import MCPToolAdapter
 from chat import ChatManager
+from skills_loader import SkillManager, SkillCapabilityAdapter
 from executor.acceptance_feedback import build_acceptance_feedback
 
 # 兼容别名：既有调用点与测试沿用旧名（server.py 拆分过渡期保留）。
@@ -103,6 +104,8 @@ class AppState:
         self.plan_update_version: int = 0
         # 应用内置对话助手（chat 会话层）：lifespan 中初始化
         self.chat_manager: Optional[ChatManager] = None
+        # 技能包管理器（生态层）：lifespan 中加载并注册
+        self.skill_manager: Optional[SkillManager] = None
 
 state = AppState()
 
@@ -286,6 +289,23 @@ async def lifespan(app: FastAPI):
                     except Exception:
                         pass
         
+        # 技能包（生态层）：skills/ 目录 → ToolRegistry + Capability 目录双注册。
+        # entry 技能成为普通工具：计划步骤可执行、Designer 工具评估可见、对话可调用。
+        state.skill_manager = SkillManager.from_config(state.config)
+        state.skill_manager.load()
+        for _skill_tool_id in state.skill_manager.register_into(state.tool_registry):
+            state.capability_registry.register(
+                SkillCapabilityAdapter(
+                    state.tool_registry, _skill_tool_id, state.skill_manager.by_tool_id(_skill_tool_id)
+                )
+            )
+        await broadcast_log(
+            f"技能包已加载: {len(state.skill_manager.entry_skills())} 个入口技能 / "
+            f"{len(state.skill_manager.knowledge_skills())} 个知识包"
+            + (f"，跳过 {len(state.skill_manager.skipped)} 个" if state.skill_manager.skipped else ""),
+            "success",
+        )
+
         # 初始化 Dispatcher（携带 CapabilityRegistry：工具目录合并 agent_tool，
         # Designer 的设计书/计划生成因此能看到 coding_agent）
         from dispatcher import Dispatcher
@@ -339,6 +359,8 @@ async def lifespan(app: FastAPI):
             ).get("primary", {}) or {}
             _chat_cfg.setdefault("provider", _designer_primary.get("provider", "newapi"))
             _chat_cfg.setdefault("model", _designer_primary.get("model", ""))
+        if state.skill_manager is not None and state.skill_manager.skills:
+            _chat_cfg["skills_summary"] = "\n".join(state.skill_manager.summary_lines())
         state.chat_manager = ChatManager(
             state.llm_client,
             state.capability_registry,
@@ -2020,6 +2042,14 @@ async def api_chat(request: dict = Body(...)):
 @app.get("/api/chat/sessions", dependencies=[Depends(require_token)])
 async def api_chat_sessions(_t: str = Depends(require_token)):
     return state.chat_manager.stats()
+
+
+@app.get("/api/skills", dependencies=[Depends(require_token)])
+async def api_skills(_t: str = Depends(require_token)):
+    """技能包清单（生态层）：入口技能 + 知识包 + 加载失败记录。"""
+    if state.skill_manager is None:
+        return {"success": True, "skills": [], "skipped": []}
+    return {"success": True, **state.skill_manager.describe_all()}
 
 
 @app.get("/api/capabilities", dependencies=[Depends(require_token)])

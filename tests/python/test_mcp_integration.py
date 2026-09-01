@@ -116,3 +116,36 @@ async def test_mcp_adapter_denied_without_grant(echo_config, tmp_path):
 
 
 import json  # noqa: E402
+
+
+# -*- coding: utf-8 -*-
+"""追加：MCP 大单行响应回归测试（2026-09-01 根因：asyncio 流默认 64KB 行上限）。"""
+import sys
+from pathlib import Path
+
+pytest = sys.modules.get("pytest")
+if pytest is None:  # 直接以脚本运行时的兜底
+    import pytest
+
+PYTHON_DIR = Path(__file__).resolve().parent.parent.parent / "python"
+if str(PYTHON_DIR) not in sys.path:
+    sys.path.insert(0, str(PYTHON_DIR))
+
+from mcp_client import MCPStdioClient  # noqa: E402
+
+BIG_SERVER = Path(__file__).resolve().parent / "fixtures" / "mcp_biglist_server.py"
+
+
+@pytest.mark.asyncio
+async def test_stdio_client_large_single_line_tools_list():
+    """tools/list 单行响应 >64KB（notion ~76KB 场景）：放宽 limit 后应完整收到。"""
+    client = MCPStdioClient("big", sys.executable, [str(BIG_SERVER)], request_timeout=20)
+    await client.start()
+    try:
+        assert client.alive
+        names = {t["name"] for t in client.tools}
+        assert "big_tool" in names
+        assert len(next(t for t in client.tools if t["name"] == "big_tool")["description"]) > 64 * 1024
+    finally:
+        await client.stop()
+    assert not client.alive

@@ -125,6 +125,9 @@ class ChatSession:
         ]
         if memory_text and not memory_text.startswith("（暂无"):
             parts.append("项目工作记忆（最近状态）：\n" + memory_text)
+        skills_summary = str((self.config or {}).get("skills_summary") or "").strip()
+        if skills_summary:
+            parts.append("可用技能包（skill_ 开头的工具可直接调用；[知识包] 提供做法指导）：\n" + skills_summary)
         return "\n".join(parts)
 
     async def ask(self, user_text: str) -> Dict[str, Any]:

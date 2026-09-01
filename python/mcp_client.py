@@ -23,6 +23,9 @@ logger = get_logger(__name__)
 
 PROTOCOL_VERSION = "2024-11-05"
 _DEFAULT_TIMEOUT = 30.0
+# MCP 单行 JSON 响应可能很大（notion tools/list 实测 ~76KB）：asyncio 流默认 64KB
+# readline 上限会吞掉大响应导致请求悬挂超时。根因实测：raw probe 下 6s 返回完整响应。
+_STREAM_LIMIT = 16 * 1024 * 1024
 
 _SANITIZE = re.compile(r"[^a-zA-Z0-9_]")
 
@@ -43,6 +46,8 @@ class MCPStdioClient:
         env: Optional[Dict[str, str]] = None,
         cwd: Optional[str] = None,
         request_timeout: float = _DEFAULT_TIMEOUT,
+        stream_limit: int = _STREAM_LIMIT,
+        startup_settle: float = 0.5,
     ) -> None:
         self.name = name
         self.command = command
@@ -50,6 +55,8 @@ class MCPStdioClient:
         self.env = env
         self.cwd = cwd
         self.request_timeout = float(request_timeout)
+        self.stream_limit = int(stream_limit)
+        self.startup_settle = float(startup_settle)
         self.process: Optional[asyncio.subprocess.Process] = None
         self.server_info: Dict[str, Any] = {}
         self.tools: List[Dict[str, Any]] = []
@@ -63,6 +70,7 @@ class MCPStdioClient:
     # ---- 进程与协议生命周期 ----
 
     async def start(self) -> None:
+        self._closed = False  # 自愈重启路径：stop() 会置位，重启前必须复位
         env = dict(os.environ)
         if self.env:
             env.update({str(k): str(v) for k, v in self.env.items()})
@@ -74,13 +82,14 @@ class MCPStdioClient:
             stderr=asyncio.subprocess.PIPE,
             env=env,
             cwd=self.cwd,
+            limit=self.stream_limit,
         )
         self._reader_task = asyncio.create_task(self._read_loop())
         self._stderr_task = asyncio.create_task(self._drain_stderr())
         await self.initialize()
         # 某些 server（如 @notionhq/notion-mcp-server）在 initialize 后需要短暂
         # 稳定期：立即跟随的请求会被对端关闭连接（真实观察，第 2 期续作验证）。
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(self.startup_settle)
         self.tools = await self._list_tools_with_retry()
         logger.info("MCP server {} 就绪（{} 个工具）", self.name, len(self.tools))
 
@@ -103,13 +112,15 @@ class MCPStdioClient:
         return [t for t in tools if isinstance(t, dict) and t.get("name")]
 
     async def _list_tools_with_retry(self) -> List[Dict[str, Any]]:
-        # 断线自愈：连接被对端关闭时，重启 server 并重试一次
+        # 断线自愈：连接被对端关闭或首次 tools/list 超时（冷启动 npx 下载慢）时，
+        # 重启 server 并重试一次。
         try:
             return await self.list_tools()
-        except RuntimeError as exc:
-            if "连接关闭" not in str(exc) or self._restarts >= 1:
+        except (RuntimeError, TimeoutError) as exc:
+            retriable = isinstance(exc, TimeoutError) or "连接关闭" in str(exc)
+            if not retriable or self._restarts >= 1:
                 raise
-            logger.warning("MCP {} 连接被关闭，自愈重启一次", self.name)
+            logger.warning("MCP {} 首次 tools/list 未完成（{}），自愈重启一次", self.name, exc)
             self._restarts += 1
             await self.stop()
             await self.start()
@@ -148,7 +159,13 @@ class MCPStdioClient:
         assert self.process and self.process.stdout
         try:
             while True:
-                line = await self.process.stdout.readline()
+                try:
+                    line = await self.process.stdout.readline()
+                except ValueError as exc:
+                    # 单行超过流上限：明确终止并让挂起请求失败（limit 已放宽到 16MB，
+                    # 触发即说明对端行为异常，宁可诚实失败也不静默挂死）。
+                    logger.error("MCP {} 单行超过流上限，终止读取循环: {}", self.name, exc)
+                    break
                 if not line:
                     break
                 text = line.decode("utf-8", "replace").strip()

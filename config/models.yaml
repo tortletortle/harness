@@ -158,14 +158,21 @@ budget:
 # enabled: false 或缺省 command 的条目会被跳过；单 server 接入失败不影响主服务。
 mcp_servers:
   notion:
-    # 已知问题：@notionhq/notion-mcp-server 在 asyncio 客户端下 tools/list 超时/断连
-    # （同步手动喂协议正常）——stdio 时序待专项调试，调通后改回 enabled: true
-    enabled: false
+    # 2026-09-01 根因修复：此前 tools/list 超时的原因是 asyncio 流默认 64KB 行上限——
+    # notion 的 tools/list 单行 JSON 响应 ~76KB（实测 6s 正常返回），放宽到 16MB 后正常。
+    # 有效 token 在 models.local.yaml 的 mcp_servers.notion.env 覆盖；未配置时调用 401 如实失败。
+    enabled: true
     command: cmd
     args: ["/c", "npx", "-y", "@notionhq/notion-mcp-server"]
     request_timeout: 120
     env:
       OPENAPI_MCP_HEADERS: '{"Authorization": "Bearer REDACTED-ROTATE-CREDENTIAL", "Notion-Version": "2022-06-28"}'
+
+# 技能包（生态层）：skills/ 目录，每个技能一个目录（SKILL.md + scripts/），见 docs/SKILLS.md
+skills:
+  enabled: true
+  dir: skills
+  timeout: 120
 
 # 应用内置助手（/api/chat）：会话式工具调用，走 Grant 预算约束
 chat:
