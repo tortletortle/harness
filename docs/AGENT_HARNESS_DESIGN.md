@@ -955,6 +955,23 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
   （与 §25.2 / §26.4 记录的基线形态一致）。
 
 
+### 27.4 计划期可达性（1.13 同日追加）
+
+设计器不生成 = 功能不可达。本节把 test_passes 接到计划生产端：
+
+- 校验白名单：utils/json_fixer.py 的 ACCEPTANCE_TYPES 增加 test_passes；test_runner 轻契约
+  required_acceptance_types 放宽为 {exit_code, test_passes}（exit_code 兼容保留）。
+- Designer 计划提示词（§1.11 验收写法指引升级）：能跑测试的场景优先在修改代码的
+  coding_agent 步骤 acceptance 直接挂 {"type":"test_passes","suite":"pytest","test_path":...}
+  ——行为对不对由 pytest 判定；测试文件须在该步骤之前创建，且不必再追加独立 test_runner
+  步骤（避免同一测试跑两遍）；独立 test_runner 步骤的 acceptance 优先 test_passes（同 suite）。
+- 执行语义：coding_agent 步骤的 test_passes 在步骤验收阶段执行（post-tool），即同一步骤
+  内的修改完成后立即跑一次测试——用一次测试进程的成本换行为级判定，属动作 B 第一级的
+  既定取舍。
+- 测试：test_plan_contract_consistency.py 新增 test_passes 规则放行 + 提示词断言；
+  test_toolmgmt.py 新增 test_runner 契约两种 acceptance 放行。
+
+
 ## 变更记录
 
 ### 1.13-draft — 2026-08-31
@@ -968,6 +985,9 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
 - 测试：test_acceptance_test_passes.py 9 项 + 反馈构建 2 项；全量回归 605 passed + 8 skipped
   （2 个 e2e error 为需活上游的历史环境项）。
 - 附带：untrack .mimosa 运行态（finding-ledger / hook-state，.gitignore 规则已覆盖）。
+- 计划期可达性（同日追加，§27.4）：ACCEPTANCE_TYPES 白名单与 test_runner 契约接受
+  test_passes；designer 提示词改为优先在 coding_agent 步骤直接挂 test_passes（测试即验收），
+  独立 test_runner 步骤 acceptance 优先 test_passes。
 
 ### 1.12-draft — 2026-08-31
 
