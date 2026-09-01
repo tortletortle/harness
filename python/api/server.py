@@ -46,6 +46,7 @@ from mcp_client import MCPStdioClient, load_mcp_server_configs
 from mcp_adapter import MCPToolAdapter
 from chat import ChatManager
 from skills_loader import SkillManager, SkillCapabilityAdapter
+from notify import Notifier
 from executor.acceptance_feedback import build_acceptance_feedback
 
 # 兼容别名：既有调用点与测试沿用旧名（server.py 拆分过渡期保留）。
@@ -106,6 +107,8 @@ class AppState:
         self.chat_manager: Optional[ChatManager] = None
         # 技能包管理器（生态层）：lifespan 中加载并注册
         self.skill_manager: Optional[SkillManager] = None
+        # IM 通知器（入口层）：计划终态/暂停、待审批、设计书就绪时主动推送
+        self.notifier: Optional[Notifier] = None
 
 state = AppState()
 
@@ -342,6 +345,16 @@ async def lifespan(app: FastAPI):
             human_steps=approval_cfg.get("human_steps", True),
         )
 
+        # IM 通知通道（入口层）：fail-open——任何通知失败只记日志与本地审计，
+        # 绝不打断主流程；未配置任何通道时降级为本地审计 notifications.jsonl。
+        _notify_audit_dir = Path("data") if Path("data").exists() else Path("../data")
+        state.notifier = Notifier.from_config(state.config, audit_dir=_notify_audit_dir)
+        await broadcast_log(
+            f"通知通道就绪: {len(state.notifier.providers)} 个 IM 通道"
+            + ("（未配置 webhook，仅本地审计 data/notifications.jsonl）" if not state.notifier.providers else ""),
+            "success" if state.notifier.providers else "warning",
+        )
+
         # Runtime 临时授权：每个步骤单独签发，默认限制一次工具调用、
         # 禁止 .env/.git 资源，结束后撤销；不把授权对象放进模型上下文。
         state.authorization_manager = AuthorizationManager.from_config(
@@ -522,6 +535,25 @@ async def broadcast_plan_update(plan_id: str) -> None:
         return
     if summary is None:
         return
+
+    # IM 通知（入口层）：计划到达终态/暂停时主动推送（fire-and-forget，fail-open）。
+    if state.notifier is not None and summary.get("status") in ("Completed", "Failed", "Paused"):
+        _st = str(summary["status"])
+        _steps = summary.get("steps") or []
+        _total = len(_steps)
+        _done = sum(1 for s in _steps if s.get("status") == "Success")
+        _failed = sum(1 for s in _steps if s.get("status") == "Failed")
+        _evmap = {"Completed": "plan_completed", "Failed": "plan_failed", "Paused": "plan_paused"}
+        asyncio.create_task(
+            state.notifier.send(
+                _evmap[_st],
+                f"计划 {_st}：{str(plan_id)[:8]}",
+                f"计划 {plan_id} 状态变为 {_st}。\n"
+                f"步骤进度：{_done} 成功 / {_failed} 失败 / 共 {_total} 步。",
+                payload={"plan_id": str(plan_id), "status": _st},
+                dedup_key=f"{plan_id}:{_st}",
+            )
+        )
     # P1-b 版本围栏：每条广播自增 version，前端只应用更大版本的事件，
     # 防止慢速广播用旧状态覆盖新状态（参考 Cline stateVersion 语义）。
     state.plan_update_version += 1
@@ -733,6 +765,17 @@ async def create_design(request: DesignRequest):
         state.database.save_design(design)
         
         await broadcast_log(f"设计书生成完成: {design.design_id}", "success")
+        if state.notifier is not None:
+            asyncio.create_task(
+                state.notifier.send(
+                    "design_ready",
+                    "设计书已生成，等待审批",
+                    f"需求：{request.user_request[:120]}\n"
+                    f"设计书 ID：{design.design_id}\n请到 Web 界面查看并审批。",
+                    payload={"design_id": str(design.design_id)},
+                    dedup_key=str(design.design_id),
+                )
+            )
         
         return {
             "success": True,
@@ -1307,6 +1350,18 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
         await broadcast_log(
             f"[APPROVAL] 步骤 {step_id} 请求使用工具 {tool_id_for_approval}，等待人工批准", "warning",
         )
+        if state.notifier is not None:
+            asyncio.create_task(
+                state.notifier.send(
+                    "approval_required",
+                    f"待审批：{tool_id_for_approval}",
+                    f"计划 {plan_id} 的步骤请求使用高风险工具 {tool_id_for_approval}，"
+                    f"已挂起等待人工批准。\n指令：{str(approval.instruction)[:120]}\n请到 Web 界面完成审批。",
+                    payload={"plan_id": plan_id, "approval_id": approval.approval_id,
+                             "tool_id": tool_id_for_approval},
+                    dedup_key=str(approval.approval_id),
+                )
+            )
         try:
             decision = await state.approval_manager.wait(approval.approval_id)
         except ApprovalTimeout:
@@ -2050,6 +2105,20 @@ async def api_skills(_t: str = Depends(require_token)):
     if state.skill_manager is None:
         return {"success": True, "skills": [], "skipped": []}
     return {"success": True, **state.skill_manager.describe_all()}
+
+
+@app.post("/api/notify/test", dependencies=[Depends(require_token)])
+async def notify_test(_t: str = Depends(require_token)):
+    """发送测试通知（IM 通道连通性自检）。未配置任何通道时走本地审计。"""
+    if state.notifier is None:
+        raise HTTPException(status_code=400, detail="通知通道未初始化")
+    results = await state.notifier.send(
+        "test",
+        "EAS 通知通道测试",
+        "这是一条测试通知：如果你看到它，说明 IM 通道已打通。",
+        payload={"source": "api/notify/test"},
+    )
+    return {"success": True, "results": results, "channels": len(results)}
 
 
 @app.get("/api/capabilities", dependencies=[Depends(require_token)])

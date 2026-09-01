@@ -174,6 +174,27 @@ skills:
   dir: skills
   timeout: 120
 
+# IM 通知通道（入口层）：计划完成/失败/暂停、待审批、设计书就绪时主动推送（docs/NOTIFY.md）。
+# 各通道填 webhook/token 即启用（建议在 models.local.yaml 覆盖，避免 webhook 泄漏）；
+# 全部留空 = 仅本地审计 data/notifications.jsonl。events 可裁剪订阅范围。
+notify:
+  enabled: true
+  events: [plan_completed, plan_failed, plan_paused, approval_required, design_ready]
+  cooldown_seconds: 300
+  feishu:      # 飞书群机器人 webhook：https://open.feishu.cn/open-apis/bot/v2/hook/<token>
+    webhook: ""
+    secret: ""
+  dingtalk:    # 钉钉群机器人 webhook（可加 secret 加签）
+    webhook: ""
+    secret: ""
+  wecom:       # 企业微信群机器人 webhook
+    webhook: ""
+  telegram:    # Telegram bot（需能直连 api.telegram.org）
+    bot_token: ""
+    chat_id: ""
+  webhook:     # 通用 webhook：POST {event, title, text, payload}
+    url: ""
+
 # 应用内置助手（/api/chat）：会话式工具调用，走 Grant 预算约束
 chat:
   provider: stepfun
