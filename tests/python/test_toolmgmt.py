@@ -398,3 +398,31 @@ def test_issue_grant_generic(tmp_path):
     # 文件资源不因通用签发而放行（资源为空）
     denied = manager.authorize(grant.grant_id, "file_creator", "create_file", {"path": "a.txt"})
     assert not decision.allowed or denied.allowed is False
+
+
+def test_test_runner_accepts_test_passes_acceptance():
+    """动作 B 第一级：test_runner 步骤的 acceptance 可用 test_passes（行为级）。"""
+    from utils.json_fixer import validate_tool_contracts
+
+    plan = {"segments": [{"steps": [{
+        "tool": "test_runner",
+        "description": "跑测试",
+        "inputs": {"suite": "pytest", "test_path": "tests/"},
+        "acceptance": [{"type": "test_passes", "suite": "pytest", "test_path": "tests/"}],
+    }]}]}
+    ok, err = validate_tool_contracts(plan)
+    assert ok, err
+
+
+def test_test_runner_still_accepts_exit_code():
+    """旧计划兼容：exit_code 验收继续放行。"""
+    from utils.json_fixer import validate_tool_contracts
+
+    plan = {"segments": [{"steps": [{
+        "tool": "test_runner",
+        "description": "跑测试",
+        "inputs": {"suite": "pytest"},
+        "acceptance": [{"type": "exit_code", "equals": 0}],
+    }]}]}
+    ok, err = validate_tool_contracts(plan)
+    assert ok, err

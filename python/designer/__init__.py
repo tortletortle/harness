@@ -669,7 +669,7 @@ class DefaultDesigner(Designer):
 1. 所有字符串用双引号 ""
 2. 最后一个元素后不要有逗号
 3. inputs 必须使用键 `path` 和 `content`，不要用 `file_path` / `file_content`
-4. 每个能自动验证的步骤必须返回 `acceptance` 数组；支持 `file_exists`、`content_contains`、`exit_code`、`diff_scope`
+4. 每个能自动验证的步骤必须返回 `acceptance` 数组；支持 `file_exists`、`content_contains`、`exit_code`、`diff_scope`、`test_passes`（测试即验收：用 test_runner 同源白名单模板跑测试，exit 0 才通过）
 5. 无法自动验证的步骤返回 `acceptance: []`，并在 `check_criteria` 中说明需要人工检查
 6. 确保所有括号都正确闭合
 
@@ -686,18 +686,18 @@ class DefaultDesigner(Designer):
 
 【约束（重要）】
 - 允许使用的工具：file_creator（创建新文件/目录）、coding_agent（修改已存在的代码文件）、test_runner（运行登记过的测试模板验证代码）、lint_gate（对 .py 文件做语法检查）、browser_check（用无头浏览器检查页面：文本/选择器断言+截图）。不要执行任何 shell 命令，不要使用 command_runner / package_installer / git_operator / text_editor / web_fetcher。
-- 创建新文件用 file_creator；修改已存在文件的内容用 coding_agent（它能先读原文再做受控修改）；代码改完后可用 test_runner 跑测试验证。
-- test_runner 步骤契约：inputs 必含 suite（已登记模板名，如 "pytest"，可用 test_path 指定测试文件或目录）；acceptance 必含 {"type":"exit_code","equals":0}；不要用 test_runner 执行非测试命令。
+- 创建新文件用 file_creator；修改已存在文件的内容用 coding_agent（它能先读原文再做受控修改）；代码改完后优先在该 coding_agent 步骤的 acceptance 直接挂 test_passes 由 pytest 判定行为（见下方验收写法要求），也可用独立 test_runner 步骤跑测试。
+- test_runner 步骤契约：inputs 必含 suite（已登记模板名，如 "pytest"，可用 test_path 指定测试文件或目录）；acceptance 必含 {"type":"test_passes","suite":"<同 inputs.suite>"}（推荐，行为级）或 {"type":"exit_code","equals":0}；不要用 test_runner 执行非测试命令。
 - lint_gate 步骤契约：inputs 必含 path（要检查的 .py 文件，相对路径）；acceptance 必含 {"type":"exit_code","equals":0}；只做语法检查，不能替代测试。
 - browser_check 步骤契约：inputs 必含 url（完整页面地址），并给至少一项断言（expect_text / expect_selector）或截图 output；acceptance 必含 {"type":"exit_code","equals":0}；只做只读页面检查，不能点击/填表/提交。
 - 用户需求或审批反馈中明确限定了可用工具时（如"只使用 file_creator"），该限定优先级最高：白名单只是上限，不得额外引入其他工具。
 - 步骤顺序必须尊重依赖关系：先创建被后续步骤使用的文件，再修改它，最后运行验证它的测试；test_runner 步骤必须排在其验证对象的创建/修改步骤之后。
-- 验收写法要求：content_contains 只匹配稳定的行为性标记（新增断言、函数名、关键逻辑行），不要精确匹配调用的参数顺序或完整调用形状——实现可能用不同但正确的写法；能跑测试的场景，最后一步必须用 test_runner 的 exit_code 做行为级验证。
+- 验收写法要求：content_contains 只匹配稳定的行为性标记（新增断言、函数名、关键逻辑行），不要精确匹配调用的参数顺序或完整调用形状——实现可能用不同但正确的写法。能跑测试的场景：优先把 {"type":"test_passes","suite":"pytest","test_path":"<任务创建的测试文件或目录>"} 挂在修改代码的 coding_agent 步骤 acceptance 上——行为对不对由 pytest 判定；test_path 指向的测试文件必须在该步骤之前已创建，且此时不必再追加独立的 test_runner 步骤（避免同一测试跑两遍）。
 
 【coding_agent 步骤契约（必须全部满足，否则计划会被拒绝）】
 1. inputs 必须包含：path（要修改的单个文件，相对路径）、instruction（一句话修改指令）、allowed_tools 固定为 ["text_editor"]
 2. 一个 coding_agent 步骤只修改一个文件；多个文件拆成多个步骤
-3. 必须携带非空 acceptance（content_contains / file_exists），不依赖人工检查
+3. 必须携带非空 acceptance（content_contains / file_exists / test_passes），不依赖人工检查
 4. 验收-指令一致性（强约束，计划期会被校验拒绝）：
    - 每个 content_contains 的 text 必须逐字出现在该步骤的 instruction 或 description 中
    - 不得凭空捏造指令中不存在的标识符（例如指令写"组件列表"而验收检查 component_list——零交集会被直接打回）

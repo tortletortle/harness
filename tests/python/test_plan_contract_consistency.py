@@ -107,6 +107,30 @@ def test_empty_texts_no_check():
     assert ok is True, err
 
 
+def test_test_passes_rule_accepted_for_coding_step():
+    """动作 B 第一级可达性：test_passes 是合法验收类型（此前会被白名单打回）。"""
+    plan = {"segments": [{"steps": [
+        _coding_step("实现 load_knowledge 方法", ["def load_knowledge"], description="实现 load_knowledge"),
+    ]}]}
+    step = plan["segments"][0]["steps"][0]
+    step["acceptance"].append(
+        {"type": "test_passes", "suite": "pytest", "test_path": "tests/test_knowledge.py"}
+    )
+    ok, err = validate_agent_steps(plan)
+    assert ok, err
+
+
+def test_designer_prompt_offers_test_passes():
+    """提示词必须教设计器生成 test_passes（否则功能不可达）。"""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[2] / "python" / "designer" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    assert "test_passes" in text
+    assert "行为对不对由 pytest 判定" in text
+
+
 def test_designer_prompt_has_rules_and_unified_language():
     from pathlib import Path
 

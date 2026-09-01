@@ -234,7 +234,7 @@ TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
     "test_runner": {
         "required_inputs": ("suite",),
         "require_acceptance": True,
-        "required_acceptance_types": {"exit_code"},
+        "required_acceptance_types": {"exit_code", "test_passes"},
     },
     "lint_gate": {
         "required_inputs": ("path",),
@@ -248,7 +248,7 @@ TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-ACCEPTANCE_TYPES = {"file_exists", "content_contains", "exit_code", "diff_scope"}
+ACCEPTANCE_TYPES = {"file_exists", "content_contains", "exit_code", "diff_scope", "test_passes"}
 
 
 def validate_tool_contracts(data: dict) -> Tuple[bool, Optional[str]]:
