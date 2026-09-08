@@ -42,12 +42,12 @@ export function ApprovalBanner() {
   return (
     <div
       data-testid="approval-banner"
-      className="border border-amber-600/60 bg-amber-950/40 px-4 py-3"
+      className="fixed inset-x-4 top-4 z-50 mx-auto max-w-3xl rounded-xl border border-amber-400/30 bg-[#211b12]/95 px-4 py-3 shadow-2xl shadow-black/40 backdrop-blur-xl sm:inset-x-auto sm:right-6 sm:left-auto sm:w-[min(640px,calc(100vw-3rem))]"
     >
       <div className="flex items-start gap-3">
         <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-amber-200">
+          <div className="text-sm font-semibold text-amber-100">
             工具调用等待审批：{pendingApproval.tool_id}
           </div>
           <div className="mt-1 truncate text-xs text-zinc-400" title={pendingApproval.instruction}>

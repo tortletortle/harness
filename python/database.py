@@ -11,7 +11,15 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pathlib import Path
 
-from models import DesignDocument, ExecutionPlan, Step, PlanStatus, StepStatus
+from models import (
+    DesignDocument,
+    ExecutionPlan,
+    Step,
+    PlanStatus,
+    StepStatus,
+    RunStatus,
+    AttemptStatus,
+)
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -36,8 +44,10 @@ class Database:
     
     def _get_connection(self):
         """获取数据库连接"""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row  # 使用Row对象
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA journal_mode = WAL")
         # SQLite 默认不强制外键，必须逐连接开启，
         # 否则建表时的 FOREIGN KEY 声明形同虚设，孤儿 steps/logs 可以存在。
         conn.execute("PRAGMA foreign_keys = ON")
@@ -48,6 +58,46 @@ class Database:
         with closing(self._get_connection()) as conn:
             cursor = conn.cursor()
             
+            # 执行运行与步骤尝试：一份计划可有多次 execute/resume/retry。
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS execution_runs (
+                    run_id TEXT PRIMARY KEY,
+                    plan_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    trigger TEXT NOT NULL,
+                    branch_version INTEGER NOT NULL DEFAULT 1,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    heartbeat_at TEXT,
+                    owner_token TEXT NOT NULL,
+                    failure_reason TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (plan_id) REFERENCES plans(plan_id)
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS execution_attempts (
+                    attempt_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    plan_id TEXT NOT NULL,
+                    step_id TEXT NOT NULL,
+                    attempt_no INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    duration_ms INTEGER,
+                    retryable INTEGER,
+                    failure_reason TEXT,
+                    outputs TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (run_id) REFERENCES execution_runs(run_id),
+                    FOREIGN KEY (plan_id) REFERENCES plans(plan_id),
+                    FOREIGN KEY (step_id) REFERENCES steps(step_id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_execution_runs_plan ON execution_runs(plan_id, created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_execution_attempts_run ON execution_attempts(run_id, attempt_no)")
+
             # 设计书表
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS designs (
@@ -182,7 +232,11 @@ class Database:
             audit_columns = {row[1] for row in cursor.fetchall()}
             if "grant_id" not in audit_columns:
                 cursor.execute("ALTER TABLE audit_logs ADD COLUMN grant_id TEXT")
-            
+
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_steps_plan_branch_status_order ON steps(plan_id, branch_version, status, is_obsolete, step_order)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_step_events_plan_event ON step_events(plan_id, event_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_plans_created_at ON plans(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_plan_timestamp ON audit_logs(plan_id, timestamp)")
             conn.commit()
     
     def save_design(self, design: DesignDocument) -> bool:
@@ -199,8 +253,12 @@ class Database:
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(design_id) DO UPDATE SET
-                        user_approval = ?,
-                        user_comments = ?
+                        user_request = excluded.user_request,
+                        timestamp = excluded.timestamp,
+                        part1_design = excluded.part1_design,
+                        part2_tool_assessment = excluded.part2_tool_assessment,
+                        user_approval = excluded.user_approval,
+                        user_comments = excluded.user_comments
                 """, (
                     str(design.design_id),
                     design.user_request,
@@ -210,8 +268,6 @@ class Database:
                     design.user_approval,
                     design.user_comments,
                     datetime.utcnow().isoformat(),
-                    design.user_approval,
-                    design.user_comments,
                 ))
                 
                 conn.commit()
@@ -659,6 +715,22 @@ class Database:
             logger.exception("查询活动步骤快照失败: {}", e)
             raise DatabaseError(f"查询活动步骤快照失败: {e}") from e
 
+    def get_active_failed_steps(self, plan_id: str, branch_version: int) -> List[Dict[str, Any]]:
+        """获取指定活动分支上仍处于 Failed 的步骤，供完成判定和恢复检查点使用。"""
+        try:
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM steps
+                    WHERE plan_id = ? AND branch_version = ?
+                      AND is_obsolete = 0 AND status = ?
+                    ORDER BY step_order ASC
+                """, (plan_id, branch_version, StepStatus.FAILED.value))
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.exception("查询活动失败步骤失败: {}", e)
+            raise DatabaseError(f"查询活动失败步骤失败: {e}") from e
+
     def get_effective_step_status(self, plan_id: str, step_id: str, branch_version: int) -> Optional[str]:
         """
         查询步骤在指定分支上的「生效状态」。
@@ -1001,6 +1073,164 @@ class Database:
             logger.exception("克隆步骤失败: {}", e)
             raise DatabaseError(f"克隆步骤失败: {e}") from e
 
+    def start_execution_run(
+        self,
+        plan_id: str,
+        from_statuses: tuple,
+        trigger: str = "execute",
+        owner_token: str = "",
+        branch_version: int = 1,
+    ) -> Optional[Dict[str, Any]]:
+        """原子认领计划并创建 Running Run；认领失败不产生 Run。"""
+        if not from_statuses:
+            return None
+        run_id = str(uuid.uuid4())
+        now = datetime.utcnow().isoformat()
+        valid = {s.value for s in PlanStatus}
+        if PlanStatus.RUNNING.value not in valid:
+            return None
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                placeholders = ",".join("?" * len(from_statuses))
+                cursor.execute(
+                    f"UPDATE plans SET status = ? WHERE plan_id = ? AND status IN ({placeholders})",
+                    [PlanStatus.RUNNING.value, str(plan_id), *from_statuses],
+                )
+                if cursor.rowcount != 1:
+                    return None
+                cursor.execute("""INSERT INTO execution_runs
+                    (run_id, plan_id, status, trigger, branch_version, started_at,
+                     heartbeat_at, owner_token, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (run_id, str(plan_id), RunStatus.RUNNING.value, str(trigger),
+                     int(branch_version or 1), now, now, str(owner_token or run_id), now))
+                return {"run_id": run_id, "plan_id": str(plan_id), "owner_token": str(owner_token or run_id),
+                        "status": RunStatus.RUNNING.value, "branch_version": int(branch_version or 1),
+                        "started_at": now}
+        except Exception as e:
+            logger.exception("启动执行 Run 失败: {}", e)
+            raise DatabaseError(f"启动执行 Run 失败: {e}") from e
+
+    def finish_execution_run(self, run_id: str, owner_token: str, status: str,
+                             failure_reason: str = None) -> bool:
+        """仅 Run owner 可以结束 Run，防止旧任务覆盖新任务。"""
+        if status not in {s.value for s in RunStatus}:
+            return False
+        now = datetime.utcnow().isoformat()
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                cursor.execute("""UPDATE execution_runs
+                    SET status = ?, finished_at = ?, heartbeat_at = ?, failure_reason = ?
+                    WHERE run_id = ? AND owner_token = ? AND status = ?""",
+                    (status, now, now, failure_reason, str(run_id), str(owner_token), RunStatus.RUNNING.value))
+                return cursor.rowcount == 1
+        except Exception as e:
+            logger.exception("结束执行 Run 失败: {}", e)
+            raise DatabaseError(f"结束执行 Run 失败: {e}") from e
+
+    def heartbeat_execution_run(self, run_id: str, owner_token: str) -> bool:
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE execution_runs SET heartbeat_at = ? WHERE run_id = ? AND owner_token = ? AND status = ?",
+                               (datetime.utcnow().isoformat(), str(run_id), str(owner_token), RunStatus.RUNNING.value))
+                return cursor.rowcount == 1
+        except Exception as e:
+            raise DatabaseError(f"执行 Run 心跳失败: {e}") from e
+
+    def create_execution_attempt(self, run_id: str, plan_id: str, step_id: str,
+                                 attempt_no: int) -> Dict[str, Any]:
+        attempt_id = str(uuid.uuid4())
+        now = datetime.utcnow().isoformat()
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                conn.execute("""INSERT INTO execution_attempts
+                    (attempt_id, run_id, plan_id, step_id, attempt_no, status, started_at, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (attempt_id, str(run_id), str(plan_id), str(step_id), int(attempt_no),
+                     AttemptStatus.RUNNING.value, now, now))
+                return {"attempt_id": attempt_id, "run_id": str(run_id), "plan_id": str(plan_id),
+                        "step_id": str(step_id), "attempt_no": int(attempt_no), "status": AttemptStatus.RUNNING.value,
+                        "started_at": now}
+        except Exception as e:
+            logger.exception("创建执行 Attempt 失败: {}", e)
+            raise DatabaseError(f"创建执行 Attempt 失败: {e}") from e
+
+    def finish_execution_attempt(self, attempt_id: str, status: str, *, retryable: bool = None,
+                                 failure_reason: str = None, outputs: Dict[str, Any] = None,
+                                 duration_ms: int = None, run_id: str = None,
+                                 owner_token: str = None) -> bool:
+        if status not in {s.value for s in AttemptStatus}:
+            return False
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                # 可选 fencing：attempt 必须仍属于指定 run，且该 run 正由 owner_token 持有。
+                # 防止「旧任务/旧前台实例」在换跑/恢复后把新任务正在执行的 attempt 盖上终态。
+                if run_id is not None:
+                    cursor.execute("""SELECT r.status AS run_status FROM execution_attempts a
+                        JOIN execution_runs r ON r.run_id = a.run_id
+                        WHERE a.attempt_id = ? AND a.run_id = ?""",
+                        (str(attempt_id), str(run_id)))
+                    row = cursor.fetchone()
+                    if not row:
+                        return False
+                    if row["run_status"] != RunStatus.RUNNING.value:
+                        return False
+                    if owner_token is not None:
+                        cursor.execute("""SELECT owner_token FROM execution_runs WHERE run_id = ?""",
+                                       (str(run_id),))
+                        run_row = cursor.fetchone()
+                        if not run_row or run_row["owner_token"] != str(owner_token):
+                            return False
+                cursor.execute("""UPDATE execution_attempts SET status = ?, finished_at = ?,
+                    duration_ms = ?, retryable = ?, failure_reason = ?, outputs = ?
+                    WHERE attempt_id = ? AND status = ?""",
+                    (status, datetime.utcnow().isoformat(), duration_ms,
+                     None if retryable is None else int(bool(retryable)), failure_reason,
+                     json.dumps(outputs, ensure_ascii=False, default=str) if outputs is not None else None,
+                     str(attempt_id), AttemptStatus.RUNNING.value))
+                return cursor.rowcount == 1
+        except Exception as e:
+            raise DatabaseError(f"结束执行 Attempt 失败: {e}") from e
+
+    def recover_orphaned_runs(self) -> int:
+        """将服务重启遗留的 Running Run/Attempt 标记为 Interrupted。"""
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT run_id FROM execution_runs WHERE status = ?", (RunStatus.RUNNING.value,))
+                run_ids = [str(row["run_id"]) for row in cursor.fetchall()]
+                now = datetime.utcnow().isoformat()
+                for run_id in run_ids:
+                    cursor.execute("UPDATE execution_attempts SET status = ?, finished_at = ? WHERE run_id = ? AND status = ?",
+                                   (AttemptStatus.INTERRUPTED.value, now, run_id, AttemptStatus.RUNNING.value))
+                    cursor.execute("UPDATE execution_runs SET status = ?, finished_at = ?, heartbeat_at = ?, failure_reason = ? WHERE run_id = ? AND status = ?",
+                                   (RunStatus.INTERRUPTED.value, now, now, "interrupted by service restart", run_id, RunStatus.RUNNING.value))
+                return len(run_ids)
+        except Exception as e:
+            logger.exception("孤儿 Run 恢复失败: {}", e)
+            raise DatabaseError(f"孤儿 Run 恢复失败: {e}") from e
+
+    def get_execution_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        with closing(self._get_connection()) as conn:
+            row = conn.execute("SELECT * FROM execution_runs WHERE run_id = ?", (str(run_id),)).fetchone()
+            return dict(row) if row else None
+
+    def list_execution_runs(self, plan_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+        with closing(self._get_connection()) as conn:
+            rows = conn.execute("SELECT * FROM execution_runs WHERE plan_id = ? ORDER BY created_at DESC LIMIT ?",
+                                (str(plan_id), max(1, min(int(limit or 100), 500)))).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_execution_attempts(self, run_id: str, limit: int = 500) -> List[Dict[str, Any]]:
+        with closing(self._get_connection()) as conn:
+            rows = conn.execute("SELECT * FROM execution_attempts WHERE run_id = ? ORDER BY attempt_no ASC, created_at ASC LIMIT ?",
+                                (str(run_id), max(1, min(int(limit or 500), 1000)))).fetchall()
+            return [dict(row) for row in rows]
+
     def update_plan(self, plan_id: str, status: str) -> bool:
         """
         更新计划状态。向后兼容旧调用方；新状态机逻辑请使用 update_plan_state_machine。
@@ -1099,87 +1329,48 @@ class Database:
             raise DatabaseError(f"清除计划断点失败: {e}") from e
 
     def recover_orphaned_executions(self) -> int:
-        """
-        单进程部署下，进程重启意味着之前标记为 Running 的执行必然已经中断（无人在后台推进）。
-        这些残留的 Running 记录会永久卡住，未来也无法被正常的暂停/恢复逻辑感知。
-
-        P1-a 事件重放式恢复（OpenHands 语义）：状态以 step_events 推导为准，
-        DB 行状态只是缓存。对中断时正在 Running 的步骤逐事件回放判定：
-
-        - 事件流中已有 success 事件 → 步骤实际已执行完成，只是状态写入丢失，
-          修正为 Success（不再误标 Failed）；
-        - 否则 → 补一条 interrupted 事件并把步骤标回 Pending，
-          下次 /execute 认领后自动重跑（替代旧的"一律标 Failed"）。
-
-        计划本身仍标记为 Failed：进程级中断对用户是明确失败信号，
-        重新执行计划（FAILED 在 /execute 认领范围内）即可从断点续跑。
-
-        Returns:
-            被标记为 Failed 的计划数量
-        """
+        """恢复服务重启时遗留的 Running/Retry 执行。"""
         try:
             with closing(self._get_connection()) as conn, conn:
                 cursor = conn.cursor()
-
-                cursor.execute(
-                    "SELECT plan_id FROM plans WHERE status = ?",
-                    (PlanStatus.RUNNING.value,),
-                )
-                orphaned_plan_ids = [row["plan_id"] for row in cursor.fetchall()]
-
-                if not orphaned_plan_ids:
-                    return 0
-
-                for plan_id in orphaned_plan_ids:
-                    cursor.execute(
-                        "UPDATE plans SET status = ? WHERE plan_id = ?",
-                        (PlanStatus.FAILED.value, plan_id),
-                    )
-                    # 找出中断时仍在 Running 的步骤，逐个做事件重放判定
-                    cursor.execute(
-                        "SELECT step_id FROM steps WHERE plan_id = ? AND status = ?",
-                        (plan_id, StepStatus.RUNNING.value),
-                    )
-                    interrupted_step_ids = [row["step_id"] for row in cursor.fetchall()]
-
-                    for step_id in interrupted_step_ids:
-                        cursor.execute(
-                            "SELECT COUNT(*) AS n FROM step_events "
-                            "WHERE step_id = ? AND event_type = 'success'",
-                            (step_id,),
-                        )
-                        succeeded_before_crash = cursor.fetchone()["n"] > 0
-
-                        if succeeded_before_crash:
-                            # 工具已执行完成、结果已入事件流，仅状态行写入丢失：
-                            # 重放事件得出 Success，不产生副作用重复执行
-                            cursor.execute(
-                                "UPDATE steps SET status = ? WHERE step_id = ?",
-                                (StepStatus.SUCCESS.value, step_id),
-                            )
-                        else:
-                            # 执行结果未知：标记 interrupted 并回到 Pending，
-                            # 下次执行重跑该步骤（可能重复副作用，由工具幂等性兜底）
-                            cursor.execute(
-                                "INSERT INTO step_events (step_id, plan_id, event_type, event_data, branch_version, created_at) "
-                                "VALUES (?, ?, 'interrupted', ?, 1, ?)",
-                                (
-                                    step_id,
-                                    plan_id,
-                                    json.dumps({"reason": "interrupted by service restart"}, ensure_ascii=False),
-                                    datetime.utcnow().isoformat(),
-                                ),
-                            )
-                            cursor.execute(
-                                "UPDATE steps SET status = ? WHERE step_id = ?",
-                                (StepStatus.PENDING.value, step_id),
-                            )
-
-                return len(orphaned_plan_ids)
+                cursor.execute("SELECT plan_id, current_branch FROM plans WHERE status = ?", (PlanStatus.RUNNING.value,))
+                orphaned = [dict(row) for row in cursor.fetchall()]
+                for plan_row in orphaned:
+                    plan_id = str(plan_row["plan_id"])
+                    branch = int(plan_row.get("current_branch") or 1)
+                    cursor.execute("""SELECT step_id, step_order, branch_version, status FROM steps
+                        WHERE plan_id = ? AND branch_version = ? AND is_obsolete = 0
+                        AND status IN (?, ?) ORDER BY step_order ASC""",
+                        (plan_id, branch, StepStatus.RUNNING.value, StepStatus.RETRY.value))
+                    interrupted = [dict(row) for row in cursor.fetchall()]
+                    checkpoint = None
+                    for row in interrupted:
+                        step_id = str(row["step_id"])
+                        step_branch = int(row["branch_version"] or branch)
+                        cursor.execute("""SELECT event_id FROM step_events
+                            WHERE plan_id = ? AND step_id = ? AND branch_version = ? AND event_type = 'success'
+                            ORDER BY event_id DESC LIMIT 1""", (plan_id, step_id, step_branch))
+                        if cursor.fetchone():
+                            cursor.execute("UPDATE steps SET status = ? WHERE step_id = ?", (StepStatus.SUCCESS.value, step_id))
+                            continue
+                        if checkpoint is None:
+                            checkpoint = step_id
+                        cursor.execute("""INSERT INTO step_events
+                            (step_id, plan_id, event_type, event_data, branch_version, created_at)
+                            VALUES (?, ?, 'interrupted', ?, ?, ?)""", (step_id, plan_id,
+                            json.dumps({"reason": "interrupted by service restart", "previous_status": row["status"]}, ensure_ascii=False),
+                            step_branch, datetime.utcnow().isoformat()))
+                        cursor.execute("UPDATE steps SET status = ? WHERE step_id = ?", (StepStatus.PENDING.value, step_id))
+                    if checkpoint is not None:
+                        cursor.execute("UPDATE plans SET status = ?, resume_from_step_id = ?, paused_at_step_id = NULL WHERE plan_id = ?",
+                                       (PlanStatus.FAILED.value, checkpoint, plan_id))
+                    else:
+                        cursor.execute("UPDATE plans SET status = ? WHERE plan_id = ?", (PlanStatus.FAILED.value, plan_id))
+                return len(orphaned)
         except Exception as e:
             logger.exception("孤儿任务恢复失败: {}", e)
             raise DatabaseError(f"孤儿任务恢复失败: {e}") from e
-    
+
     def log(self, level: str, message: str, context: Dict[str, Any] = None, service: str = None):
         """记录日志"""
         try:

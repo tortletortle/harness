@@ -1,107 +1,55 @@
 /**
- * AI 助手面板（右侧）
+ * AI Copilot for the current workspace.
  */
 
 import { useRef, useState } from 'react';
-import { X, Send, Bot } from 'lucide-react';
+import { Bot, ChevronRight, Loader2, Send, Sparkles, X } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { apiClient } from '../api/client';
 
-interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
+interface ChatMessage { role: 'user' | 'assistant'; content: string }
+
+const suggestions = ['总结当前任务', '检查执行风险', '下一步该做什么？'];
 
 export function AiPanel() {
-  const { toggleAiPanel } = useAppStore();
+  const { toggleAiPanel, currentPlan } = useAppStore();
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'assistant', content: '你好！我是 AI 助手，可以帮你分析任务、解答问题。有什么需要帮助的吗？' }
+    { role: 'assistant', content: '你好，我是你的 EAS Copilot。可以帮你分析任务、检查风险，或解释执行结果。' },
   ]);
   const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
 
-  const handleSend = async () => {
-    if (!input.trim()) return;
-    
-    const userMessage = input;
+  const handleSend = async (preset?: string) => {
+    const userMessage = (preset ?? input).trim();
+    if (!userMessage || sending) return;
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
-    
+    setSending(true);
+    setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
     try {
-      // 调用真实 API（服务端会话记忆 + Grant 约束的工具调用）
       const result = await apiClient.chat(userMessage, sessionIdRef.current);
       sessionIdRef.current = result.sessionId || sessionIdRef.current;
-      const toolNote = result.toolCalls.length
-        ? `\n（已调用工具: ${result.toolCalls.map(tc => tc.tool + (tc.ok ? '' : '×')).join('、')}）`
-        : '';
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: result.reply + toolNote
-      }]);
+      const toolNote = result.toolCalls.length ? `\n已调用：${result.toolCalls.map((tc) => tc.tool + (tc.ok ? '' : ' ×')).join('、')}` : '';
+      setMessages((prev) => [...prev, { role: 'assistant', content: result.reply + toolNote }]);
     } catch (error) {
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: `抱歉，出错了: ${error}` 
-      }]);
+      setMessages((prev) => [...prev, { role: 'assistant', content: `抱歉，暂时无法完成：${error}` }]);
+    } finally {
+      setSending(false);
     }
   };
 
   return (
-    <div className="w-80 bg-zinc-900 border-l border-zinc-800 flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
-        <div className="flex items-center gap-2">
-          <Bot className="w-4 h-4 text-blue-400" />
-          <span className="text-sm font-medium text-white">AI 助手</span>
-        </div>
-        <button
-          onClick={toggleAiPanel}
-          className="text-zinc-400 hover:text-white transition-colors"
-        >
-          <X className="w-4 h-4" />
-        </button>
+    <aside className="flex h-full min-h-0 w-full flex-col bg-[#101216]">
+      <div className="flex h-[72px] shrink-0 items-center justify-between border-b border-white/[0.08] px-4">
+        <div className="flex items-center gap-3"><div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/15 text-violet-300"><Bot className="h-4 w-4" /></div><div><div className="text-[13px] font-semibold text-white">AI Copilot</div><div className="flex items-center gap-1.5 text-[10px] text-zinc-500"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />已连接</div></div></div>
+        <button onClick={toggleAiPanel} className="rounded-md p-1.5 text-zinc-500 hover:bg-white/[0.06] hover:text-white"><X className="h-4 w-4" /></button>
       </div>
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {messages.map((msg, i) => (
-          <div
-            key={i}
-            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div
-              className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                msg.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-zinc-800 text-zinc-300'
-              }`}
-            >
-              {msg.content}
-            </div>
-          </div>
-        ))}
+      {currentPlan && <div className="border-b border-white/[0.06] px-4 py-3"><div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-zinc-600">当前上下文</div><div className="flex items-center gap-2 text-xs text-zinc-300"><span className="h-1.5 w-1.5 rounded-full bg-violet-300" />计划 {currentPlan.plan_id.slice(0, 8)}</div></div>}
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+        {messages.map((message, index) => <div key={index} className={`flex gap-2.5 ${message.role === 'user' ? 'flex-row-reverse' : ''}`}><div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${message.role === 'user' ? 'bg-white/[0.08] text-zinc-400' : 'bg-violet-500/15 text-violet-300'}`}>{message.role === 'user' ? <span className="text-[10px] font-semibold">你</span> : <Sparkles className="h-3 w-3" />}</div><div className={`max-w-[84%] whitespace-pre-wrap rounded-xl px-3 py-2.5 text-xs leading-relaxed ${message.role === 'user' ? 'bg-violet-600 text-white' : 'border border-white/[0.07] bg-white/[0.035] text-zinc-300'}`}>{message.content}</div></div>)}
+        {sending && <div className="flex items-center gap-2 text-xs text-zinc-500"><Loader2 className="h-3.5 w-3.5 animate-spin text-violet-300" />Copilot 正在思考…</div>}
       </div>
-
-      {/* Input */}
-      <div className="p-3 border-t border-zinc-800">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder="输入问题..."
-            className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-blue-600"
-          />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim()}
-            className="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded-lg transition-colors"
-          >
-            <Send className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    </div>
+      <div className="shrink-0 border-t border-white/[0.08] p-3"><div className="mb-2 flex flex-wrap gap-1.5">{suggestions.map((suggestion) => <button key={suggestion} onClick={() => void handleSend(suggestion)} disabled={sending} className="flex items-center gap-1 rounded-full border border-white/[0.08] px-2.5 py-1 text-[10px] text-zinc-500 transition-colors hover:border-violet-400/40 hover:text-violet-200 disabled:opacity-40">{suggestion}<ChevronRight className="h-2.5 w-2.5" /></button>)}</div><div className="flex items-center gap-2 rounded-xl border border-white/[0.1] bg-black/20 p-1.5 focus-within:border-violet-400/50"><input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void handleSend(); }} placeholder="询问 Copilot…" className="min-w-0 flex-1 bg-transparent px-2 text-xs text-white placeholder:text-zinc-600 focus:outline-none" /><button onClick={() => void handleSend()} disabled={!input.trim() || sending} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-violet-600 text-white transition-colors hover:bg-violet-500 disabled:bg-white/[0.06] disabled:text-zinc-600"><Send className="h-3.5 w-3.5" /></button></div></div>
+    </aside>
   );
 }

@@ -1,112 +1,55 @@
 /**
- * 侧边栏导航
+ * Workspace navigation for the EAS control room.
  */
 
 import {
-  FileText,
-  Play,
-  Wrench,
-  Clock,
-  Settings,
-  PenSquare,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Terminal,
-  Bot,
-  Activity,
-  ScrollText,
+  Activity, Bot, ChevronRight, HelpCircle, FileText, History,
+  LayoutDashboard, PanelLeftClose, PanelLeftOpen, PenSquare, ScrollText,
+  Settings, Terminal, Wrench,
 } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 
+const primaryItems = [
+  { id: 'input' as const, label: '新建任务', icon: PenSquare },
+  { id: 'design' as const, label: '设计书', icon: FileText },
+  { id: 'plan' as const, label: '执行计划', icon: LayoutDashboard },
+  { id: 'execution' as const, label: '实时执行', icon: Activity },
+];
+const libraryItems = [
+  { id: 'tools' as const, label: '工具库', icon: Wrench },
+  { id: 'history' as const, label: '历史记录', icon: History },
+  { id: 'audit' as const, label: '审计日志', icon: ScrollText },
+];
+
 export function Sidebar() {
-  const { 
-    currentView, setCurrentView,
-    sidebarCollapsed, toggleSidebar,
-    toggleLogPanel, logPanelCollapsed,
-    toggleAiPanel, aiPanelCollapsed,
-  } = useAppStore();
-
-  const navItems = [
-    { id: 'input' as const, label: '新建任务', icon: PenSquare },
-    { id: 'design' as const, label: '设计书', icon: FileText },
-    { id: 'plan' as const, label: '执行计划', icon: Play },
-    { id: 'execution' as const, label: '执行', icon: Activity },
-    { id: 'tools' as const, label: '工具', icon: Wrench },
-    { id: 'history' as const, label: '历史记录', icon: Clock },
-    { id: 'audit' as const, label: '审计日志', icon: ScrollText },
-    { id: 'config' as const, label: '配置', icon: Settings },
-  ];
-
-  return (
-    <div className="w-full h-full bg-zinc-900 border-r border-zinc-800 flex flex-col">
-      {/* Logo */}
-      <div className="p-4 border-b border-zinc-800 overflow-hidden">
-        <h1 className="text-xl font-bold text-white truncate">EAS 2.0</h1>
-        <p className="text-xs text-zinc-400 mt-1 truncate">AI 任务编排系统</p>
-      </div>
-
-      {/* Navigation */}
-      <nav className="flex-1 p-2">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = currentView === item.id;
-          
-          return (
-            <button
-              key={item.id}
-              onClick={() => setCurrentView(item.id)}
-              title={item.label}
-              className={`
-                w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium
-                transition-colors mb-1 overflow-hidden
-                ${isActive 
-                  ? 'bg-blue-600 text-white' 
-                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
-                }
-              `}
-            >
-              <Icon className="w-4 h-4 flex-shrink-0" />
-              <span className="truncate">{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-
-      {/* Panel toggles */}
-      <div className="p-2 border-t border-zinc-800 space-y-1">
-        <button
-          onClick={toggleLogPanel}
-          title="切换日志面板"
-          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors overflow-hidden ${
-            !logPanelCollapsed ? 'text-green-400 bg-zinc-800' : 'text-zinc-500 hover:text-white hover:bg-zinc-800'
-          }`}
-        >
-          <Terminal className="w-4 h-4 flex-shrink-0" />
-          <span className="truncate">日志</span>
-        </button>
-        <button
-          onClick={toggleAiPanel}
-          title="切换 AI 助手"
-          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors overflow-hidden ${
-            !aiPanelCollapsed ? 'text-blue-400 bg-zinc-800' : 'text-zinc-500 hover:text-white hover:bg-zinc-800'
-          }`}
-        >
-          <Bot className="w-4 h-4 flex-shrink-0" />
-          <span className="truncate">AI 助手</span>
-        </button>
-      </div>
-
-      {/* Collapse toggle + Footer */}
-      <div className="p-2 border-t border-zinc-800">
-        <button
-          onClick={toggleSidebar}
-          title="收起/展开侧栏"
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors overflow-hidden"
-        >
-          <PanelLeftClose className="w-4 h-4 flex-shrink-0" />
-          <span className="truncate text-sm">收起</span>
-        </button>
-      </div>
+  const { currentView, setCurrentView, sidebarCollapsed, toggleSidebar, toggleLogPanel, logPanelCollapsed, toggleAiPanel, aiPanelCollapsed, currentPlan, isExecuting } = useAppStore();
+  const renderItem = (item: typeof primaryItems[number]) => {
+    const Icon = item.icon;
+    const active = currentView === item.id;
+    return <button key={item.id} onClick={() => setCurrentView(item.id)} title={sidebarCollapsed ? item.label : undefined} aria-current={active ? 'page' : undefined} className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-all ${active ? 'bg-violet-500/15 text-white shadow-[inset_2px_0_0_#8b7cff]' : 'text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-100'}`}>
+      <Icon className={`h-[17px] w-[17px] shrink-0 ${active ? 'text-violet-300' : 'text-zinc-500 group-hover:text-zinc-300'}`} />
+      {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
+      {!sidebarCollapsed && active && <ChevronRight className="ml-auto h-3.5 w-3.5 text-violet-300" />}
+    </button>;
+  };
+  return <aside className={`flex h-full min-h-0 flex-col border-r border-white/[0.08] bg-[#0d0f13]/95 ${sidebarCollapsed ? 'w-[68px]' : 'w-full'}`}>
+    <div className={`flex h-[72px] shrink-0 items-center border-b border-white/[0.08] ${sidebarCollapsed ? 'justify-center px-2' : 'gap-3 px-4'}`}>
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-400 to-indigo-600 text-sm font-bold text-white shadow-lg shadow-violet-900/30">E</div>
+      {!sidebarCollapsed && <div className="min-w-0"><div className="truncate text-[13px] font-semibold tracking-wide text-white">EAS Control Room</div><div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-zinc-500"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />本地工作区</div></div>}
     </div>
-  );
+    <div className="min-h-0 flex-1 overflow-y-auto px-2 py-4">
+      {!sidebarCollapsed && <div className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">工作流</div>}
+      <nav className="space-y-1">{primaryItems.map(renderItem)}</nav>
+      {!sidebarCollapsed && <div className="mb-2 mt-7 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">资源与治理</div>}
+      <nav className="space-y-1">{libraryItems.map(renderItem)}</nav>
+      {!sidebarCollapsed && currentPlan && <div className="mt-7 rounded-xl border border-white/[0.07] bg-white/[0.025] p-3"><div className="mb-2 flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-600">当前任务{isExecuting && <span className="animate-pulse-soft text-violet-300">运行中</span>}</div><div className="truncate font-mono text-[11px] text-zinc-300">{currentPlan.plan_id}</div></div>}
+    </div>
+    <div className="shrink-0 space-y-1 border-t border-white/[0.08] p-2">
+      <button onClick={toggleLogPanel} title="切换活动流" className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${!logPanelCollapsed ? 'bg-emerald-400/10 text-emerald-300' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'}`}><Terminal className="h-[17px] w-[17px] shrink-0" />{!sidebarCollapsed && <span>活动流</span>}</button>
+      <button onClick={toggleAiPanel} title="切换 AI Copilot" className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${!aiPanelCollapsed ? 'bg-violet-400/10 text-violet-300' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'}`}><Bot className="h-[17px] w-[17px] shrink-0" />{!sidebarCollapsed && <span>AI Copilot</span>}</button>
+      {!sidebarCollapsed && <button onClick={() => setCurrentView('config')} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${currentView === 'config' ? 'bg-white/[0.06] text-zinc-100' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'}`}><Settings className="h-[17px] w-[17px]" /><span>设置</span></button>}
+      <button onClick={toggleSidebar} title={sidebarCollapsed ? '展开侧栏' : '收起侧栏'} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-zinc-600 transition-colors hover:bg-white/[0.05] hover:text-zinc-300 ${sidebarCollapsed ? 'justify-center' : ''}`}>{sidebarCollapsed ? <PanelLeftOpen className="h-[17px] w-[17px]" /> : <PanelLeftClose className="h-[17px] w-[17px]" />}{!sidebarCollapsed && <span>收起侧栏</span>}</button>
+      {!sidebarCollapsed && <div className="flex items-center gap-2 px-3 pt-2 text-[10px] text-zinc-700"><HelpCircle className="h-3 w-3" />EAS 2.0 · 本地运行</div>}
+    </div>
+  </aside>;
 }

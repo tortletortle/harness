@@ -114,6 +114,27 @@ def test_recover_replays_success_event_after_lost_status_write(tmp_path):
     assert not any(e["event_type"] == "interrupted" for e in events)
 
 
+def test_recover_handles_retry_state_and_preserves_branch(tmp_path):
+    db = Database(str(tmp_path / "eas.db"))
+    design_id = uuid.uuid4()
+    _make_design(db, design_id)
+    plan_id = uuid.uuid4()
+    steps = _make_plan(db, plan_id, design_id, PlanStatus.RUNNING, [StepStatus.RETRY])
+    # 模拟回滚后的活动分支。
+    with db._get_connection() as conn:
+        conn.execute("UPDATE plans SET current_branch = 2 WHERE plan_id = ?", (str(plan_id),))
+        conn.execute("UPDATE steps SET branch_version = 2 WHERE step_id = ?", (str(steps[0].step_id),))
+        conn.commit()
+
+    assert db.recover_orphaned_executions() == 1
+    assert db.get_plan_status(str(plan_id)) == "Failed"
+    plan = db.get_plan(str(plan_id))
+    assert str(plan.resume_from_step_id) == str(steps[0].step_id)
+    rows = db.get_step_events(str(plan_id), step_id=str(steps[0].step_id), branch_version=2)
+    assert any(event["event_type"] == "interrupted" for event in rows)
+    assert db.get_steps(str(plan_id))[0]["status"] == "Pending"
+
+
 def test_recover_does_not_touch_completed_or_pending_plans(tmp_path):
     db = Database(str(tmp_path / "eas.db"))
 

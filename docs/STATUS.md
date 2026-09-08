@@ -1,16 +1,14 @@
 # EAS 2.0 项目状态
 
-> 本文是唯一的现状文档（2026-08-29 更新）。早期的 CURRENT_STATUS.md、MISSING_FEATURES.md
+> 本文是唯一的现状文档（2026-09-07 更新）。早期的 CURRENT_STATUS.md、MISSING_FEATURES.md
 > 与若干测试报告已移入 [archive/](archive/)，描述的是 2026-08-21~24 的状态，多数结论已过时。
 
 ## 一句话现状
 
-核心链路（需求 → 设计书 → 审批 → 计划 → 执行 → 日志/历史）完整可用且经过加固，并已通过真实 LLM 端到端首跑验证（2026-08-30/31，
-任务"搜索 AI 免费试用信息"：设计书 42.7s 生成（含设计期真实搜索调用）→ 计划生成 → 执行 18/20 步成功，1 步 test_runner 如实失败）。
-当前状态（2026-08-31 更新）：10 个内置工具（含 super_search 超级搜索、code_context 代码上下文/记忆）、
-知识检索已落地（knowledge/injection.py 注入 Designer/coding_agent）、计划状态推送前后端闭环、
-token 用量记账与预算闸门、ACI 语法门禁与 Docker 沙箱、验收-指令一致性校验（零交集打回）。
-剩余短板：LLM 生成测试的质量磨合（1 步 test_runner 失败）、覆盖率 ~48%、bing 长中文查询拆分待接入、计划状态前端深度消费。
+核心链路（需求 → 设计书 → 审批 → 计划 → 执行 → 日志/历史）完整可用，并已补齐失败 checkpoint 续跑与 Retry 孤儿恢复：执行失败会保留恢复点，下一次重试从失败步骤继续，活动分支存在 Failed 步骤时禁止误报 Completed。
+当前状态（2026-09-07 更新）：10 个内置工具（含 super_search 超级搜索、code_context 代码上下文/记忆）、知识检索已落地（knowledge/injection.py 注入 Designer/coding_agent）、计划状态推送前后端闭环、token 用量记账与预算闸门、ACI 语法门禁与 Docker 沙箱、验收-指令一致性校验（零交集打回）。
+前端已完成大厂级控制台改造：统一应用壳层（顶部工作区栏 + 分组侧栏 + AI Copilot + 活动流 + 全局审批浮层）、统一视觉 token 系统、可持久化的深/亮色主题切换、新建任务工作台、执行计划 timeline 视图（移除页面内重复日志，统一由底部活动流承载），并已通过真实前后端 + WebSocket 链路验证。
+剩余短板：完整 AgentSession/Run/Turn/Attempt 持久化分层、LLM 生成测试的质量磨合、覆盖率约 48%、bing 长中文查询拆分待接入、计划状态前端深度消费。
 
 ## 已验证的数据（2026-08-29 实测）
 
@@ -21,18 +19,20 @@ token 用量记账与预算闸门、ACI 语法门禁与 Docker 沙箱、验收-�
 | API 端点 | 16 个（含暂停/恢复/跳步/回滚/审计/配置/重启）+ WebSocket 日志流 |
 | 前端视图 | 输入、设计书、计划、执行、历史、工具、配置、审计 8 个视图 + 全局错误提示 |
 | 内置工具 | 10 个（2026-08-30 新增 super_search 超级搜索 + code_context 代码上下文） |
-| CI | 三任务流水线（Rust / pytest / vitest） |
+| 前后端链路 | `/api/status`、`/api/tools`、`/api/plans`、工具库/历史/实时执行页面、带 token 的 `/ws/logs` 已实测连通（2026-09-07） |
+| 本地核心回归 | 33 通过（失败 checkpoint、孤儿 Retry、验收服务端集成） |
+| 外部依赖测试 | 2 个 exec_e2e 因 StepFun 返回 401 跳过不了；2 个真实浏览器检查受本机 Playwright 环境影响 |
 
 ## 已完成
 
 - **Designer 流程**：设计书生成（多提供商 fallback、缓存）、审批（批准生成计划 / 拒绝按反馈修订）
-- **执行系统**：计划执行、步骤重试与超时策略、暂停/恢复（原子断点）、跳步守卫、
-  回滚到指定步骤（克隆新分支 + 废弃旧分支）、孤儿恢复
+- **执行系统**：计划执行、步骤重试与超时策略、暂停/恢复（原子断点）、失败 checkpoint 续跑（重试从失败步骤继续）、Retry 孤儿恢复、跳步守卫、回滚到指定步骤（克隆新分支 + 废弃旧分支）、孤儿恢复
 - **状态机加固**：原子计划认领（claim_plan_status）、Paused 不可被队列任务抢走、
   状态与断点单条 UPDATE 落库
 - **错误处理契约**：DatabaseError / GenerationError 分层抛出，禁止假装成功；
   前端错误/警告全局 toast。详见 [ERROR_HANDLING.md](ERROR_HANDLING.md)
-- **前端**：React 仪表盘、WebSocket 实时日志（带重连去抖）、全局错误提示（ToastHub）、审计日志视图
+- **性能基准（2026-09-08）**：固定离线确定性基准 20 次；步骤摘要默认关闭路径 p50/p95 = 0.003/0.012 ms，启用摘要路径 = 0.145/0.308 ms；四引擎搜索并发 p50/p95 = 26.354/26.794 ms，串行基线 = 101.120/101.756 ms（p50 约 3.84x）；确定性 LLM 请求 p50/p95 = 0.109/0.136 ms；SQLite 日志写入 p50/p95 = 5.503/5.841 ms。原始结果见 `artifacts/performance_benchmark.json`，脚本见 `scripts/performance_benchmark.py`。
+
 - **安全**：全部 /api/* 端点 token 鉴权（Bearer / X-API-Token，常数时间比较）、
   命令执行与网络请求工具的安全加固（有专项测试）
 - **持久化**：SQLite 全量持久化 + 审计日志

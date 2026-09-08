@@ -33,6 +33,56 @@ class StepStatus(str, Enum):
     ROLLED_BACK = "RolledBack"
 
 
+class RunStatus(str, Enum):
+    PENDING = "Pending"
+    RUNNING = "Running"
+    PAUSED = "Paused"
+    COMPLETED = "Completed"
+    FAILED = "Failed"
+    INTERRUPTED = "Interrupted"
+    CANCELLED = "Cancelled"
+
+
+class AttemptStatus(str, Enum):
+    RUNNING = "Running"
+    SUCCEEDED = "Succeeded"
+    FAILED = "Failed"
+    RETRYING = "Retrying"
+    INTERRUPTED = "Interrupted"
+    TIMED_OUT = "TimedOut"
+    CANCELLED = "Cancelled"
+
+
+class ExecutionRun(BaseModel):
+    run_id: UUID = Field(default_factory=uuid4)
+    plan_id: UUID
+    status: RunStatus = RunStatus.PENDING
+    trigger: str = "execute"
+    branch_version: int = 1
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    heartbeat_at: Optional[datetime] = None
+    owner_token: str = ""
+    failure_reason: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ExecutionAttempt(BaseModel):
+    attempt_id: UUID = Field(default_factory=uuid4)
+    run_id: UUID
+    plan_id: UUID
+    step_id: UUID
+    attempt_no: int = 0
+    status: AttemptStatus = AttemptStatus.RUNNING
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    finished_at: Optional[datetime] = None
+    duration_ms: Optional[int] = None
+    retryable: Optional[bool] = None
+    failure_reason: Optional[str] = None
+    outputs: Optional[Dict[str, Any]] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Architecture(BaseModel):
     components: List[str]
     interactions: List[str]

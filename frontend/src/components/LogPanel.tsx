@@ -1,74 +1,67 @@
 /**
- * 日志面板
+ * Activity stream dock: live execution logs with level badges and auto-scroll.
  */
 
 import { useEffect, useRef } from 'react';
-import { Terminal, X } from 'lucide-react';
+import { TerminalSquare, X } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
+
+const levelStyles: Record<string, string> = {
+  success: 'bg-emerald-400/15 text-emerald-300 border-emerald-400/20',
+  error: 'bg-red-400/15 text-red-300 border-red-400/20',
+  warning: 'bg-amber-400/15 text-amber-300 border-amber-400/20',
+  info: 'bg-white/[0.06] text-zinc-300 border-white/[0.08]',
+};
+
+const levelLabel: Record<string, string> = {
+  success: '成功',
+  error: '错误',
+  warning: '警告',
+  info: '信息',
+};
 
 export function LogPanel() {
   const { logs, clearLogs } = useAppStore();
-  const logContainerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // 自动滚动到底部
-    if (logContainerRef.current) {
-      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
   }, [logs]);
 
-  const getLevelColor = (level: string) => {
-    switch (level) {
-      case 'success':
-        return 'text-green-400';
-      case 'error':
-        return 'text-red-400';
-      case 'warning':
-        return 'text-yellow-400';
-      default:
-        return 'text-zinc-400';
-    }
-  };
-
   return (
-    <div className="h-48 bg-zinc-950 border-t border-zinc-800 flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800">
-        <div className="flex items-center gap-2 text-sm font-medium text-white">
-          <Terminal className="w-4 h-4" />
-          <span>实时日志</span>
-          <span className="text-xs text-zinc-500">({logs.length})</span>
+    <div className="flex h-full min-h-0 flex-col bg-[#0b0d11]">
+      <div className="flex h-10 shrink-0 items-center justify-between border-b border-white/[0.07] px-4">
+        <div className="flex items-center gap-2 text-[12px] font-medium text-zinc-200">
+          <TerminalSquare className="h-3.5 w-3.5 text-emerald-300" />
+          <span>活动流</span>
+          <span className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">{logs.length}</span>
         </div>
-        <button
-          onClick={clearLogs}
-          className="text-zinc-400 hover:text-white transition-colors"
-          title="清空日志"
-        >
-          <X className="w-4 h-4" />
+        <button onClick={clearLogs} title="清空日志" className="rounded p-1 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-white">
+          <X className="h-3.5 w-3.5" />
         </button>
       </div>
 
-      {/* Logs */}
-      <div 
-        ref={logContainerRef}
-        className="flex-1 overflow-y-auto p-2 font-mono text-xs"
-      >
+      <div ref={containerRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3 font-mono text-[11px] leading-relaxed">
         {logs.length === 0 ? (
-          <div className="text-zinc-600 text-center py-8">暂无日志</div>
+          <div className="flex h-full items-center justify-center text-zinc-700">
+            暂无日志 · 执行任务后事件会实时出现在这里
+          </div>
         ) : (
-          logs.map((log, index) => (
-            <div key={index} className="mb-1">
-              <span className="text-zinc-600">
-                {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''}
-              </span>
-              {' '}
-              <span className={getLevelColor(log.level)}>
-                [{log.level.toUpperCase()}]
-              </span>
-              {' '}
-              <span className="text-zinc-300">{log.message}</span>
-            </div>
-          ))
+          <div className="space-y-1.5">
+            {logs.map((log, index) => (
+              <div key={index} className="flex items-start gap-2">
+                <span className="shrink-0 pt-px text-zinc-600">{log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''}</span>
+                <span className={`shrink-0 rounded border px-1.5 py-px text-[10px] ${levelStyles[log.level] || levelStyles.info}`}>
+                  {levelLabel[log.level] || log.level.toUpperCase()}
+                </span>
+                <span className={log.level === 'error' ? 'text-red-200/90' : log.level === 'warning' ? 'text-amber-100/80' : 'text-zinc-300'}>
+                  {log.message}
+                </span>
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>

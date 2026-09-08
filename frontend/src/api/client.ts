@@ -12,6 +12,8 @@ import type {
   ApprovalRequestEvent,
   ApprovalResolvedEvent,
   AuditLogEntry,
+  ExecutionRun,
+  ExecutionAttempt,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
@@ -289,9 +291,34 @@ export class ApiClient {
     };
   }
 
-  /**
-   * 获取审计日志（工具调用记录，含被安全拦截的调用）
-   */
+  /** 获取计划运行历史 */
+  async getPlanRuns(planId: string, limit = 20): Promise<ExecutionRun[]> {
+    const response = await authFetch(`${API_BASE}/api/plan/${planId}/runs?limit=${limit}`);
+    if (!response.ok) await throwResponseError(response, '获取运行历史失败');
+    const data = await response.json();
+    if (!data.success) throw new Error(data.detail || data.error || '获取运行历史失败');
+    return data.runs;
+  }
+
+  /** 获取单次运行及步骤尝试 */
+  async getRun(runId: string): Promise<{ run: ExecutionRun; attempts: ExecutionAttempt[] }> {
+    const response = await authFetch(`${API_BASE}/api/run/${runId}`);
+    if (!response.ok) await throwResponseError(response, '获取运行详情失败');
+    const data = await response.json();
+    if (!data.success) throw new Error(data.detail || data.error || '获取运行详情失败');
+    return { run: data.run, attempts: data.attempts || [] };
+  }
+
+  /** 获取单次运行的步骤尝试 */
+  async getRunAttempts(runId: string, limit = 500): Promise<ExecutionAttempt[]> {
+    const response = await authFetch(`${API_BASE}/api/run/${runId}/attempts?limit=${limit}`);
+    if (!response.ok) await throwResponseError(response, '获取执行尝试失败');
+    const data = await response.json();
+    if (!data.success) throw new Error(data.detail || data.error || '获取执行尝试失败');
+    return data.attempts;
+  }
+
+
   async getAuditLogs(limit = 100, planId?: string): Promise<AuditLogEntry[]> {
     const query = new URLSearchParams({ limit: String(limit) });
     if (planId) query.set('plan_id', planId);

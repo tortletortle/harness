@@ -105,14 +105,12 @@ export function DesignView() {
   const { part1, part2 } = currentDesign;
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <div className="max-w-4xl mx-auto space-y-6">
+    <div className="min-h-full px-4 py-6 sm:px-8 sm:py-8">
+      <div className="mx-auto max-w-5xl space-y-5">
         {/* Header */}
         <div>
-          <h2 className="text-2xl font-bold text-white mb-2">设计书审阅</h2>
-          <p className="text-sm text-zinc-400">
-            ID: {currentDesign.design_id}
-          </p>
+          <h2 className="text-2xl font-semibold tracking-tight text-white">设计书审阅</h2>
+          <p className="mt-1 text-xs text-zinc-500">设计书 ID：<code className="font-mono text-zinc-400">{currentDesign.design_id}</code> · 审阅架构、工具和执行边界</p>
         </div>
 
         {/* 用户需求 */}

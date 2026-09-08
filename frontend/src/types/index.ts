@@ -147,13 +147,41 @@ export interface AuditLogEntry {
   grant_id: string | null;
 }
 
+export interface ExecutionRun {
+  run_id: string;
+  plan_id: string;
+  status: 'Pending' | 'Running' | 'Paused' | 'Completed' | 'Failed' | 'Interrupted' | 'Cancelled';
+  trigger: string;
+  branch_version: number;
+  started_at?: string | null;
+  finished_at?: string | null;
+  heartbeat_at?: string | null;
+  failure_reason?: string | null;
+  created_at?: string;
+}
+
+export interface ExecutionAttempt {
+  attempt_id: string;
+  run_id: string;
+  plan_id: string;
+  step_id: string;
+  attempt_no: number;
+  status: 'Running' | 'Succeeded' | 'Failed' | 'Retrying' | 'Interrupted' | 'TimedOut' | 'Cancelled';
+  started_at?: string | null;
+  finished_at?: string | null;
+  duration_ms?: number | null;
+  retryable?: boolean | null;
+  failure_reason?: string | null;
+  outputs?: Record<string, any> | null;
+  created_at?: string;
+}
+
 export interface ApiResponse<T = any> {
   success: boolean;
   data?: T;
   error?: string;
 }
 
-/** Toast 通知级别 */
 export type ToastLevel = 'error' | 'warning';
 
 /** Toast 通知（右下角浮出，自动消失） */

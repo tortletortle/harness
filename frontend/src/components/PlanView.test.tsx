@@ -100,6 +100,20 @@ describe('PlanView 步骤状态渲染', () => {
 });
 
 describe('PlanView 计划级控制', () => {
+  it('Failed 计划显示重试执行并复用 executePlan', async () => {
+    const plan = makePlan(
+      [makeStep({ step_id: 'step-1', description: '失败步骤', status: 'Failed' })],
+      { status: 'Failed' }
+    );
+    const user = await renderPlan(plan);
+    mockedApi.executePlan.mockResolvedValue(undefined);
+
+    await user.click(screen.getByRole('button', { name: '重试执行' }));
+
+    await waitFor(() => expect(mockedApi.executePlan).toHaveBeenCalledWith('plan-1'));
+    expect(useAppStore.getState().logs.some((l) => l.message.includes('重试执行计划'))).toBe(true);
+  });
+
   it('计划执行中显示暂停按钮，点击调用 pausePlan', async () => {
     const plan = makePlan(
       [makeStep({ step_id: 'step-1', description: '步骤一', status: 'Running' })],

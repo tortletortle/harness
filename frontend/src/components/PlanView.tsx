@@ -5,20 +5,27 @@
  * 不再从日志文本推断。
  */
 
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import {
-  Play, Pause, SkipForward, RotateCcw, Loader2, ChevronDown, ChevronRight, Search,
-  CheckCircle, XCircle, Clock, MinusCircle,
+  CheckCircle,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Loader2,
+  MinusCircle,
+  Pause,
+  Play,
+  RotateCcw,
+  SkipForward,
+  XCircle,
 } from 'lucide-react';
 import { apiClient } from '../api/client';
 import { useAppStore } from '../stores/appStore';
 import { usePlanPolling } from '../hooks/usePlanPolling';
 import type { ExecutionPlan, PlanStatus, Step, StepStatus } from '../types';
 
-/** 计划终态集合 */
 const TERMINAL_PLAN_STATUSES: PlanStatus[] = ['Completed', 'Failed', 'Paused', 'RolledBack'];
 
-/** 计划状态中文标签 */
 const PLAN_STATUS_LABELS: Record<PlanStatus, string> = {
   Draft: '草稿',
   Pending: '待执行',
@@ -30,37 +37,49 @@ const PLAN_STATUS_LABELS: Record<PlanStatus, string> = {
   RolledBack: '已回滚',
 };
 
-/** 控制请求类型（同一时刻只允许一个控制请求在途） */
 type ControlAction = 'pause' | 'resume' | 'skip' | 'rollback' | null;
 
 function isTerminalPlan(plan: ExecutionPlan): boolean {
   return plan.status ? TERMINAL_PLAN_STATUSES.includes(plan.status) : false;
 }
 
+function statusTone(status?: PlanStatus): string {
+  switch (status) {
+    case 'Running':
+      return 'border-blue-400/25 bg-blue-400/10 text-blue-200';
+    case 'Failed':
+      return 'border-red-400/25 bg-red-400/10 text-red-200';
+    case 'Completed':
+      return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200';
+    case 'Paused':
+      return 'border-amber-400/25 bg-amber-400/10 text-amber-200';
+    default:
+      return 'border-white/[0.1] bg-white/[0.05] text-zinc-300';
+  }
+}
+
 export function PlanView() {
-  const { currentPlan, isExecuting, setIsExecuting, setCurrentPlan, addLog, logs } = useAppStore();
+  const {
+    currentPlan,
+    isExecuting,
+    setIsExecuting,
+    setCurrentPlan,
+    addLog,
+  } = useAppStore();
   const [expandedSegments, setExpandedSegments] = useState<Set<string>>(new Set());
-  const [logSearch, setLogSearch] = useState('');
   const [controlInFlight, setControlInFlight] = useState<ControlAction>(null);
   const [rollbackTarget, setRollbackTarget] = useState<Step | null>(null);
 
-  // 权威状态轮询（Running/Pending 时每 2s 同步一次）
   usePlanPolling();
-
-  const filteredLogs = useMemo(() => {
-    if (!logSearch.trim()) return logs;
-    const q = logSearch.toLowerCase();
-    return logs.filter(l => l.message.toLowerCase().includes(q));
-  }, [logs, logSearch]);
 
   if (!currentPlan) {
     return (
-      <div className="flex-1 flex items-center justify-center text-zinc-500">
+      <div className="flex min-h-full items-center justify-center text-zinc-500">
         <div className="text-center">
           <p className="mb-2">暂无执行计划</p>
           <button
             onClick={() => useAppStore.getState().setCurrentView('design')}
-            className="text-blue-500 hover:text-blue-400 text-sm"
+            className="text-sm text-violet-300 transition-colors hover:text-violet-200"
           >
             去审批设计书
           </button>
@@ -71,93 +90,70 @@ export function PlanView() {
 
   const planStatus = currentPlan.status;
   const terminal = isTerminalPlan(currentPlan);
-
-  // 汇总所有步骤，进度由服务端步骤状态推导（Skipped 计入已完成）
-  const allSteps = currentPlan.segments.flatMap(seg => seg.steps);
+  const allSteps = currentPlan.segments.flatMap((segment) => segment.steps);
   const totalSteps = allSteps.length;
-  const completedSteps = allSteps.filter(s => s.status === 'Success' || s.status === 'Skipped').length;
-  const failedSteps = allSteps.filter(s => s.status === 'Failed').length;
-  const progressPercent = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
+  const completedSteps = allSteps.filter(
+    (step) => step.status === 'Success' || step.status === 'Skipped',
+  ).length;
+  const failedSteps = allSteps.filter((step) => step.status === 'Failed').length;
+  const progressPercent = totalSteps ? Math.round((completedSteps / totalSteps) * 100) : 0;
   const hasProgress = isExecuting || completedSteps > 0 || failedSteps > 0;
 
-  const getStepStatusIcon = (status: StepStatus) => {
-    switch (status) {
-      case 'Running':
-      case 'Retry':
-        return <Loader2 className="w-4 h-4 text-blue-400 animate-spin" aria-label="执行中" />;
-      case 'Success':
-        return <CheckCircle className="w-4 h-4 text-green-400" aria-label="成功" />;
-      case 'Failed':
-        return <XCircle className="w-4 h-4 text-red-400" aria-label="失败" />;
-      case 'Skipped':
-        return <MinusCircle className="w-4 h-4 text-zinc-500" aria-label="已跳过" />;
-      case 'RolledBack':
-        return <RotateCcw className="w-4 h-4 text-orange-400" aria-label="已回滚" />;
-      default:
-        return <Clock className="w-4 h-4 text-zinc-600" aria-label="待执行" />;
+  const stepIcon = (status: StepStatus) => {
+    if (status === 'Running' || status === 'Retry') {
+      return <Loader2 className="h-4 w-4 animate-spin text-blue-300" aria-label="执行中" />;
     }
+    if (status === 'Success') {
+      return <CheckCircle className="h-4 w-4 text-emerald-300" aria-label="成功" />;
+    }
+    if (status === 'Failed') {
+      return <XCircle className="h-4 w-4 text-red-300" aria-label="失败" />;
+    }
+    if (status === 'Skipped') {
+      return <MinusCircle className="h-4 w-4 text-zinc-500" aria-label="已跳过" />;
+    }
+    if (status === 'RolledBack') {
+      return <RotateCcw className="h-4 w-4 text-orange-300" aria-label="已回滚" />;
+    }
+    return <Clock className="h-4 w-4 text-zinc-600" aria-label="待执行" />;
   };
 
-  const getStepStatusColor = (status: StepStatus) => {
-    switch (status) {
-      case 'Running':
-      case 'Retry':
-        return 'border-blue-500';
-      case 'Success':
-        return 'border-green-500';
-      case 'Failed':
-        return 'border-red-500';
-      case 'Skipped':
-        return 'border-zinc-500';
-      case 'RolledBack':
-        return 'border-orange-500';
-      default:
-        return 'border-zinc-700';
-    }
-  };
+  const stepBorder = (status: StepStatus): string => ({
+    Running: 'border-l-blue-400',
+    Retry: 'border-l-blue-400',
+    Success: 'border-l-emerald-400',
+    Failed: 'border-l-red-400',
+    Skipped: 'border-l-zinc-500',
+    RolledBack: 'border-l-orange-400',
+    Pending: 'border-l-zinc-700',
+  })[status];
 
-  const getSegmentStatus = (segment: { steps: Step[] }) => {
-    const statuses = segment.steps.map(s => s.status ?? 'Pending');
-
-    if (statuses.some(s => s === 'Failed')) return 'error';
-    if (statuses.some(s => s === 'Running' || s === 'Retry')) return 'running';
-    if (statuses.every(s => s === 'Success' || s === 'Skipped')) return 'success';
-    if (statuses.some(s => s === 'Success' || s === 'Skipped')) return 'partial';
+  const segmentStatus = (steps: Step[]) => {
+    const statuses = steps.map((step) => step.status ?? 'Pending');
+    if (statuses.some((status) => status === 'Failed')) return 'error';
+    if (statuses.some((status) => status === 'Running' || status === 'Retry')) return 'running';
+    if (statuses.every((status) => status === 'Success' || status === 'Skipped')) return 'success';
+    if (statuses.some((status) => status === 'Success' || status === 'Skipped')) return 'partial';
     return 'pending';
   };
 
-  const getSegmentIcon = (segmentId: string, steps: Step[]) => {
-    const status = getSegmentStatus({ steps });
-    switch (status) {
-      case 'running':
-        return <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />;
-      case 'success':
-        return <CheckCircle className="w-5 h-5 text-green-400" />;
-      case 'error':
-        return <XCircle className="w-5 h-5 text-red-400" />;
-      case 'partial':
-        return (
-          <div className="w-5 h-5 rounded-full border-2 border-blue-400 flex items-center justify-center">
-            <div className="w-2 h-2 rounded-full bg-blue-400" />
-          </div>
-        );
-      default:
-        return (
-          <span className="flex items-center justify-center w-5 h-5 rounded-full bg-zinc-700 text-white text-xs font-bold">
-            {currentPlan.segments.findIndex(s => s.segment_id === segmentId) + 1}
-          </span>
-        );
+  const segmentIcon = (index: number, steps: Step[]) => {
+    const status = segmentStatus(steps);
+    if (status === 'running') return <Loader2 className="h-5 w-5 animate-spin text-blue-300" />;
+    if (status === 'success') return <CheckCircle className="h-5 w-5 text-emerald-300" />;
+    if (status === 'error') return <XCircle className="h-5 w-5 text-red-300" />;
+    if (status === 'partial') {
+      return (
+        <span className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-blue-300">
+          <span className="h-2 w-2 rounded-full bg-blue-300" />
+        </span>
+      );
     }
-  };
-
-  const toggleSegment = (segmentId: string) => {
-    const newExpanded = new Set(expandedSegments);
-    if (newExpanded.has(segmentId)) {
-      newExpanded.delete(segmentId);
-    } else {
-      newExpanded.add(segmentId);
-    }
-    setExpandedSegments(newExpanded);
+    return (
+      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white/[0.1] text-xs font-semibold text-zinc-300">
+        {index + 1}
+      </span>
+    );
   };
 
   const handleExecute = async () => {
@@ -165,46 +161,27 @@ export function PlanView() {
     addLog({
       type: 'log',
       level: 'info',
-      message: `开始执行计划: ${currentPlan.plan_id}`,
+      message: `${planStatus === 'Failed' ? '重试' : '开始'}执行计划: ${currentPlan.plan_id}`,
     });
-
     try {
       await apiClient.executePlan(currentPlan.plan_id);
-      // 立即刷新一次计划状态，后续更新由 usePlanPolling 接管
       try {
-        const latest = await apiClient.getPlan(currentPlan.plan_id);
-        if (useAppStore.getState().currentPlan?.plan_id === currentPlan.plan_id) {
-          setCurrentPlan(latest);
-        }
+        setCurrentPlan(await apiClient.getPlan(currentPlan.plan_id));
       } catch {
-        // 刷新失败忽略，轮询会继续重试
+        // 轮询会继续尝试刷新权威状态。
       }
     } catch (error) {
-      addLog({
-        type: 'log',
-        level: 'error',
-        message: `执行失败: ${error}`,
-      });
+      addLog({ type: 'log', level: 'error', message: `执行失败: ${error}` });
       setIsExecuting(false);
     }
   };
 
   const handlePause = async () => {
-    if (!currentPlan) return;
     setControlInFlight('pause');
-    addLog({
-      type: 'log',
-      level: 'info',
-      message: `发送暂停请求: ${currentPlan.plan_id}`,
-    });
-
+    addLog({ type: 'log', level: 'info', message: `发送暂停请求: ${currentPlan.plan_id}` });
     try {
       await apiClient.pausePlan(currentPlan.plan_id);
-      addLog({
-        type: 'log',
-        level: 'success',
-        message: '暂停请求已发出，当前步骤完成后将暂停',
-      });
+      addLog({ type: 'log', level: 'success', message: '暂停请求已发出，当前步骤完成后将暂停' });
     } catch (error) {
       addLog({
         type: 'log',
@@ -217,24 +194,12 @@ export function PlanView() {
   };
 
   const handleResume = async () => {
-    if (!currentPlan) return;
     setControlInFlight('resume');
-    addLog({
-      type: 'log',
-      level: 'info',
-      message: `发送恢复请求: ${currentPlan.plan_id}`,
-    });
-
+    addLog({ type: 'log', level: 'info', message: `发送恢复请求: ${currentPlan.plan_id}` });
     try {
       await apiClient.resumePlan(currentPlan.plan_id);
-      // Paused 被轮询视为终态而停止轮询；恢复成功后必须重新拉起轮询，
-      // 否则后端已在执行、界面却永远停留在"已暂停"。
       setIsExecuting(true);
-      addLog({
-        type: 'log',
-        level: 'success',
-        message: '恢复请求已发出，计划将从断点继续执行',
-      });
+      addLog({ type: 'log', level: 'success', message: '恢复请求已发出，计划将从断点继续执行' });
     } catch (error) {
       addLog({
         type: 'log',
@@ -246,17 +211,11 @@ export function PlanView() {
     }
   };
 
-  const handleSkipStep = async (step: Step) => {
-    if (!currentPlan) return;
+  const handleSkip = async (step: Step) => {
     setControlInFlight('skip');
-
     try {
       await apiClient.skipStep(currentPlan.plan_id, step.step_id);
-      addLog({
-        type: 'log',
-        level: 'info',
-        message: `步骤 ${step.step_id} 已标记为跳过`,
-      });
+      addLog({ type: 'log', level: 'info', message: `步骤 ${step.step_id} 已标记为跳过` });
     } catch (error) {
       addLog({
         type: 'log',
@@ -269,12 +228,10 @@ export function PlanView() {
   };
 
   const confirmRollback = async () => {
-    if (!currentPlan || !rollbackTarget) return;
-    const target = rollbackTarget;
+    if (!rollbackTarget) return;
     setControlInFlight('rollback');
-
     try {
-      const result = await apiClient.rollbackPlan(currentPlan.plan_id, target.step_id);
+      const result = await apiClient.rollbackPlan(currentPlan.plan_id, rollbackTarget.step_id);
       addLog({
         type: 'log',
         level: 'success',
@@ -283,15 +240,10 @@ export function PlanView() {
           (result.marked_obsolete > 0 ? `，${result.marked_obsolete} 个步骤被标记为废弃` : ''),
       });
       setRollbackTarget(null);
-
-      // 立即刷新计划（回滚后计划回到 Pending）
       try {
-        const latest = await apiClient.getPlan(currentPlan.plan_id);
-        if (useAppStore.getState().currentPlan?.plan_id === currentPlan.plan_id) {
-          setCurrentPlan(latest);
-        }
+        setCurrentPlan(await apiClient.getPlan(currentPlan.plan_id));
       } catch {
-        // 刷新失败忽略
+        // 回滚请求已成功，刷新失败时交给轮询恢复。
       }
     } catch (error) {
       addLog({
@@ -304,225 +256,182 @@ export function PlanView() {
     }
   };
 
-  // 步骤级操作可见性
-  const canSkipStep = (step: Step) => {
+  const canSkip = (step: Step) => {
     const status = step.status ?? 'Pending';
     return !terminal && (status === 'Pending' || status === 'Retry');
   };
-  const canRollbackToStep = (step: Step) => {
-    const status = step.status ?? 'Pending';
-    return status === 'Success' || status === 'Failed';
-  };
+
+  const canRollback = (step: Step) => step.status === 'Success' || step.status === 'Failed';
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Plan content */}
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-4xl mx-auto space-y-6">
-          {/* Header */}
-          <div className="flex items-center justify-between gap-6">
-            <div className="flex-1 min-w-0">
-              <h2 className="text-2xl font-bold text-white mb-2">执行计划</h2>
-              <p className="text-sm text-zinc-400">
-                ID: {currentPlan.plan_id} · {currentPlan.segments.length} 个阶段 · {totalSteps} 个步骤
+    <div className="min-h-full px-4 py-6 sm:px-8 sm:py-8">
+      <div className="mx-auto max-w-5xl space-y-5">
+        <div className="sticky top-0 z-10 -mx-4 border-b border-white/[0.07] bg-[#0d0f13]/90 px-4 py-4 backdrop-blur-xl sm:-mx-8 sm:px-8">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-violet-400/20 bg-violet-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-200">
+                  执行计划
+                </span>
                 {planStatus && (
-                  <>
-                    {' · 状态: '}
-                    <span className={
-                      planStatus === 'Running' ? 'text-blue-400' :
-                      planStatus === 'Failed' ? 'text-red-400' :
-                      planStatus === 'Completed' ? 'text-green-400' :
-                      'text-zinc-300'
-                    }>
-                      {PLAN_STATUS_LABELS[planStatus] ?? planStatus}
-                    </span>
-                  </>
+                  <span className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusTone(planStatus)}`}>
+                    {PLAN_STATUS_LABELS[planStatus] ?? planStatus}
+                  </span>
                 )}
+              </div>
+              <h2 className="truncate text-2xl font-semibold tracking-tight text-white">{currentPlan.plan_id}</h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                {currentPlan.segments.length} 个阶段 · {totalSteps} 个步骤 · 分支 #{currentPlan.current_branch ?? 1}
               </p>
-
-              {/* 进度条 */}
-              {hasProgress && (
-                <div className="mt-3">
-                  <div className="flex items-center justify-between text-xs text-zinc-400 mb-1">
-                    <span>执行进度</span>
-                    <span>{completedSteps}/{totalSteps} 步骤 ({progressPercent}%)</span>
-                  </div>
-                  <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-blue-600 to-blue-400 transition-all duration-300"
-                      style={{ width: `${progressPercent}%` }}
-                    />
-                  </div>
-                  {failedSteps > 0 && (
-                    <div className="text-xs text-red-400 mt-1">
-                      {failedSteps} 个步骤失败
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
-            {/* Header actions */}
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
               {planStatus === 'Running' && (
                 <button
-                  onClick={handlePause}
+                  onClick={() => void handlePause()}
                   disabled={controlInFlight !== null}
                   title="暂停执行"
-                  className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-medium px-6 py-3 rounded-lg transition-colors"
+                  className="inline-flex items-center gap-2 rounded-lg border border-amber-400/20 bg-amber-400/10 px-3.5 py-2 text-xs font-semibold text-amber-100 transition-colors hover:bg-amber-400/20 disabled:opacity-40"
                 >
-                  {controlInFlight === 'pause' ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Pause className="w-4 h-4" />
-                  )}
-                  <span>暂停</span>
+                  {controlInFlight === 'pause' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Pause className="h-3.5 w-3.5" />}
+                  暂停
                 </button>
               )}
-
               {planStatus === 'Paused' && (
                 <button
-                  onClick={handleResume}
+                  onClick={() => void handleResume()}
                   disabled={controlInFlight !== null}
                   title="恢复执行"
-                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-medium px-6 py-3 rounded-lg transition-colors"
+                  className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-violet-500 disabled:opacity-40"
                 >
-                  {controlInFlight === 'resume' ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Play className="w-4 h-4" />
-                  )}
-                  <span>恢复</span>
+                  {controlInFlight === 'resume' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                  恢复执行
                 </button>
               )}
-
               {planStatus !== 'Running' && planStatus !== 'Paused' && (
                 <button
-                  onClick={handleExecute}
+                  onClick={() => void handleExecute()}
                   disabled={isExecuting || controlInFlight !== null}
-                  className="flex items-center gap-2 bg-green-600 hover:bg-green-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-medium px-6 py-3 rounded-lg transition-colors"
+                  className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-3.5 py-2 text-xs font-semibold text-white shadow-lg shadow-violet-950/25 transition-colors hover:bg-violet-500 disabled:opacity-40"
                 >
-                  {isExecuting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>执行中...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4" />
-                      <span>开始执行</span>
-                    </>
-                  )}
+                  {isExecuting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                  {isExecuting ? '执行中...' : planStatus === 'Failed' ? '重试执行' : '开始执行'}
                 </button>
               )}
             </div>
           </div>
 
-          {/* Segments */}
-          <div className="space-y-4">
-            {currentPlan.segments.map((segment) => (
-              <div key={segment.segment_id} className="bg-zinc-900 border border-zinc-800 rounded-lg">
-                {/* Segment Header */}
+          <div className="mt-4 grid max-w-md grid-cols-3 gap-2">
+            <div className="rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 py-2">
+              <div className="text-[10px] text-zinc-600">完成数</div>
+              <div className="mt-1 text-sm font-semibold text-emerald-300">{completedSteps}<span className="ml-1 text-[10px] font-normal text-zinc-600">/ {totalSteps}</span></div>
+            </div>
+            <div className="rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 py-2">
+              <div className="text-[10px] text-zinc-600">失败</div>
+              <div className="mt-1 text-sm font-semibold text-red-300">{failedSteps}</div>
+            </div>
+            <div className="rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 py-2">
+              <div className="text-[10px] text-zinc-600">进度</div>
+              <div className="mt-1 text-sm font-semibold text-white">{progressPercent}%</div>
+              <span className="sr-only">{completedSteps}/{totalSteps} 步骤 ({progressPercent}%)</span>
+            </div>
+          </div>
+          {hasProgress && (
+            <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/[0.07]">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${failedSteps ? 'bg-red-400' : 'bg-gradient-to-r from-violet-500 to-indigo-400'}`}
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="relative space-y-3 pl-0 before:absolute before:bottom-5 before:left-[13px] before:top-5 before:hidden before:w-px before:bg-white/[0.08] sm:pl-7 sm:before:block">
+          {currentPlan.segments.map((segment, segmentIndex) => {
+            const expanded = expandedSegments.has(segment.segment_id);
+            const state = segmentStatus(segment.steps);
+            return (
+              <div key={segment.segment_id} className="relative rounded-xl border border-white/[0.08] bg-[#111419]/90 shadow-xl shadow-black/5">
+                <span className="absolute -left-7 top-5 hidden h-7 w-7 items-center justify-center rounded-full border border-white/[0.1] bg-[#111419] text-[11px] font-semibold text-zinc-400 sm:flex">
+                  {segmentIndex + 1}
+                </span>
                 <button
-                  onClick={() => toggleSegment(segment.segment_id)}
-                  className="w-full flex items-center justify-between p-4 hover:bg-zinc-800/50 transition-colors"
+                  onClick={() => setExpandedSegments((previous) => {
+                    const next = new Set(previous);
+                    if (next.has(segment.segment_id)) next.delete(segment.segment_id);
+                    else next.add(segment.segment_id);
+                    return next;
+                  })}
+                  className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left transition-colors hover:bg-white/[0.025] sm:px-5"
                 >
-                  <div className="flex items-center gap-3">
-                    {getSegmentIcon(segment.segment_id, segment.steps)}
-                    <div className="text-left">
-                      <h3 className="text-sm font-medium text-white">{segment.description}</h3>
-                      <p className="text-xs text-zinc-500">{segment.steps.length} 个步骤</p>
+                  <div className="flex min-w-0 items-center gap-3">
+                    {segmentIcon(segmentIndex, segment.steps)}
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-semibold text-white">{segment.description}</h3>
+                      <p className="mt-1 text-xs text-zinc-600">
+                        {segment.steps.length} 个步骤 · {state === 'success' ? '全部完成' : state === 'error' ? '需要关注' : state === 'running' ? '正在执行' : '等待执行'}
+                      </p>
                     </div>
                   </div>
-                  {expandedSegments.has(segment.segment_id) ? (
-                    <ChevronDown className="w-4 h-4 text-zinc-400" />
-                  ) : (
-                    <ChevronRight className="w-4 h-4 text-zinc-400" />
-                  )}
+                  {expanded ? <ChevronDown className="h-4 w-4 shrink-0 text-zinc-500" /> : <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />}
                 </button>
 
-                {/* Steps */}
-                {expandedSegments.has(segment.segment_id) && (
-                  <div className="px-4 pb-4 space-y-2">
-                    {segment.steps.map((step) => {
-                      const status: StepStatus = step.status ?? 'Pending';
+                {expanded && (
+                  <div className="space-y-2 border-t border-white/[0.07] px-3 pb-3 pt-3 sm:px-4">
+                    {segment.steps.map((step, stepIndex) => {
+                      const status = step.status ?? 'Pending';
                       return (
-                        <div key={step.step_id} className={`bg-zinc-950 rounded p-3 border-l-2 ${getStepStatusColor(status)}`}>
+                        <div key={step.step_id} className={`rounded-xl border border-white/[0.07] border-l-2 bg-black/20 p-3.5 ${stepBorder(status)}`}>
                           <div className="flex items-start gap-3">
-                            <span title={`步骤状态: ${status}`}>{getStepStatusIcon(status)}</span>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-2">
-                                <h4 className="text-sm font-medium text-white">{step.description}</h4>
-                                <span className="text-xs px-2 py-0.5 bg-blue-600/20 text-blue-400 rounded">
-                                  {step.tool}
-                                </span>
-
-                                {/* Per-step actions */}
-                                <div className="ml-auto flex items-center gap-1">
-                                  {canSkipStep(step) && (
-                                    <button
-                                      onClick={() => handleSkipStep(step)}
-                                      disabled={controlInFlight !== null}
-                                      title="跳过"
-                                      aria-label="跳过"
-                                      className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                                    >
-                                      <SkipForward className="w-3.5 h-3.5" />
+                            <span className="mt-0.5" title={`步骤状态: ${status}`}>{stepIcon(status)}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-start gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-[10px] text-zinc-600">{String(stepIndex + 1).padStart(2, '0')}</span>
+                                    <h4 className="text-sm font-medium text-zinc-100">{step.description}</h4>
+                                  </div>
+                                  <span className="mt-1 inline-flex rounded-md border border-violet-400/15 bg-violet-400/[0.08] px-2 py-0.5 text-[10px] text-violet-200">{step.tool}</span>
+                                </div>
+                                <div className="flex shrink-0 items-center gap-1">
+                                  {canSkip(step) && (
+                                    <button onClick={() => void handleSkip(step)} disabled={controlInFlight !== null} title="跳过" aria-label="跳过" className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.08] hover:text-zinc-200 disabled:opacity-40">
+                                      <SkipForward className="h-3.5 w-3.5" />
                                     </button>
                                   )}
-                                  {canRollbackToStep(step) && (
-                                    <button
-                                      onClick={() => setRollbackTarget(step)}
-                                      disabled={controlInFlight !== null}
-                                      title="回滚到此步"
-                                      aria-label="回滚到此步"
-                                      className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-orange-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                                    >
-                                      <RotateCcw className="w-3.5 h-3.5" />
+                                  {canRollback(step) && (
+                                    <button onClick={() => setRollbackTarget(step)} disabled={controlInFlight !== null} title="回滚到此步" aria-label="回滚到此步" className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-orange-400/10 hover:text-orange-300 disabled:opacity-40">
+                                      <RotateCcw className="h-3.5 w-3.5" />
                                     </button>
                                   )}
                                 </div>
                               </div>
 
-                              {/* Inputs */}
                               {Object.keys(step.inputs).length > 0 && (
-                                <div className="mb-2">
-                                  <div className="text-xs text-zinc-500 mb-1">输入参数:</div>
-                                  <div className="bg-zinc-900 rounded p-2 font-mono text-xs text-zinc-300">
-                                    {JSON.stringify(step.inputs, null, 2)}
-                                  </div>
+                                <div className="mt-3">
+                                  <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-zinc-600">输入参数</div>
+                                  <pre className="overflow-x-auto rounded-lg border border-white/[0.06] bg-black/20 p-2.5 font-mono text-[11px] leading-5 text-zinc-400">{JSON.stringify(step.inputs, null, 2)}</pre>
                                 </div>
                               )}
-
-                              {/* Expected Outputs */}
                               {step.expected_outputs.length > 0 && (
-                                <div>
-                                  <div className="text-xs text-zinc-500 mb-1">预期输出:</div>
-                                  <div className="space-y-0.5">
-                                    {step.expected_outputs.map((output, i) => (
-                                      <div key={i} className="text-xs text-zinc-400">• {output}</div>
-                                    ))}
-                                  </div>
+                                <div className="mt-3">
+                                  <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-zinc-600">预期输出</div>
+                                  <div className="space-y-1">{step.expected_outputs.map((output, index) => <div key={index} className="text-xs text-zinc-400">• {output}</div>)}</div>
                                 </div>
                               )}
-
-                              {/* Deterministic acceptance evidence */}
                               {step.outputs?.acceptance && (
-                                <div className="mt-2 rounded border border-zinc-800 bg-zinc-900/60 p-2">
+                                <div className="mt-3 rounded-lg border border-white/[0.07] bg-white/[0.025] p-3">
                                   <div className="flex items-center justify-between text-xs">
-                                    <span className="text-zinc-500">验收结果</span>
-                                    <span className={step.outputs.acceptance_status === 'passed' ? 'text-emerald-400' : 'text-red-400'}>
-                                      {step.outputs.acceptance_status === 'passed' ? '通过' : '未通过'}
-                                      {typeof step.outputs.reward === 'number' ? ` · ${step.outputs.reward}` : ''}
+                                    <span className="font-medium text-zinc-400">验收证据</span>
+                                    <span className={step.outputs.acceptance_status === 'passed' ? 'text-emerald-300' : 'text-red-300'}>
+                                      {step.outputs.acceptance_status === 'passed' ? '通过' : '未通过'}{typeof step.outputs.reward === 'number' ? ` · ${step.outputs.reward}` : ''}
                                     </span>
                                   </div>
-                                  <div className="mt-1 space-y-0.5">
-                                    {(step.outputs.acceptance.checks || []).map((check: any, i: number) => (
-                                      <div key={i} className={`text-xs ${check.passed ? 'text-emerald-400' : 'text-red-400'}`}>
-                                        {check.passed ? '✓' : '✗'} {check.type}{check.reason ? `：${check.reason}` : ''}
-                                      </div>
-                                    ))}
-                                  </div>
+                                  {(step.outputs.acceptance.checks || []).map((check: any, index: number) => (
+                                    <div key={index} className={`mt-1 text-xs ${check.passed ? 'text-emerald-300' : 'text-red-300'}`}>
+                                      {check.passed ? '✓' : '✗'} {check.type}{check.reason ? `：${check.reason}` : ''}
+                                    </div>
+                                  ))}
                                 </div>
                               )}
                             </div>
@@ -533,87 +442,27 @@ export function PlanView() {
                   </div>
                 )}
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* 回滚确认对话框 */}
       {rollbackTarget && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 max-w-md w-full mx-4">
-            <div className="flex items-center gap-2 mb-4">
-              <RotateCcw className="w-5 h-5 text-orange-400" />
-              <h3 className="text-lg font-medium text-white">确认回滚到此步骤</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-white/[0.1] bg-[#171a20] p-6 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-orange-400/10 text-orange-300"><RotateCcw className="h-4 w-4" /></div>
+              <div><h3 className="text-base font-semibold text-white">确认回滚到此步骤</h3><p className="mt-0.5 text-xs text-zinc-500">这会创建一个新的执行分支</p></div>
             </div>
-            <p className="text-sm text-zinc-300 mb-2">
-              {rollbackTarget.description}
-            </p>
-            <p className="text-sm text-zinc-400 mb-4">
-              回滚将创建一个新的执行分支，该步骤之后已执行的步骤将被标记为废弃，计划回到待执行状态后将从该步骤重新开始。
-            </p>
-            <div className="flex gap-3 mt-4">
-              <button
-                onClick={() => setRollbackTarget(null)}
-                disabled={controlInFlight === 'rollback'}
-                className="flex-1 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded transition-colors"
-              >
-                取消
-              </button>
-              <button
-                onClick={confirmRollback}
-                disabled={controlInFlight === 'rollback'}
-                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded transition-colors flex items-center justify-center gap-2"
-              >
-                {controlInFlight === 'rollback' ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  '确认回滚'
-                )}
-              </button>
+            <p className="mt-5 rounded-lg border border-white/[0.07] bg-black/15 p-3 text-sm text-zinc-300">{rollbackTarget.description}</p>
+            <p className="mt-3 text-xs leading-5 text-zinc-500">回滚将创建一个新的执行分支，该步骤之后已执行的步骤将被标记为废弃，计划回到待执行状态后将从该步骤重新开始。</p>
+            <div className="mt-6 flex gap-3">
+              <button onClick={() => setRollbackTarget(null)} disabled={controlInFlight === 'rollback'} className="flex-1 rounded-lg border border-white/[0.1] bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-300 transition-colors hover:bg-white/[0.08] disabled:opacity-40">取消</button>
+              <button onClick={() => void confirmRollback()} disabled={controlInFlight === 'rollback'} className="flex-1 rounded-lg bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-400 disabled:opacity-40">{controlInFlight === 'rollback' ? <Loader2 className="mx-auto h-4 w-4 animate-spin" /> : '确认回滚'}</button>
             </div>
           </div>
         </div>
       )}
-
-      {/* Log search panel */}
-      <div className="h-48 border-t border-zinc-800 bg-zinc-950 flex flex-col">
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-zinc-800">
-          <Search className="w-4 h-4 text-zinc-500" />
-          <input
-            type="text"
-            value={logSearch}
-            onChange={(e) => setLogSearch(e.target.value)}
-            placeholder="搜索执行日志..."
-            className="flex-1 bg-transparent text-sm text-white placeholder-zinc-600 focus:outline-none"
-          />
-          <span className="text-xs text-zinc-500">{filteredLogs.length} 条</span>
-        </div>
-        <div className="flex-1 overflow-y-auto p-2 font-mono text-xs">
-          {filteredLogs.length === 0 ? (
-            <div className="text-zinc-600 text-center py-4">暂无日志</div>
-          ) : (
-            filteredLogs.map((log, index) => (
-              <div key={index} className="mb-1">
-                <span className="text-zinc-600">
-                  {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''}
-                </span>
-                {' '}
-                <span className={
-                  log.level === 'success' ? 'text-green-400' :
-                  log.level === 'error' ? 'text-red-400' :
-                  log.level === 'warning' ? 'text-yellow-400' :
-                  'text-zinc-400'
-                }>
-                  [{log.level.toUpperCase()}]
-                </span>
-                {' '}
-                <span className="text-zinc-300">{log.message}</span>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
     </div>
   );
 }

@@ -23,8 +23,9 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r python/requirements.txt
 
-      - name: Run Python tests
-        run: pytest -q
+      - name: Run offline Python tests
+        # 真实 LLM/浏览器用例依赖外部密钥、网络或 Chromium，单独手动运行。
+        run: pytest -q --ignore=tests/python/test_exec_e2e.py --ignore=tests/python/test_browser_check.py
 
   frontend-tests:
     name: Frontend tests

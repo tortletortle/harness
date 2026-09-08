@@ -353,7 +353,58 @@ def test_execute_background_resume_claim_requires_paused(server_state, tmp_path)
     assert db.get_plan_status(str(plan_id)) == "Pending", "认领失败不得改动状态（尤其不得标 Failed）"
 
 
-# ===== 特性 4：跳过守卫 =====
+def test_failed_step_checkpoint_is_retried_and_following_steps_continue(server_state, tmp_path, monkeypatch):
+    """业务失败必须留下 checkpoint；下一次 /execute 从失败步骤重跑并继续后续步骤。"""
+    from api import server as server_mod
+
+    db = server_state.db
+    plan_id, step_ids = _three_step_plan(db, tmp_path)
+    calls = []
+
+    async def fail_once(plan, step):
+        calls.append(str(step["step_id"]))
+        return {
+            "success": False,
+            "retryable": False,
+            "blocked": False,
+            "check_status": "unverified",
+            "error": "temporary test failure",
+        }
+
+    monkeypatch.setattr(server_mod, "_execute_step_with_state_machine", fail_once)
+    monkeypatch.setattr(server_mod.state, "retry_max_attempts", 1)
+    asyncio.run(server_mod.execute_plan_background(db.get_plan(str(plan_id))))
+
+    assert db.get_plan_status(str(plan_id)) == "Failed"
+    failed_plan = db.get_plan(str(plan_id))
+    assert str(failed_plan.resume_from_step_id) == step_ids[0]
+    assert calls == [step_ids[0]]
+    assert db.get_steps(str(plan_id))[0]["status"] == "Failed"
+
+    async def succeed(plan, step):
+        calls.append(str(step["step_id"]))
+        db.update_step_state_machine(
+            step_id=str(step["step_id"]),
+            status="Success",
+            outputs={},
+        )
+        return {
+            "success": True,
+            "retryable": False,
+            "blocked": False,
+            "check_status": "unverified",
+            "output": {},
+        }
+
+    monkeypatch.setattr(server_mod, "_execute_step_with_state_machine", succeed)
+    asyncio.run(server_mod.execute_plan_background(db.get_plan(str(plan_id))))
+
+    assert db.get_plan_status(str(plan_id)) == "Completed"
+    assert calls == [step_ids[0], *step_ids]
+    assert all(row["status"] == "Success" for row in db.get_steps(str(plan_id)))
+    assert db.get_plan(str(plan_id)).resume_from_step_id is None
+
+
 
 def test_get_effective_step_status_prefers_active_clone(tmp_path):
     """生效状态：回滚后活动行是克隆行（parent_step_id 指向原 id），必须优先取克隆行；

@@ -211,22 +211,19 @@ export function ConfigView() {
   const agents = ['designer', 'executor', 'toolmanager', 'knowledge', 'vision', 'codegen'];
 
   return (
-    <div className="w-full h-full flex flex-col overflow-hidden">
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-3xl mx-auto space-y-6">
+    <div className="min-h-full px-4 py-6 sm:px-8 sm:py-8">
+      <div className="mx-auto max-w-4xl space-y-5">
         {/* Header */}
         <div>
-          <h2 className="text-2xl font-bold text-white mb-2">系统配置</h2>
-          <p className="text-sm text-zinc-400">
-            配置 API 密钥、服务地址和模型分配
-          </p>
+          <h2 className="text-2xl font-semibold tracking-tight text-white">系统配置</h2>
+          <p className="mt-1 text-sm text-zinc-500">管理 Provider、模型分配和服务运行参数</p>
         </div>
 
         {/* API Providers */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+        <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#111419]/90">
           <button
             onClick={() => setProvidersExpanded(!providersExpanded)}
-            className="w-full p-4 flex items-center justify-between hover:bg-zinc-800/50 transition-colors"
+            className="w-full flex items-center justify-between p-4 text-left transition-colors hover:bg-white/[0.025]"
           >
             <h3 className="text-sm font-medium text-white flex items-center gap-2">
               <Settings className="w-4 h-4" />
@@ -270,7 +267,7 @@ export function ConfigView() {
                             value={provider.apiKey}
                             onChange={(e) => handleProviderChange(index, 'apiKey', e.target.value)}
                             placeholder="输入新的 API Key"
-                            className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-blue-600"
+                            className="bg-black/20 border border-white/[0.08] rounded px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-violet-400/50"
                           />
                           <button
                             onClick={() => handleSaveField(provider.name, 'apiKey')}
@@ -313,7 +310,7 @@ export function ConfigView() {
                             value={provider.baseUrl}
                             onChange={(e) => handleProviderChange(index, 'baseUrl', e.target.value)}
                             placeholder="https://api.example.com/v1"
-                            className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-blue-600"
+                            className="bg-black/20 border border-white/[0.08] rounded px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-violet-400/50"
                           />
                           <button
                             onClick={() => handleSaveField(provider.name, 'baseUrl')}
@@ -360,7 +357,7 @@ export function ConfigView() {
                 onChange={(e) => setNewProviderName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAddProvider()}
                 placeholder="新 Provider 名称"
-                className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-blue-600"
+                className="bg-black/20 border border-white/[0.08] rounded px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-violet-400/50"
               />
               <button
                 onClick={handleAddProvider}
@@ -377,10 +374,10 @@ export function ConfigView() {
         </div>
 
         {/* Model Assignments */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+        <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#111419]/90">
           <button
             onClick={() => setModelsExpanded(!modelsExpanded)}
-            className="w-full p-4 flex items-center justify-between hover:bg-zinc-800/50 transition-colors"
+            className="w-full flex items-center justify-between p-4 text-left transition-colors hover:bg-white/[0.025]"
           >
             <div>
               <h3 className="text-sm font-medium text-white flex items-center gap-2">
@@ -464,7 +461,6 @@ export function ConfigView() {
           <p className="text-xs text-blue-400">
             💡 保存配置后系统将自动重启后端服务以应用更改
           </p>
-        </div>
         </div>
       </div>
     </div>

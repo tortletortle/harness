@@ -2,15 +2,218 @@
 @import 'tailwindcss/components';
 @import 'tailwindcss/utilities';
 
+:root {
+  color-scheme: dark;
+  --app-bg: #08090b;
+  --app-surface: #101216;
+  --app-surface-raised: #15181e;
+  --app-surface-soft: #1b1f27;
+  --app-border: rgba(255, 255, 255, 0.09);
+  --app-border-strong: rgba(255, 255, 255, 0.15);
+  --app-text: #f4f5f7;
+  --app-text-muted: #9aa1ad;
+  --app-text-subtle: #68707d;
+  --app-brand: #8b7cff;
+  --app-brand-soft: rgba(139, 124, 255, 0.15);
+  --app-success: #42d392;
+  --app-warning: #f0b35b;
+  --app-danger: #f07178;
+  --app-radius: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  overflow: hidden;
+  background: var(--app-bg);
+  color: var(--app-text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-code {
-  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+button,
+input,
+textarea,
+select {
+  font: inherit;
 }
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+::selection {
+  color: #fff;
+  background: rgba(139, 124, 255, 0.4);
+}
+
+:focus-visible {
+  outline: 2px solid var(--app-brand);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.surface-grid {
+  background-color: var(--app-bg);
+  background-image: linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    radial-gradient(circle at 50% -15%, rgba(139, 124, 255, 0.12), transparent 42%);
+  background-size: 32px 32px, 32px 32px, 100% 100%;
+}
+
+.panel-surface {
+  background: rgba(16, 18, 22, 0.92);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+}
+
+.mono {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 2s ease-in-out infinite;
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+  --app-bg: #f4f6fb;
+  --app-surface: #ffffff;
+  --app-surface-raised: #ffffff;
+  --app-surface-soft: #eef1f7;
+  --app-border: rgba(15, 23, 42, 0.1);
+  --app-border-strong: rgba(15, 23, 42, 0.16);
+  --app-text: #182033;
+  --app-text-muted: #5d687d;
+  --app-text-subtle: #8a95a8;
+  --app-brand: #6657d9;
+  --app-brand-soft: rgba(102, 87, 217, 0.12);
+  --app-success: #18845b;
+  --app-warning: #b56b12;
+  --app-danger: #c53f4d;
+}
+
+[data-theme='light'] body {
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+[data-theme='light'] .surface-grid {
+  background-color: var(--app-bg);
+  background-image: linear-gradient(rgba(15, 23, 42, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.035) 1px, transparent 1px),
+    radial-gradient(circle at 50% -15%, rgba(102, 87, 217, 0.12), transparent 42%);
+}
+
+[data-theme='light'] .panel-surface {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+/* Tailwind utility classes are intentionally kept in the components; these
+   theme overrides make the existing dark surfaces switch as one system. */
+[data-theme='light'] [class*="bg-[#0d0f13]"],
+[data-theme='light'] [class*="bg-[#101216]"],
+[data-theme='light'] [class*="bg-[#0b0d11]"],
+[data-theme='light'] [class*="bg-[#111419]"],
+[data-theme='light'] [class*="bg-[#171a20]"],
+[data-theme='light'] [class*="bg-zinc-950"],
+[data-theme='light'] [class*="bg-zinc-900"],
+[data-theme='light'] [class*="bg-zinc-800"] {
+  background-color: var(--app-surface) !important;
+}
+
+[data-theme='light'] [class*="bg-black/"] {
+  background-color: rgba(235, 239, 247, 0.82) !important;
+}
+
+[data-theme='light'] [class*="bg-white/[0.025]"],
+[data-theme='light'] [class*="bg-white/[0.03]"],
+[data-theme='light'] [class*="bg-white/[0.04]"],
+[data-theme='light'] [class*="bg-white/[0.05]"],
+[data-theme='light'] [class*="bg-white/[0.06]"] {
+  background-color: rgba(255, 255, 255, 0.78) !important;
+}
+
+[data-theme='light'] [class*="border-zinc-"],
+[data-theme='light'] [class*="border-white/"] {
+  border-color: var(--app-border) !important;
+}
+
+[data-theme='light'] [class*="border-l-zinc-700"] { border-left-color: #c5ccda !important; }
+[data-theme='light'] [class*="border-l-emerald-400"] { border-left-color: #36a978 !important; }
+[data-theme='light'] [class*="border-l-red-400"] { border-left-color: #dc6670 !important; }
+[data-theme='light'] [class*="border-l-blue-400"] { border-left-color: #6687e8 !important; }
+[data-theme='light'] [class*="border-l-orange-400"] { border-left-color: #d89440 !important; }
+
+[data-theme='light'] input,
+[data-theme='light'] textarea,
+[data-theme='light'] select,
+[data-theme='light'] pre {
+  color: var(--app-text) !important;
+  background-color: rgba(247, 249, 253, 0.9) !important;
+  border-color: var(--app-border) !important;
+}
+
+[data-theme='light'] option { background: #fff; color: #182033; }
+[data-theme='light'] .placeholder\:text-zinc-600::placeholder,
+[data-theme='light'] .placeholder-zinc-600::placeholder,
+[data-theme='light'] .placeholder\:text-zinc-500::placeholder { color: #8994a8 !important; }
+
+[data-theme='light'] .text-white { color: #182033; }
+[data-theme='light'] .text-zinc-100 { color: #263248; }
+[data-theme='light'] .text-zinc-200 { color: #3e4a60; }
+[data-theme='light'] .text-zinc-300 { color: #536078; }
+[data-theme='light'] .text-zinc-400 { color: #66738a; }
+[data-theme='light'] .text-zinc-500 { color: #7d899d; }
+[data-theme='light'] .text-zinc-600 { color: #96a0b1; }
+[data-theme='light'] .text-zinc-700 { color: #a9b1bf; }
+[data-theme='light'] ::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.18); }

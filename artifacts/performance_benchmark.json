@@ -1,0 +1,45 @@
+{
+  "benchmark": {
+    "iterations": 20,
+    "python": "3.12.10",
+    "note": "offline deterministic; milliseconds"
+  },
+  "step_context_compression": {
+    "optimized_default_disabled": {
+      "p50_ms": 0.001,
+      "p95_ms": 0.005,
+      "mean_ms": 0.002
+    },
+    "comparable_enabled_path": {
+      "p50_ms": 0.138,
+      "p95_ms": 0.293,
+      "mean_ms": 0.553
+    }
+  },
+  "llm_deterministic_request": {
+    "p50_ms": 0.108,
+    "p95_ms": 0.123,
+    "mean_ms": 0.111
+  },
+  "sqlite_log_write": {
+    "p50_ms": 5.318,
+    "p95_ms": 6.142,
+    "mean_ms": 5.5
+  },
+  "search_four_engines": {
+    "optimized_concurrent": {
+      "p50_ms": 26.618,
+      "p95_ms": 27.224,
+      "mean_ms": 26.591
+    },
+    "serial_baseline": {
+      "p50_ms": 101.68,
+      "p95_ms": 102.454,
+      "mean_ms": 101.607
+    }
+  },
+  "speedup": {
+    "compression_gate_p50": 106.04,
+    "search_p50": 3.82
+  }
+}

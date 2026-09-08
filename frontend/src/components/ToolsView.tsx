@@ -60,14 +60,12 @@ export function ToolsView() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <div className="max-w-6xl mx-auto">
+    <div className="min-h-full px-4 py-6 sm:px-8 sm:py-8">
+      <div className="mx-auto max-w-6xl">
         {/* Header */}
         <div className="mb-6">
-          <h2 className="text-2xl font-bold text-white mb-2">工具库</h2>
-          <p className="text-sm text-zinc-400">
-            系统可用的工具列表 · 共 {tools.length} 个工具
-          </p>
+          <h2 className="text-2xl font-semibold tracking-tight text-white">工具库</h2>
+          <p className="mt-1 text-sm text-zinc-500">系统可用的工具和执行边界 · 共 {tools.length} 个工具</p>
         </div>
 
         {/* Category filter */}
@@ -77,10 +75,10 @@ export function ToolsView() {
               <button
                 key={cat}
                 onClick={() => setCategoryFilter(cat)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              className={`rounded-lg border px-3.5 py-2 text-sm font-medium transition-colors ${
                   categoryFilter === cat
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800'
+                    ? 'border-violet-400/25 bg-violet-500/15 text-violet-100'
+                    : 'border-white/[0.07] bg-white/[0.025] text-zinc-500 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
                 {cat === 'all' ? '全部' : cat === 'generation' ? '生成' : cat === 'search' ? '搜索' : cat === 'template' ? '模板' : '其他'}
@@ -98,7 +96,7 @@ export function ToolsView() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="搜索工具名称、ID 或描述..."
-              className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-10 pr-4 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-blue-600"
+              className="w-full rounded-xl border border-white/[0.1] bg-[#111419]/80 py-2.5 pl-10 pr-4 text-sm text-white placeholder:text-zinc-600 transition-colors focus:border-violet-400/50 focus:outline-none"
             />
           </div>
         </div>
@@ -110,7 +108,7 @@ export function ToolsView() {
             <p>{searchQuery ? '无匹配工具' : '暂无可用工具'}</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {filteredTools.map((tool) => (
               <ToolCard key={tool.tool_id} tool={tool} />
             ))}
@@ -139,7 +137,7 @@ function ToolCard({ tool }: { tool: Tool }) {
   };
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 transition-colors">
+    <div className="rounded-xl border border-white/[0.08] bg-[#111419]/90 p-4 transition-colors hover:border-violet-400/25">
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2">
           <Wrench className="w-4 h-4 text-blue-400" />

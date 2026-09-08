@@ -5,9 +5,9 @@
 
 ## 版本
 
-- 当前版本：`1.13-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；test_passes 测试即验收类型（削接缝动作 B 第一级，§27）已实施；worktree 路线已定
-- 最后更新：2026-08-31
+- 当前版本：`1.14-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；test_passes 测试即验收类型（削接缝动作 B 第一级，§27）已实施；失败 checkpoint 续跑与 Retry 孤儿恢复已实施；worktree 路线已定
+- 最后更新：2026-09-06
 
 ## 1. 目标
 

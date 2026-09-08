@@ -21,7 +21,7 @@ import urllib.error
 import urllib.request
 from html import unescape
 from html.parser import HTMLParser
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -568,7 +568,7 @@ class SuperSearch:
     @staticmethod
     def search(query: str, max_results: int = _DEFAULT_MAX_RESULTS,
                engines: Any = None, timeout: float = _DEFAULT_TIMEOUT) -> Dict[str, Any]:
-        """多引擎聚合搜索：并发单线程逐个调用（引擎内部串行），合并去重排序。"""
+        """多引擎聚合搜索：最多 4 个引擎受控并发，合并去重排序。"""
         try:
             query = (query or "").strip()
             if not query:
@@ -580,23 +580,30 @@ class SuperSearch:
 
             merged: List[Dict[str, Any]] = []
             engine_stats: Dict[str, Dict[str, Any]] = {}
-            for name in selected:
-                fn = _ENGINE_FUNCS[name]
-                try:
-                    items = fn(query, limit, timeout)
-                    engine_stats[name] = {"ok": True, "count": len(items)}
-                    if not items:
-                        engine_stats[name]["note"] = "未解析到结果（可能被反爬拦截）"
-                    for pos, item in enumerate(items):
-                        merged.append({
-                            "title": item.get("title", ""),
-                            "url": item.get("url", ""),
-                            "snippet": item.get("snippet", ""),
-                            "engine": name,
-                            "position": pos,
-                        })
-                except Exception as e:
-                    engine_stats[name] = {"ok": False, "error": str(e)}
+            max_workers = min(4, len(selected))
+            pool = ThreadPoolExecutor(max_workers=max_workers)
+            futures = {pool.submit(_ENGINE_FUNCS[name], query, limit, timeout): name for name in selected}
+            try:
+                for future in as_completed(futures):
+                    name = futures[future]
+                    try:
+                        items = future.result()
+                        engine_stats[name] = {"ok": True, "count": len(items)}
+                        if not items:
+                            engine_stats[name]["note"] = "未解析到结果（可能被反爬拦截）"
+                        for pos, item in enumerate(items):
+                            merged.append({
+                                "title": item.get("title", ""),
+                                "url": item.get("url", ""),
+                                "snippet": item.get("snippet", ""),
+                                "engine": name,
+                                "position": pos,
+                            })
+                    except Exception as e:
+                        engine_stats[name] = {"ok": False, "error": str(e)}
+            finally:
+                # 不等待已经超时的网络线程；urllib 请求由其自身 timeout 结束。
+                pool.shutdown(wait=False, cancel_futures=True)
 
             results = _merge_and_rank(merged, limit)
             engines_failed = {k: v["error"] for k, v in engine_stats.items() if not v["ok"]}

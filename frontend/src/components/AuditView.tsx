@@ -80,11 +80,11 @@ export function AuditView() {
   }, [entries, search]);
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <div className="max-w-5xl mx-auto space-y-4">
+    <div className="min-h-full px-4 py-6 sm:px-8 sm:py-8">
+      <div className="mx-auto max-w-6xl space-y-4">
         {/* 头部 */}
         <div className="flex items-center justify-between gap-4">
-          <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+          <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-white">
             <ScrollText className="w-6 h-6 text-zinc-400" />
             审计日志
             <span className="text-sm font-normal text-zinc-500">
@@ -134,15 +134,15 @@ export function AuditView() {
             <p>暂无审计日志</p>
           </div>
         ) : (
-          <div className="bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden">
+              <div className="overflow-x-auto rounded-xl border border-white/[0.08] bg-[#0b0d11]">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-zinc-500 border-b border-zinc-800">
-                  <th className="px-3 py-2 font-medium">时间</th>
-                  <th className="px-3 py-2 font-medium">工具</th>
-                  <th className="px-3 py-2 font-medium">指令</th>
-                  <th className="px-3 py-2 font-medium">计划</th>
-                  <th className="px-3 py-2 font-medium">结果</th>
+                  <tr className="border-b border-white/[0.07] bg-white/[0.025] text-left text-xs text-zinc-500">
+                  <th className="sticky top-0 bg-[#111419] px-3 py-2 font-medium">时间</th>
+                  <th className="sticky top-0 bg-[#111419] px-3 py-2 font-medium">工具</th>
+                  <th className="sticky top-0 bg-[#111419] px-3 py-2 font-medium">指令</th>
+                  <th className="sticky top-0 bg-[#111419] px-3 py-2 font-medium">计划</th>
+                  <th className="sticky top-0 bg-[#111419] px-3 py-2 font-medium">结果</th>
                 </tr>
               </thead>
               <tbody>
