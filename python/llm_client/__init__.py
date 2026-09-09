@@ -322,7 +322,7 @@ class OpenAICompatibleProvider(LLMProvider):
             # 每次调用现开现关：httpx 连接池会绑定首次使用的事件循环，
             # 复用长命 client 在跨 asyncio.run()/多循环（脚本、worker 线程）场景
             # 会报 "Event loop is closed"。LLM 调用以秒计，建连开销可忽略。
-            async with httpx.AsyncClient(timeout=180.0, proxy=None) as client:
+            async with httpx.AsyncClient(timeout=180.0, proxy=None, trust_env=False) as client:
                 response = await client.post(url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
