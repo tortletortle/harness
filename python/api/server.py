@@ -127,59 +127,37 @@ def _deep_merge_dict(base: dict, override: dict) -> dict:
 
 
 def _load_models_config() -> dict:
-    """加载 config/models.yaml（可提交模板，key 为占位符），
-    并用 config/models.local.yaml（gitignored，存真实 key）深覆盖。
-
-    两个候选路径：服务从仓库根启动用 config/，从其他 cwd 启动用 ../config/。
-    """
-    candidates = [Path("config/models.yaml"), Path("../config/models.yaml")]
+    """加载提交的模型模板与本地非敏感覆盖，并从环境变量注入凭据。"""
+    config_root = Path(__file__).resolve().parents[2] / "config"
+    candidates = [config_root / "models.yaml", Path.cwd() / "config" / "models.yaml"]
     config_path = next((p for p in candidates if p.exists()), None)
     if not config_path:
         raise FileNotFoundError("配置文件 config/models.yaml 不存在")
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
 
-    local_candidates = [Path("config/models.local.yaml"), Path("../config/models.local.yaml")]
+    local_candidates = [config_root / "models.local.yaml", Path.cwd() / "config" / "models.local.yaml"]
     local_path = next((p for p in local_candidates if p.exists()), None)
     if local_path:
         with open(local_path, "r", encoding="utf-8") as f:
             local = yaml.safe_load(f) or {}
+        # Local overrides may customize models and endpoints, but credentials
+        # are never accepted from YAML files.
+        local.pop("api_keys", None)
         config = _deep_merge_dict(config, local)
-    return config
 
-
-# ===== 配置加载 =====
-
-def _deep_merge_dict(base: dict, override: dict) -> dict:
-    """递归合并：override 覆盖 base，嵌套 dict 深合并，其余类型直接覆盖。"""
-    merged = dict(base or {})
-    for k, v in (override or {}).items():
-        if isinstance(v, dict) and isinstance(merged.get(k), dict):
-            merged[k] = _deep_merge_dict(merged[k], v)
-        else:
-            merged[k] = v
-    return merged
-
-
-def _load_models_config() -> dict:
-    """加载 config/models.yaml（可提交模板，key 为占位符），
-    并用 config/models.local.yaml（gitignored，存真实 key）深覆盖。
-
-    两个候选路径：服务从仓库根启动用 config/，从其他 cwd 启动用 ../config/。
-    """
-    candidates = [Path("config/models.yaml"), Path("../config/models.yaml")]
-    config_path = next((p for p in candidates if p.exists()), None)
-    if not config_path:
-        raise FileNotFoundError("配置文件 config/models.yaml 不存在")
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f) or {}
-
-    local_candidates = [Path("config/models.local.yaml"), Path("../config/models.local.yaml")]
-    local_path = next((p for p in local_candidates if p.exists()), None)
-    if local_path:
-        with open(local_path, "r", encoding="utf-8") as f:
-            local = yaml.safe_load(f) or {}
-        config = _deep_merge_dict(config, local)
+    # Credentials come only from environment variables (or an external secret
+    # manager populated into them). Template/local YAML values are ignored.
+    config["api_keys"] = {}
+    api_keys = config["api_keys"]
+    base_urls = config.setdefault("base_urls", {})
+    for provider_name in list(base_urls):
+        env_key = os.getenv(f"EAS_LLM_API_KEY_{provider_name.upper()}")
+        env_url = os.getenv(f"EAS_LLM_BASE_URL_{provider_name.upper()}")
+        if env_key:
+            api_keys[provider_name] = env_key
+        if env_url:
+            base_urls[provider_name] = env_url
     return config
 
 
@@ -2369,16 +2347,15 @@ async def update_config(request: ConfigUpdateRequest):
     """更新配置"""
     try:
         # 安全：真实 key 只写 gitignored 的 models.local.yaml，绝不写回被跟踪的 models.yaml
-        local_path = Path("config/models.local.yaml")
-        if not local_path.exists():
-            local_path = Path("../config/models.local.yaml")
+        local_path = (Path(__file__).resolve().parents[2] / "config" / "models.local.yaml")
         
         local = {}
         if local_path.exists():
             with open(local_path, "r", encoding="utf-8") as f:
                 local = yaml.safe_load(f) or {}
         
-        local["api_keys"] = request.api_keys
+        # 仅保存非敏感端点配置；API key 由环境变量/密钥服务注入。
+        local.pop("api_keys", None)
         local["base_urls"] = request.base_urls
         
         with open(local_path, "w", encoding="utf-8") as f:

@@ -1,68 +1,45 @@
 # EAS 2.0 项目状态
 
-> 本文是唯一的现状文档（2026-09-07 更新）。早期的 CURRENT_STATUS.md、MISSING_FEATURES.md
-> 与若干测试报告已移入 [archive/](archive/)，描述的是 2026-08-21~24 的状态，多数结论已过时。
+> 本文记录当前实现状态（2026-09-09）。历史测试报告以 archive/ 中的日期版本为准。
 
 ## 一句话现状
 
-核心链路（需求 → 设计书 → 审批 → 计划 → 执行 → 日志/历史）完整可用，并已补齐失败 checkpoint 续跑与 Retry 孤儿恢复：执行失败会保留恢复点，下一次重试从失败步骤继续，活动分支存在 Failed 步骤时禁止误报 Completed。
-当前状态（2026-09-07 更新）：10 个内置工具（含 super_search 超级搜索、code_context 代码上下文/记忆）、知识检索已落地（knowledge/injection.py 注入 Designer/coding_agent）、计划状态推送前后端闭环、token 用量记账与预算闸门、ACI 语法门禁与 Docker 沙箱、验收-指令一致性校验（零交集打回）。
-前端已完成大厂级控制台改造：统一应用壳层（顶部工作区栏 + 分组侧栏 + AI Copilot + 活动流 + 全局审批浮层）、统一视觉 token 系统、可持久化的深/亮色主题切换、新建任务工作台、执行计划 timeline 视图（移除页面内重复日志，统一由底部活动流承载），并已通过真实前后端 + WebSocket 链路验证。
-剩余短板：完整 AgentSession/Run/Turn/Attempt 持久化分层、LLM 生成测试的质量磨合、覆盖率约 48%、bing 长中文查询拆分待接入、计划状态前端深度消费。
+EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求 → Designer 生成设计书 → 人工审批 → 执行计划 → Executor 分步调用工具 → SQLite 持久化与 React 控制台展示。
 
-## 已验证的数据（2026-08-29 实测）
+当前 Python/FastAPI 是唯一实际运行时；Rust workspace 保留为未来主实现，尚未接入 Python 主链路。
 
-| 项目 | 结果 |
-|------|------|
-| 后端 pytest | 244 通过 + 2 跳过，覆盖率约 48% |
-| 前端 vitest | 30 通过（5 个文件） |
-| API 端点 | 16 个（含暂停/恢复/跳步/回滚/审计/配置/重启）+ WebSocket 日志流 |
-| 前端视图 | 输入、设计书、计划、执行、历史、工具、配置、审计 8 个视图 + 全局错误提示 |
-| 内置工具 | 10 个（2026-08-30 新增 super_search 超级搜索 + code_context 代码上下文） |
-| 前后端链路 | `/api/status`、`/api/tools`、`/api/plans`、工具库/历史/实时执行页面、带 token 的 `/ws/logs` 已实测连通（2026-09-07） |
-| 本地核心回归 | 33 通过（失败 checkpoint、孤儿 Retry、验收服务端集成） |
-| 外部依赖测试 | 2 个 exec_e2e 因 StepFun 返回 401 跳过不了；2 个真实浏览器检查受本机 Playwright 环境影响 |
+## 已完成能力
 
-## 已完成
+- Designer 真实生成设计书和执行计划，支持缓存、多 Provider 配置和审批反馈修订。
+- Executor 支持步骤执行、重试、超时、暂停/恢复、失败 checkpoint 续跑、孤儿 Retry 恢复、跳步与回滚分支。
+- 15 个已注册内置工具：file_creator、command_runner、package_installer、manual_tool、git_operator、text_editor、web_fetcher、super_search、code_context、test_runner、lint_gate、github_operator、http_api、browser_check、project_memory。
+- SQLite 持久化计划、步骤、运行、尝试、日志和审计记录。
+- 受保护的 API 业务端点统一使用 Bearer/X-API-Token；GET / 为公开健康入口；WebSocket 使用 query token。
+- React 控制台包含新建、设计书、计划、执行、工具、历史、审计和配置视图，并提供审批浮层、活动流、主题切换和 WebSocket plan_update。
+- Skills、MCP、coding_agent、chat 和 IM 通知已具备生态层实现。
+- 前端计划页支持连接状态显示、计划状态刷新、空计划提示、展开/收起阶段、操作错误反馈和活动流过滤。
 
-- **Designer 流程**：设计书生成（多提供商 fallback、缓存）、审批（批准生成计划 / 拒绝按反馈修订）
-- **执行系统**：计划执行、步骤重试与超时策略、暂停/恢复（原子断点）、失败 checkpoint 续跑（重试从失败步骤继续）、Retry 孤儿恢复、跳步守卫、回滚到指定步骤（克隆新分支 + 废弃旧分支）、孤儿恢复
-- **状态机加固**：原子计划认领（claim_plan_status）、Paused 不可被队列任务抢走、
-  状态与断点单条 UPDATE 落库
-- **错误处理契约**：DatabaseError / GenerationError 分层抛出，禁止假装成功；
-  前端错误/警告全局 toast。详见 [ERROR_HANDLING.md](ERROR_HANDLING.md)
-- **性能基准（2026-09-08）**：固定离线确定性基准 20 次；步骤摘要默认关闭路径 p50/p95 = 0.003/0.012 ms，启用摘要路径 = 0.145/0.308 ms；四引擎搜索并发 p50/p95 = 26.354/26.794 ms，串行基线 = 101.120/101.756 ms（p50 约 3.84x）；确定性 LLM 请求 p50/p95 = 0.109/0.136 ms；SQLite 日志写入 p50/p95 = 5.503/5.841 ms。原始结果见 `artifacts/performance_benchmark.json`，脚本见 `scripts/performance_benchmark.py`。
+## 当前验证基线（2026-09-09）
 
-- **安全**：全部 /api/* 端点 token 鉴权（Bearer / X-API-Token，常数时间比较）、
-  命令执行与网络请求工具的安全加固（有专项测试）
-- **持久化**：SQLite 全量持久化 + 审计日志
+- 前端 Vitest：36 passed。
+- 前端生产构建：成功。
+- 计划领域/生命周期/广播回归：39 passed。
+- 全量 Python 基线：635 passed、11 skipped、2 failed、2 errors；失败项依赖真实外部 LLM 凭据或 Playwright 环境，不能视为离线代码失败。
+- Rust 测试：当前开发机未安装 cargo，尚未执行。
 
-## 缺失 / 待办（按优先级）
+## 已知短板
 
-1. **工具数量**（最大短板）：已有 10 个基础工具（含 2026-08-30 新增的 super_search 超级搜索与 code_context 代码上下文）（文件、命令、装包、Git、文本编辑、
-   网络下载、人工干预）。没有数据库操作、Docker、API 测试等，很多真实任务无法自动化。
-2. **计划状态推送**：~~仅日志走 WebSocket~~（2026-08-30 注：plan_update WebSocket 广播已实现——broadcast_plan_update 覆盖全部状态写入点并带版本号防乱序，轮询保留为前端兜底）。
-   （工作区已有一个未提交的 `Database.get_plan_status_summary()` 草稿，是为广播准备的）
-3. **知识库**：`python/knowledge/` 为空壳，未实现任何检索/记忆能力。
-   （2026-08-30 注：已通过内置工具 `code_context` 落地第一步——工作区仓库地图、
-   SQLite FTS5 全文检索与知识笔记长期记忆，见 docs/CODE_CONTEXT.md；
-   跨任务记忆编排与向量检索仍是待办）
-   （2026-08-30 注③：P2 记忆编排已落地——knowledge/injection.py 把 code_context 检索注入 Designer 设计提示词，把仓库地图注入 coding_agent 单轮修改提示词，均 fail-open）
-   （2026-08-30 注②：LLM token 用量记账 + 计划级预算闸门已落地——GET /api/usage 查询，config budget.max_tokens_per_plan 配置上限，超限自动转 Paused；text_editor/file_creator 语法门禁与 command_runner Docker 沙箱同步落地，详见 docs/HARDENING_2026-08-30.md）
-4. **架构分层与代码分布脱节**：`designer/`、`executor/`、`dispatcher/`、`toolmanager/`
-   目录只有空 `__init__.py`，真实逻辑集中在 `api/server.py`（约 1500 行）与
-   `utils/interfaces.py`。文档与目录结构反映的是设计愿景而非现实。
-5. **测试覆盖不均**：总体 48%，designer / llm_client / dispatcher 偏薄。
-6. **Rust 侧**：crates 存在（common/db/dispatcher/logger/server/tool_manager/gui），
-   但 Python 层已自成体系，Rust 部分与主链路未打通；错误处理约定未同步。
-7. **遗留清理**：`python/api/main.py`（9000 端口旧入口）与 `server.py.bak` 未删；
-   根目录 `a.txt`、`out.html`、`test.py`、`package.json`/`node_modules` 为用户文件未整理。
+1. `python/api/server.py` 仍然是大型协调入口，后续可按 routes/services 做轻拆。
+2. AgentSession/Run/Turn/Attempt 的完整持久化分层尚未完成。
+3. 覆盖率分布不均，Designer、LLM client 和部分入口代码较薄。
+4. Rust 与 Python 的运行时、错误码和事件契约仍需通过兼容测试逐步对齐。
+5. 根目录存在历史脚本、实验目录和运行残留，需先分类再决定归档，不直接删除未知文件。
+6. 工具契约“工具返回结构化失败而非把业务失败冒充成功”有文档和测试约束，但仍需逐工具验证异常路径。
 
-## 成熟度评估
+## 后续原则
 
-| 场景 | 可用性 |
-|------|--------|
-| 单机演示 / 简单项目生成与执行 | ✅ 可用 |
-| 开发辅助（文件/命令/Git/装包类任务） | ✅ 可用 |
-| 复杂项目实施 | ⚠️ 受限于工具数量 |
-| 生产环境 / 多用户 / 企业级 | ❌ 不具备（无监控、权限、协作） |
+- 面向个人本地使用，优先稳定性、可观测性和日常工具覆盖，不提前引入多用户/多租户复杂度。
+- 第一阶段不修改数据库 schema，不引入 outbox；先稳定 Repository、Application Service 和状态机边界。
+- 服务端 HTTP 请求仅允许 http/https，并在请求前拒绝 localhost、环回、私有及保留地址。
+- 所有 SQL 外部输入必须使用参数绑定，禁止字符串拼接。
+- 所有凭据只从环境变量或密钥服务读取；本地覆盖文件不得提交到 Git。
