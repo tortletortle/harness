@@ -380,6 +380,9 @@ def test_failed_step_checkpoint_is_retried_and_following_steps_continue(server_s
     assert str(failed_plan.resume_from_step_id) == step_ids[0]
     assert calls == [step_ids[0]]
     assert db.get_steps(str(plan_id))[0]["status"] == "Failed"
+    first_runs = db.list_execution_runs(str(plan_id))
+    assert len(first_runs) == 1
+    assert first_runs[0]["status"] == "Failed"
 
     async def succeed(plan, step):
         calls.append(str(step["step_id"]))
@@ -403,6 +406,15 @@ def test_failed_step_checkpoint_is_retried_and_following_steps_continue(server_s
     assert calls == [step_ids[0], *step_ids]
     assert all(row["status"] == "Success" for row in db.get_steps(str(plan_id)))
     assert db.get_plan(str(plan_id)).resume_from_step_id is None
+    second_runs = db.list_execution_runs(str(plan_id))
+    assert len(second_runs) == 2
+    assert second_runs[0]["status"] == "Completed"
+    assert second_runs[1]["status"] == "Failed"
+    events = [event for step_id in step_ids for event in db.get_step_events(str(plan_id), step_id)]
+    assert any(event["event_type"] == "failed" for event in events)
+    attempts = [attempt for run in second_runs for attempt in db.list_execution_attempts(run["run_id"])]
+    assert attempts
+    assert any(attempt["status"] == "Succeeded" for attempt in attempts)
 
 
 

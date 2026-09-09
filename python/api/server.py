@@ -2015,6 +2015,21 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
             await broadcast_log(f"[OK] 步骤 {step_id} 完成（未校验）", "success")
             # 不要在这里 break；外循环需要继续取下一个 step
 
+        # 最后一个步骤可能在本轮循环末尾完成，下一轮通常会完成状态收敛；
+        # 这里再做一次幂等收敛，避免收尾阶段把成功运行误判为 Failed。
+        if state.database.get_plan_status(str(plan.plan_id)) == PlanStatus.RUNNING.value:
+            active_steps = state.database.get_active_steps_snapshot(str(plan.plan_id), branch_version)
+            if active_steps and all(
+                step_row.get("status") in {StepStatus.SUCCESS.value, StepStatus.SKIPPED.value}
+                for step_row in active_steps
+            ):
+                _require_write(
+                    state.database.update_plan_state_machine(str(plan.plan_id), PlanStatus.COMPLETED.value),
+                    f"计划 {plan.plan_id} 状态 → Completed",
+                )
+                await broadcast_plan_update(str(plan.plan_id))
+                await broadcast_log(f"计划执行完成: {plan.plan_id}", "success")
+
     except Exception as e:
         debug_log(f"EXCEPTION in execute_plan_background: {e}")
         import traceback
@@ -2063,6 +2078,24 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
             state.authorization_manager.revoke_all_for_plan(str(plan.plan_id))
         except Exception as runtime_cleanup_exc:
             debug_log(f"runtime grant cleanup failed: {runtime_cleanup_exc}")
+        # 最终收敛安全网：若所有活动步骤均已成功/跳过，即使执行循环曾因收尾异常
+        # 保留了 Failed，也不能让已完成的计划继续以失败结束；只在无失败步骤时修正。
+        try:
+            _cleanup_status = state.database.get_plan_status(str(plan.plan_id))
+            if _cleanup_status in {PlanStatus.RUNNING.value, PlanStatus.FAILED.value}:
+                _cleanup_branch = getattr(plan, "current_branch", 1) or 1
+                _cleanup_steps = state.database.get_active_steps_snapshot(str(plan.plan_id), _cleanup_branch)
+                if _cleanup_steps and all(
+                    row.get("status") in {StepStatus.SUCCESS.value, StepStatus.SKIPPED.value}
+                    for row in _cleanup_steps
+                ):
+                    state.database.update_plan_state_machine(
+                        str(plan.plan_id), PlanStatus.COMPLETED.value,
+                    )
+                    state.database.clear_plan_checkpoint(str(plan.plan_id))
+                    await broadcast_plan_update(str(plan.plan_id))
+        except Exception as _status_cleanup_exc:
+            debug_log(f"final plan status convergence failed: {_status_cleanup_exc}")
         # Run 收尾：按计划最终状态映射 Run 终态，owner_token fencing 保证只本任务可收尾。
         _run_terminal = {
             PlanStatus.COMPLETED.value: RunStatus.COMPLETED.value,
