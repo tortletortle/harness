@@ -1235,7 +1235,18 @@ async def reject_tool_call(plan_id: str, approval_id: str, request: Optional[App
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _require_write(ok: bool, what: str) -> None:
+def _is_retryable_exit_code_acceptance(step: Dict[str, Any], result: Dict[str, Any]) -> bool:
+    """Return true only for a transient command exit-code mismatch."""
+    if step.get("tool") != "command_runner" or not isinstance(result, dict):
+        return False
+    if result.get("returncode") is None and result.get("exit_code") is None:
+        return False
+    acceptance = result.get("acceptance_result")
+    checks = acceptance.get("checks", []) if isinstance(acceptance, dict) else []
+    failed = [check for check in checks if not check.get("passed")]
+    return bool(failed) and all(check.get("type") == "exit_code" for check in failed)
+
+
     """状态写入必须成功；False（未命中/非法状态）与异常同样致命，向上抛给外层统一清理。"""
     if not ok:
         raise RuntimeError(f"状态写入失败: {what}")
@@ -1760,7 +1771,11 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
 
             await broadcast_plan_update(str(plan.plan_id))
 
-            max_attempts = getattr(state, "retry_max_attempts", 3)
+            configured_retries = step.get("max_retries")
+            if configured_retries is None:
+                max_attempts = getattr(state, "retry_max_attempts", 3)
+            else:
+                max_attempts = max(1, int(configured_retries) + 1)
             backoff_factor = getattr(state, "retry_backoff_factor", 2)
             attempt = 0
             feedback_used = False
@@ -1849,7 +1864,9 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
                     await broadcast_plan_update(str(plan.plan_id))
                     break
 
-                if result.get("check_status") == "failed":
+                if result.get("check_status") == "failed" and _is_retryable_exit_code_acceptance(step, result):
+                    result["retryable"] = True
+                if result.get("check_status") == "failed" and not _is_retryable_exit_code_acceptance(step, result):
                     # P2 反馈回路：验收缺口作为 feedback 喂回 coding_agent 再修一轮
                     # （每步最多一次；重试仍失败则走下方原判死路径）。
                     # 真实首跑 step20/22 的失败模式（指令与验收命名脱节）可在此自愈。

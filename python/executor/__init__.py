@@ -353,13 +353,13 @@ class DefaultExecutor(ExecutorAI):
                     "retryable": False,
                 }
             else:
-                logger.error("失败: {}", result.get("message"))
+                logger.error("失败: {}", result.get("message") or result.get("error") or "Unknown error")
                 return {
                     "success": False,
                     "output": result,
                     "check_status": self.CHECK_UNVERIFIED,
                     "check_passed": False,
-                    "error": result.get("error", "Unknown error"),
+                    "error": result.get("error") or result.get("message") or "Unknown error",
                     # 安全拦截（危险命令/非法包名/非法URL/工作目录越界）重试无意义，
                     # 无论重试多少次结果都不会变。
                     "blocked": blocked,
