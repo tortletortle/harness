@@ -1,0 +1,41 @@
+# Checkpoint 恢复真实验收记录（2026-09-09）
+
+## 验收目标
+
+同一计划执行两次：第一次步骤 1 失败并保留 checkpoint；第二次从同一计划的 checkpoint 恢复，步骤 1 与步骤 2 成功，计划和第二次 Run 完成，并保留审计事件与最终产物。
+
+## 真实运行证据
+
+- 计划 ID：`e531e98f-eaa3-4aac-a041-92486643f546`
+- 执行方式：初始化真实服务 lifespan 后，直接调用当前服务的 `execute_plan_background`；步骤 2 使用真实 `file_creator`，未注入凭据。
+- 产物：`out/live-checkpoint-acceptance/final-artifact.txt`
+- 产物内容：`checkpoint recovery accepted`
+
+### 第一次运行
+
+- 计划状态：`Failed`
+- Run 状态：`Failed`
+- 步骤状态：`Failed`, `Pending`
+- checkpoint：`resume_from_step_id=92a42a72-fd15-48f0-8162-1557cded07a6`
+- 审计事件：步骤 1 `failed`
+- 失败原因：`intentional first-run failure`
+
+### 第二次运行（同一计划恢复）
+
+- 计划状态：`Completed`
+- Run 状态（按时间倒序）：`Completed`, `Failed`
+- 步骤状态：`Success`, `Success`
+- checkpoint：已清除（`resume_from_step_id=null`）
+- 审计事件序列包含：`failed`, `running`, `grant_issued`, `grant_allowed`, `grant_revoked`, `success`
+- 最终产物：存在，内容精确为 `checkpoint recovery accepted\n`
+- 步骤调用序列：步骤 1（失败）、步骤 1（恢复成功）、步骤 2（成功）
+
+原始结构化证据保存在被 `.gitignore` 忽略的 `out/live-checkpoint-acceptance.json`，没有提交运行时数据库、token、日志或凭据。
+
+## 回归验证
+
+- checkpoint focused tests：通过
+- lifecycle focused tests：通过（5 passed）
+- 前端 Vitest：36 passed
+- 前端 production build：成功
+- 完整 Python suite：存在与本机 Playwright、未配置真实 provider 的既有环境相关失败；未把它们误报为全绿。

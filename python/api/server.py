@@ -113,6 +113,12 @@ class AppState:
 
 state = AppState()
 
+def _require_write(ok: bool, what: str) -> None:
+    """把数据库写入未命中转换为可观测执行错误。"""
+    if not ok:
+        raise DatabaseError(f"{what}失败")
+
+
 # ===== 配置加载 =====
 
 def _deep_merge_dict(base: dict, override: dict) -> dict:
