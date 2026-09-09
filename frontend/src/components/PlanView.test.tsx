@@ -159,7 +159,6 @@ describe('PlanView 步骤级控制', () => {
     mockedApi.skipStep.mockRejectedValueOnce(new Error('只能跳过待执行的步骤'));
 
     await user.click(screen.getByRole('button', { name: '跳过' }));
-
     await waitFor(() => {
       const logs = useAppStore.getState().logs;
       expect(

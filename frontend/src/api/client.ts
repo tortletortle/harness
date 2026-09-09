@@ -14,6 +14,7 @@ import type {
   AuditLogEntry,
   ExecutionRun,
   ExecutionAttempt,
+  ServiceConnectionState,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
@@ -66,15 +67,21 @@ export class ApiClient {
   private planUpdateCallbacks: ((ev: PlanUpdateEvent) => void)[] = [];
   private approvalRequestCallbacks: ((ev: ApprovalRequestEvent) => void)[] = [];
   private approvalResolvedCallbacks: ((ev: ApprovalResolvedEvent) => void)[] = [];
+  private connectionCallbacks: ((state: ServiceConnectionState) => void)[] = [];
   // 区分"程序性关闭"（替换连接/主动断开）与"意外断开"：
   // 前者绝不能触发自动重连，否则重连本身会再次关闭连接，形成每 5 秒的
   // 无限重连循环（StrictMode 双挂载加剧此问题，见 E2E 观察到的连接风暴）。
   private intentionalClose = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /**
-   * 生成设计书
-   */
+  private setConnectionState(state: ServiceConnectionState): void {
+    this.connectionCallbacks.forEach((callback) => callback(state));
+  }
+
+  onConnectionState(cb: (state: ServiceConnectionState) => void): void {
+    this.connectionCallbacks.push(cb);
+  }
+
   async createDesign(userRequest: string): Promise<Design> {
     const response = await authFetch(`${API_BASE}/api/design`, {
       method: 'POST',
@@ -505,6 +512,7 @@ export class ApiClient {
    * 连接 WebSocket 实时日志
    */
   connectLogs(onLog: (log: LogMessage) => void): void {
+    this.setConnectionState(this.ws ? 'reconnecting' : 'connecting');
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -525,24 +533,34 @@ export class ApiClient {
     // 浏览器 WebSocket API 不允许自定义请求头，因此 token 走查询参数
     const wsQuery = API_TOKEN ? `?token=${encodeURIComponent(API_TOKEN)}` : '';
     this.ws = new WebSocket(`${wsProtocol}//${wsHost}/ws/logs${wsQuery}`);
+    this.ws.onopen = () => this.setConnectionState('online');
 
     this.ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data?.type === 'plan_update') {
+      let data: unknown;
+      try {
+        data = JSON.parse(event.data) as unknown;
+      } catch {
+        this.logCallbacks.forEach((cb) => cb({ type: 'log', level: 'warning', message: '收到无法解析的实时消息' }));
+        return;
+      }
+      if (!data || typeof data !== 'object') return;
+      const message = data as { type?: string };
+      if (message.type === 'plan_update') {
         const ev = data as PlanUpdateEvent;
         this.planUpdateCallbacks.forEach(cb => cb(ev));
         return;
       }
-      if (data?.type === 'approval_request') {
+      if (message.type === 'approval_request') {
         const ev = data as ApprovalRequestEvent;
         this.approvalRequestCallbacks.forEach(cb => cb(ev));
         return;
       }
-      if (data?.type === 'approval_resolved') {
+      if (message.type === 'approval_resolved') {
         const ev = data as ApprovalResolvedEvent;
         this.approvalResolvedCallbacks.forEach(cb => cb(ev));
         return;
       }
+      if (message.type !== 'log') return;
       const log = data as LogMessage;
       this.logCallbacks.forEach(cb => cb(log));
     };
@@ -556,14 +574,16 @@ export class ApiClient {
       // 程序性关闭（替换/主动断开）不重连
       if (this.intentionalClose) {
         this.intentionalClose = false;
+        this.setConnectionState('offline');
         return;
       }
       // 1008 = 服务端拒绝（token 无效），重连只会无限失败
       if (event.code === 1008) {
         console.error('WebSocket 认证失败，请检查 VITE_API_TOKEN，不再重试');
+        this.setConnectionState('auth_error');
         return;
       }
-      // 5 秒后尝试重连（持有定时器句柄，connectLogs/disconnectLogs 会先清掉）
+      this.setConnectionState('reconnecting');
       this.reconnectTimer = setTimeout(() => {
         this.reconnectTimer = null;
         if (this.logCallbacks.length > 0) {
@@ -609,7 +629,7 @@ export class ApiClient {
     this.planUpdateCallbacks = [];
     this.approvalRequestCallbacks = [];
     this.approvalResolvedCallbacks = [];
-  }
-}
+    this.connectionCallbacks = [];
+  }}
 
 export const apiClient = new ApiClient();

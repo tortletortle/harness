@@ -69,7 +69,8 @@ export function PlanView() {
   const [expandedSegments, setExpandedSegments] = useState<Set<string>>(new Set());
   const [controlInFlight, setControlInFlight] = useState<ControlAction>(null);
   const [rollbackTarget, setRollbackTarget] = useState<Step | null>(null);
-
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [allExpanded, setAllExpanded] = useState(false);
   usePlanPolling();
 
   if (!currentPlan) {
@@ -157,6 +158,7 @@ export function PlanView() {
   };
 
   const handleExecute = async () => {
+    setActionError(null);
     setIsExecuting(true);
     addLog({
       type: 'log',
@@ -171,22 +173,27 @@ export function PlanView() {
         // 轮询会继续尝试刷新权威状态。
       }
     } catch (error) {
-      addLog({ type: 'log', level: 'error', message: `执行失败: ${error}` });
+      const message = `执行失败: ${error}`;
+      setActionError(message);
+      addLog({ type: 'log', level: 'error', message });
       setIsExecuting(false);
     }
   };
 
   const handlePause = async () => {
+    setActionError(null);
     setControlInFlight('pause');
     addLog({ type: 'log', level: 'info', message: `发送暂停请求: ${currentPlan.plan_id}` });
     try {
       await apiClient.pausePlan(currentPlan.plan_id);
       addLog({ type: 'log', level: 'success', message: '暂停请求已发出，当前步骤完成后将暂停' });
     } catch (error) {
+      const message = `暂停失败: ${error instanceof Error ? error.message : String(error)}`;
+      setActionError(message);
       addLog({
         type: 'log',
         level: 'error',
-        message: `暂停失败: ${error instanceof Error ? error.message : String(error)}`,
+        message,
       });
     } finally {
       setControlInFlight(null);
@@ -194,6 +201,7 @@ export function PlanView() {
   };
 
   const handleResume = async () => {
+    setActionError(null);
     setControlInFlight('resume');
     addLog({ type: 'log', level: 'info', message: `发送恢复请求: ${currentPlan.plan_id}` });
     try {
@@ -212,15 +220,18 @@ export function PlanView() {
   };
 
   const handleSkip = async (step: Step) => {
+    setActionError(null);
     setControlInFlight('skip');
     try {
       await apiClient.skipStep(currentPlan.plan_id, step.step_id);
       addLog({ type: 'log', level: 'info', message: `步骤 ${step.step_id} 已标记为跳过` });
     } catch (error) {
+      const message = `跳过步骤失败: ${error instanceof Error ? error.message : String(error)}`;
+      setActionError(message);
       addLog({
         type: 'log',
         level: 'error',
-        message: `跳过步骤失败: ${error instanceof Error ? error.message : String(error)}`,
+        message,
       });
     } finally {
       setControlInFlight(null);
@@ -229,6 +240,7 @@ export function PlanView() {
 
   const confirmRollback = async () => {
     if (!rollbackTarget) return;
+    setActionError(null);
     setControlInFlight('rollback');
     try {
       const result = await apiClient.rollbackPlan(currentPlan.plan_id, rollbackTarget.step_id);
@@ -246,10 +258,12 @@ export function PlanView() {
         // 回滚请求已成功，刷新失败时交给轮询恢复。
       }
     } catch (error) {
+      const message = `回滚失败: ${error instanceof Error ? error.message : String(error)}`;
+      setActionError(message);
       addLog({
         type: 'log',
         level: 'error',
-        message: `回滚失败: ${error instanceof Error ? error.message : String(error)}`,
+        message,
       });
     } finally {
       setControlInFlight(null);
@@ -344,9 +358,23 @@ export function PlanView() {
               />
             </div>
           )}
+          {actionError && <div role="alert" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-red-400/20 bg-red-400/[0.08] px-3 py-2 text-xs text-red-200"><span>{actionError}</span><button type="button" onClick={() => setActionError(null)} aria-label="关闭错误提示" className="text-red-300 hover:text-white">×</button></div>}
         </div>
 
-        <div className="relative space-y-3 pl-0 before:absolute before:bottom-5 before:left-[13px] before:top-5 before:hidden before:w-px before:bg-white/[0.08] sm:pl-7 sm:before:block">
+        {totalSteps === 0 ? (
+          <div className="rounded-xl border border-dashed border-amber-400/20 bg-amber-400/[0.04] p-6 text-center text-sm text-zinc-400">这个计划还没有可执行步骤。</div>
+        ) : (
+          <div>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="text-xs text-zinc-500">阶段列表</div>
+              <button type="button" onClick={() => {
+                const next = !allExpanded;
+                setAllExpanded(next);
+                setExpandedSegments(next ? new Set(currentPlan.segments.map((segment) => segment.segment_id)) : new Set());
+              }} className="text-xs text-violet-300 hover:text-violet-200">{allExpanded ? '全部收起' : '全部展开'}</button>
+            </div>
+            <div className="relative space-y-3 pl-0 before:absolute before:bottom-5 before:left-[13px] before:top-5 before:hidden before:w-px before:bg-white/[0.08] sm:pl-7 sm:before:block">
+
           {currentPlan.segments.map((segment, segmentIndex) => {
             const expanded = expandedSegments.has(segment.segment_id);
             const state = segmentStatus(segment.steps);
@@ -395,7 +423,7 @@ export function PlanView() {
                                 </div>
                                 <div className="flex shrink-0 items-center gap-1">
                                   {canSkip(step) && (
-                                    <button onClick={() => void handleSkip(step)} disabled={controlInFlight !== null} title="跳过" aria-label="跳过" className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.08] hover:text-zinc-200 disabled:opacity-40">
+                                    <button onClick={() => { if (window.confirm('确定跳过此步骤？该步骤不会调用工具。') !== false) void handleSkip(step); }} disabled={controlInFlight !== null} title="跳过" aria-label="跳过" className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.08] hover:text-zinc-200 disabled:opacity-40">
                                       <SkipForward className="h-3.5 w-3.5" />
                                     </button>
                                   )}
@@ -444,7 +472,9 @@ export function PlanView() {
               </div>
             );
           })}
-        </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {rollbackTarget && (

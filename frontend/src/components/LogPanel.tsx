@@ -2,8 +2,8 @@
  * Activity stream dock: live execution logs with level badges and auto-scroll.
  */
 
-import { useEffect, useRef } from 'react';
-import { TerminalSquare, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Pause, Play, TerminalSquare, X } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 
 const levelStyles: Record<string, string> = {
@@ -22,13 +22,16 @@ const levelLabel: Record<string, string> = {
 
 export function LogPanel() {
   const { logs, clearLogs } = useAppStore();
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [level, setLevel] = useState<'all' | 'info' | 'success' | 'warning' | 'error'>('all');
   const containerRef = useRef<HTMLDivElement>(null);
+  const visibleLogs = useMemo(() => level === 'all' ? logs : logs.filter((log) => log.level === level), [level, logs]);
 
   useEffect(() => {
-    if (containerRef.current) {
+    if (autoScroll && containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-  }, [logs]);
+  }, [autoScroll, visibleLogs]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#0b0d11]">
@@ -38,20 +41,24 @@ export function LogPanel() {
           <span>活动流</span>
           <span className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">{logs.length}</span>
         </div>
-        <button onClick={clearLogs} title="清空日志" className="rounded p-1 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-white">
-          <X className="h-3.5 w-3.5" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          <select aria-label="日志级别过滤" value={level} onChange={(event) => setLevel(event.target.value as typeof level)} className="rounded border border-white/[0.08] bg-white/[0.04] px-1.5 py-1 text-[10px] text-zinc-400">
+            <option value="all">全部</option><option value="info">信息</option><option value="success">成功</option><option value="warning">警告</option><option value="error">错误</option>
+          </select>
+          <button onClick={() => setAutoScroll((value) => !value)} title={autoScroll ? '暂停自动滚动' : '恢复自动滚动'} aria-label={autoScroll ? '暂停自动滚动' : '恢复自动滚动'} className="rounded p-1 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-white">{autoScroll ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}</button>
+          <button onClick={clearLogs} title="清空日志" aria-label="清空日志" className="rounded p-1 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-white"><X className="h-3.5 w-3.5" /></button>
+        </div>
       </div>
 
       <div ref={containerRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3 font-mono text-[11px] leading-relaxed">
-        {logs.length === 0 ? (
+        {visibleLogs.length === 0 ? (
           <div className="flex h-full items-center justify-center text-zinc-700">
             暂无日志 · 执行任务后事件会实时出现在这里
           </div>
         ) : (
           <div className="space-y-1.5">
-            {logs.map((log, index) => (
-              <div key={index} className="flex items-start gap-2">
+            {visibleLogs.map((log) => (
+              <div key={log.id ?? `${log.timestamp}-${log.message}`} className="flex items-start gap-2">
                 <span className="shrink-0 pt-px text-zinc-600">{log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''}</span>
                 <span className={`shrink-0 rounded border px-1.5 py-px text-[10px] ${levelStyles[log.level] || levelStyles.info}`}>
                   {levelLabel[log.level] || log.level.toUpperCase()}

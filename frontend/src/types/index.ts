@@ -100,7 +100,10 @@ export interface LogMessage {
   level: 'info' | 'success' | 'warning' | 'error';
   message: string;
   timestamp?: string;
+  id?: string;
 }
+
+export type ServiceConnectionState = 'connecting' | 'online' | 'reconnecting' | 'offline' | 'auth_error';
 
 /** WebSocket 推送的计划状态变更事件（type=plan_update） */
 export interface PlanUpdateEvent {

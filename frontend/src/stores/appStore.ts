@@ -3,7 +3,41 @@
  */
 
 import { create } from 'zustand';
-import type { Design, ExecutionPlan, Tool, LogMessage, Toast, ApprovalRequestEvent } from '../types';
+import type { Design, ExecutionPlan, Tool, LogMessage, Toast, ApprovalRequestEvent, ServiceConnectionState } from '../types';
+
+const STORAGE_KEY = 'eas-ui-state';
+const LOG_MAX = 500;
+
+type PersistedUiState = {
+  currentView?: AppState['currentView'];
+  inputText?: string;
+  currentPlan?: ExecutionPlan | null;
+};
+
+function readPersistedState(): PersistedUiState {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') as PersistedUiState;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistUiState(state: Pick<AppState, 'currentView' | 'inputText' | 'currentPlan'>): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      currentView: state.currentView,
+      inputText: state.inputText,
+      currentPlan: state.currentPlan,
+    }));
+  } catch {
+    // 本地 UI 状态持久化失败不应影响任务执行。
+  }
+}
+
+const persisted = readPersistedState();
 
 // Toast 自增 ID 计数器（模块级，保证唯一）
 let toastIdCounter = 0;
@@ -14,6 +48,10 @@ interface AppState {
   // 当前视图
   currentView: 'input' | 'design' | 'plan' | 'execution' | 'tools' | 'history' | 'audit' | 'config';
   setCurrentView: (view: AppState['currentView']) => void;
+
+  // 服务连接状态
+  connectionState: ServiceConnectionState;
+  setConnectionState: (state: ServiceConnectionState) => void;
 
   // plan_update 推送事件计数：usePlanPolling 订阅它以在事件到达时立即刷新。
   // 只带 planId 与自增序号——权威状态仍由轮询 hook 的全量拉取写入，
@@ -73,16 +111,17 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set) => ({
   // 初始状态
-  currentView: 'input',
+  currentView: persisted.currentView ?? 'input',
+  connectionState: 'connecting',
   planEventTick: { planId: null, seq: 0 },
-  inputText: '',
+  inputText: persisted.inputText ?? '',
   sidebarCollapsed: false,
   logPanelCollapsed: false,
   aiPanelCollapsed: true,
   designs: [],
   currentDesign: null,
   plans: [],
-  currentPlan: null,
+  currentPlan: persisted.currentPlan ?? null,
   tools: [],
   logs: [],
   toasts: [],
@@ -91,13 +130,22 @@ export const useAppStore = create<AppState>((set) => ({
   config: null,
 
   // Actions
-  setCurrentView: (view) => set({ currentView: view }),
+  setCurrentView: (view) => set((state) => {
+    const next = { ...state, currentView: view };
+    persistUiState(next);
+    return { currentView: view };
+  }),
+  setConnectionState: (connectionState) => set({ connectionState }),
 
   notifyPlanEvent: (planId) => set((state) => ({
     planEventTick: { planId, seq: state.planEventTick.seq + 1 },
   })),
 
-  setInputText: (text) => set({ inputText: text }),
+  setInputText: (text) => set((state) => {
+    const next = { ...state, inputText: text };
+    persistUiState(next);
+    return { inputText: text };
+  }),
 
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   toggleLogPanel: () => set((state) => ({ logPanelCollapsed: !state.logPanelCollapsed })),
@@ -107,12 +155,17 @@ export const useAppStore = create<AppState>((set) => ({
   setCurrentDesign: (design) => set({ currentDesign: design }),
 
   setPlans: (plans) => set({ plans }),
-  setCurrentPlan: (plan) => set({ currentPlan: plan }),
+  setCurrentPlan: (plan) => set((state) => {
+    const next = { ...state, currentPlan: plan };
+    persistUiState(next);
+    return { currentPlan: plan };
+  }),
 
   setTools: (tools) => set({ tools }),
 
   addLog: (log) => set((state) => {
-    const logs = [...state.logs, { ...log, timestamp: new Date().toISOString() }];
+    const incoming = { ...log, id: log.id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`, timestamp: log.timestamp ?? new Date().toISOString() };
+    const logs = [...state.logs, incoming].slice(-LOG_MAX);
 
     // error/warning 日志同时浮出 Toast
     let toasts = state.toasts;

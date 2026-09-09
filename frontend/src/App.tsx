@@ -3,10 +3,11 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Activity, Circle, ChevronDown, Moon, PanelRight, Sun, Wifi } from 'lucide-react';
+import { Activity, Circle, ChevronDown, Moon, PanelRight, Sun, Wifi, WifiOff, Loader2 } from 'lucide-react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { apiClient } from './api/client';
 import { useAppStore } from './stores/appStore';
+import type { ServiceConnectionState } from './types';
 import { Sidebar } from './components/Sidebar';
 import { LogPanel } from './components/LogPanel';
 import { AiPanel } from './components/AiPanel';
@@ -21,7 +22,15 @@ import { ConfigView } from './components/ConfigView';
 import { ToastHub } from './components/ToastHub';
 import { ApprovalBanner } from './components/ApprovalBanner';
 
-let lastPlanEventVersion = 0;
+let lastPlanEventVersionByPlan = new Map<string, number>();
+
+const connectionMeta: Record<ServiceConnectionState, { label: string; className: string }> = {
+  connecting: { label: '连接中', className: 'text-amber-300' },
+  online: { label: '服务在线', className: 'text-emerald-300' },
+  reconnecting: { label: '正在重连', className: 'text-amber-300' },
+  offline: { label: '已离线', className: 'text-zinc-500' },
+  auth_error: { label: '认证失败', className: 'text-red-300' },
+};
 
 const viewMeta = {
   input: { label: '新建任务', hint: '把目标交给 EAS，先从清晰的需求开始' },
@@ -35,7 +44,7 @@ const viewMeta = {
 } as const;
 
 function App() {
-  const { currentView, addLog, sidebarCollapsed, logPanelCollapsed, aiPanelCollapsed, currentPlan, isExecuting } = useAppStore();
+  const { currentView, addLog, sidebarCollapsed, logPanelCollapsed, aiPanelCollapsed, currentPlan, isExecuting, connectionState, setConnectionState } = useAppStore();
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return (localStorage.getItem('eas-theme') as 'dark' | 'light' | null) || 'dark';
   });
@@ -46,11 +55,13 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
+    apiClient.onConnectionState(setConnectionState);
     apiClient.connectLogs((log) => addLog(log));
     apiClient.onPlanUpdate((ev) => {
       if (typeof ev.version === 'number') {
-        if (ev.version <= lastPlanEventVersion) return;
-        lastPlanEventVersion = ev.version;
+        const previous = lastPlanEventVersionByPlan.get(ev.plan_id) ?? 0;
+        if (ev.version <= previous) return;
+        lastPlanEventVersionByPlan.set(ev.plan_id, ev.version);
       }
       useAppStore.getState().notifyPlanEvent(ev.plan_id);
     });
@@ -59,8 +70,11 @@ function App() {
       const current = useAppStore.getState().pendingApproval;
       if (current && current.approval_id === ev.approval_id) useAppStore.getState().setPendingApproval(null);
     });
+    void apiClient.getServiceStatus()
+      .then(() => setConnectionState('online'))
+      .catch(() => setConnectionState('offline'));
     return () => apiClient.disconnectLogs();
-  }, [addLog]);
+  }, [addLog, setConnectionState]);
 
   const renderView = () => {
     switch (currentView) {
@@ -98,7 +112,11 @@ function App() {
                   </div>
                     <div className="flex shrink-0 items-center gap-2">
                       {currentPlan && <div className="hidden items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 md:flex"><Activity className={`h-3.5 w-3.5 ${isExecuting ? 'text-violet-300' : 'text-zinc-600'}`} /><span className="font-mono text-[10px] text-zinc-500">{currentPlan.plan_id.slice(0, 8)}</span></div>}
-                      <div className="flex items-center gap-1.5 text-[11px] text-zinc-500"><Wifi className="h-3.5 w-3.5 text-emerald-300" /><span className="hidden sm:inline">服务在线</span><Circle className="h-1.5 w-1.5 fill-emerald-400 text-emerald-400" /></div>
+                      <div className={`flex items-center gap-1.5 text-[11px] ${connectionMeta[connectionState].className}`} title={connectionMeta[connectionState].label}>
+                        {connectionState === 'connecting' || connectionState === 'reconnecting' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : connectionState === 'online' ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
+                        <span className="hidden sm:inline">{connectionMeta[connectionState].label}</span>
+                        <Circle className={`h-1.5 w-1.5 fill-current ${connectionState === 'online' ? '' : 'opacity-70'}`} />
+                      </div>
                       <button
                         type="button"
                         onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}

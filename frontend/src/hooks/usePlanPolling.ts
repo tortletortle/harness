@@ -14,7 +14,7 @@ import { useEffect, useRef } from 'react';
 import { apiClient } from '../api/client';
 import { useAppStore } from '../stores/appStore';
 
-const POLL_INTERVAL_MS = 30000;
+const POLL_INTERVAL_MS = 5000;
 /** plan_update 推送到达后的去抖窗口：合并同一次状态变更引发的事件突发 */
 const EVENT_DEBOUNCE_MS = 300;
 
