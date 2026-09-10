@@ -77,6 +77,9 @@ def _http_fetch(
     }
     if headers:
         merged.update(headers)
+    _url_error = _validate_url(url)
+    if _url_error:
+        raise EngineError(_url_error)
     req = urllib.request.Request(url, data=data, headers=merged)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
