@@ -13,6 +13,18 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 import sys
 
+# 本地凭据文件（gitignored）支持：优先读环境变量，其次读仓库根 .env。
+# 绝不把可用凭据写进源码或被跟踪文件。
+_dotenv_path = Path(__file__).resolve().parents[2] / ".env"
+if os.getenv("DOTENV_LOADED") is None:
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(_dotenv_path)
+        os.environ.setdefault("DOTENV_LOADED", "1")
+    except Exception:
+        pass
+
 from contextlib import asynccontextmanager
 
 from fastapi import (

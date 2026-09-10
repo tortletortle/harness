@@ -629,7 +629,39 @@ class DefaultDesigner(Designer):
         cached_plan = self.plan_cache.get(cache_key)
         if cached_plan:
             logger.info("使用缓存的执行计划")
-            return ExecutionPlan(**cached_plan)
+            cached = dict(cached_plan)
+            # 重新审批是一次重新规划，不能复用已被真实执行过的计划身份：
+            # 若直接返回缓存的旧 plan_id/step_id，save_plan 会幂等重建已执行计划，
+            # 而 execution_attempts 仍外键引用旧 step_id，触发 FOREIGN KEY 违约。
+            # 复用计划结构，但换掉 plan_id 与所有 step_id。
+            from uuid import uuid4
+            cached["plan_id"] = str(uuid4())
+            segments = []
+            for segment in cached.get("segments") or []:
+                seg = dict(segment)
+                steps = []
+                for step in seg.get("steps") or []:
+                    raw = dict(step)
+                    raw["step_id"] = str(uuid4())
+                    raw["status"] = "Pending"
+                    raw["executed_at"] = None
+                    raw["outputs"] = None
+                    raw["state_snapshot"] = None
+                    raw["compressed_context"] = None
+                    raw["duration_ms"] = None
+                    raw["failure_reason"] = None
+                    raw["retry_count"] = 0
+                    raw["parent_step_id"] = None
+                    raw["is_obsolete"] = False
+                    steps.append(raw)
+                seg["steps"] = steps
+                segments.append(seg)
+            cached["segments"] = segments
+            cached["status"] = "Pending"
+            cached["current_branch"] = 1
+            cached["resume_from_step_id"] = None
+            cached["paused_at_step_id"] = None
+            return ExecutionPlan(**cached)
         
         system_prompt = """你是一个执行计划专家。根据设计书生成详细的、可执行的步骤计划。
 

@@ -21,13 +21,14 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 
 ## 当前验证基线（2026-09-10）
 
+- A 标准五任务真实验收：**通过**。5 个真实 LLM 任务全部 Completed，产物 `harness_real_task_*.md` 落盘。证据 `out/real-llm-acceptance-a.json`。
+- 计划缓存外键 bug 修复：`generate_plan` 缓存命中时复用计划结构但重新生成 plan_id/step_id，避免重建已执行计划触发 `execution_attempts` 外键违约。
 - 前端 Vitest：36 passed；生产构建成功。
-- 隔离 checkpoint 验收脚本：`PYTHONPATH=python python scripts/live_checkpoint_acceptance.py` 退出码 0（首次 Failed + checkpoint 保留；同计划恢复 Completed；Run/步骤/审计/Attempt/产物全部核对）。
+- 隔离 checkpoint 验收脚本：退出码 0。
 - 默认离线 Python 回归：635 passed / 9 skipped / 2 deselected。
 - 真实浏览器（Playwright Chromium）检查：11 passed。
-- 完整 Python 套件：646 passed / 11 skipped / 2 errors；errors 为 `test_exec_e2e.py`，需要真实 LLM 凭据。
-- A 标准五任务验收脚本：`scripts/real_llm_acceptance_a.py`，需注入 `EAS_LLM_API_KEY_STEPFUN`/`EAS_LLM_API_KEY_NEWAPI` 后运行；当前凭据未配置。
-- Mimosa 深度扫描（2026-09-10）：6 个静态 finding（path-traversal 5、SSRF 1）；super_search 的 SSRF 已修复；其余待逐项复核关闭。
+- 计划/生命周期/checkpoint 回归：42 passed。
+- Mimosa 深度扫描：6 个静态 finding（path-traversal 5、SSRF 1）；super_search SSRF 已修复，其余待复核。
 - Rust 测试：当前开发机未安装 cargo，尚未执行。
 
 
