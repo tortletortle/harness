@@ -21,11 +21,11 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 
 ## 当前验证基线（2026-09-10）
 
-- 前端 Vitest：36 passed。
-- 前端生产构建：成功。
-- checkpoint focused/lifecycle：5 passed；隔离脚本 `scripts/live_checkpoint_acceptance.py` 退出码 0，结果写入临时数据库/工作区。
-- 默认离线 Python 命令：本轮需以 `python -m pytest -q --ignore=tests/python/test_exec_e2e.py --ignore=tests/python/test_browser_check.py` 重新复跑后更新；该命令不代表真实 LLM 或浏览器验收。
-- 完整 Python 基线：仍包含依赖真实 provider、Playwright 和部分历史环境假设的测试；不把这些失败误报为产品链路失败。
+- 前端 Vitest：36 passed；生产构建成功。
+- 隔离 checkpoint 验收脚本：`PYTHONPATH=python python scripts/live_checkpoint_acceptance.py` 退出码 0（首次 Failed + checkpoint 保留；同计划恢复 Completed；Run/步骤/审计/Attempt/产物全部核对）。
+- 默认离线 Python 回归（CI 同款命令）：635 passed / 9 skipped / 2 deselected。
+- 安全回归：URL/SSRF（web_fetcher、super_search、http_api、authorization）45 passed。
+- Mimosa 深度扫描（2026-09-10）：6 个静态 finding（path-traversal 5、SSRF 1）；super_search 的 SSRF 已修复（引擎请求统一走 `_validate_url`）；其余为脚本型工具/缓存写入路径，需要逐项复核后再关闭。
 - Rust 测试：当前开发机未安装 cargo，尚未执行。
 
 ## 已知短板

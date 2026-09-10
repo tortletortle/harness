@@ -6,7 +6,7 @@ AI 任务编排与执行系统：用户提出需求 → Designer（LLM）生成�
 
 核心链路完整可用：设计书生成与审批、执行计划生成、计划执行与实时日志、执行控制（暂停/恢复/跳步/回滚）、审计日志、配置管理。产品运行模式使用真实 LLM；凭据只从环境变量或密钥服务读取。错误处理遵循明确契约（见 [docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md)）。
 
-- 默认离线后端回归：`python -m pytest -q --ignore=tests/python/test_exec_e2e.py --ignore=tests/python/test_browser_check.py`（本轮验证 614 passed / 11 skipped）
+- 默认离线后端回归（CI 同款）：`python -m pytest -q -m "not integration and not browser" --ignore=tests/python/test_exec_e2e.py --ignore=tests/python/test_browser_check.py`（本轮验证 635 passed / 9 skipped）
 - 前端测试：`vitest` 36 passed；production build 成功
 - 真实 LLM 任务与隔离 checkpoint 验收：见 [docs/checkpoint-recovery-acceptance-2026-09-09.md](docs/checkpoint-recovery-acceptance-2026-09-09.md)
 - CI：Python 离线回归、frontend test/build、Rust workspace test；真实 LLM 和浏览器测试需单独配置环境
