@@ -1,0 +1,5152 @@
+{
+  "dd64f0cdbfa7df9e1ed98a75f355223a": {
+    "design": {
+      "plan_id": "a99990b1-4566-41be-ab9a-a62ffda8b97e",
+      "design_id": "fdecd5f5-023e-4ad5-956f-ee6273f9de9f",
+      "created_at": "2026-09-06T00:52:42.677942",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "15c4eb87-9fff-4eb9-816d-adad8ffe1731",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "c5246a6d-3efc-4dc4-9d16-21846d0d0a03",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788655962.6779428,
+    "last_access": 1788655962.6779428,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "fdecd5f5-023e-4ad5-956f-ee6273f9de9f"
+  },
+  "8d43376e26192044fcff4172ce76b912": {
+    "design": {
+      "plan_id": "cbd28a44-de48-440a-b651-942694fc3a43",
+      "design_id": "95c69517-f2c1-409a-b5aa-a728402fb2c8",
+      "created_at": "2026-09-06T00:52:54.743597",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "3aa026fa-e40e-4dce-91df-425e664d6560",
+          "description": "创建",
+          "steps": [
+            {
+              "step_id": "66d87927-5972-4ecc-ac7c-b9b480a95c81",
+              "order": 1,
+              "description": "创建 counter",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "counter.py",
+                "content": "def value():\n    return 0"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "fe325bac-abd6-4eaf-9886-bb3e7182a5ac",
+              "order": 2,
+              "description": "创建测试",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "test_counter.py",
+                "content": "test"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "test_counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "a17aa69b-e1be-42ca-82a8-2c28b91b1e71",
+          "description": "修改并验证",
+          "steps": [
+            {
+              "step_id": "164ee991-c319-467f-bbc5-5fb6cac85c0d",
+              "order": 3,
+              "description": "修改 counter",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "counter.py",
+                "instruction": "return 0 to 1",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "counter.py",
+                  "text": "return 1"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "57148801-270b-4622-be72-a76033b94882",
+              "order": 4,
+              "description": "运行测试",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "pytest",
+                "test_path": "test_counter.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "exit_code",
+                  "equals": 0
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "counter.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788655974.7435977,
+    "last_access": 1788655974.7435977,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "95c69517-f2c1-409a-b5aa-a728402fb2c8"
+  },
+  "346cf44e39f0bd94347a5d57e6ec6b0b": {
+    "design": {
+      "plan_id": "bc4e0e6e-7d22-4d30-b853-afaaf38c6a43",
+      "design_id": "97c78171-41d8-445b-b0f4-b102f7017e34",
+      "created_at": "2026-09-06T00:53:35.623709",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "53a456bf-f052-45a7-ab91-499345009dd9",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "8336536c-4e18-47d6-98a0-fad6227f1f87",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788656015.6237092,
+    "last_access": 1788656015.6237092,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "97c78171-41d8-445b-b0f4-b102f7017e34"
+  },
+  "68e0450eee0532c44ddd87da713c4d1d": {
+    "design": {
+      "plan_id": "a3ee49ea-e949-4025-9a41-224b6341e43d",
+      "design_id": "5edb8f9e-16ce-47a9-aacd-63ae46fe4c88",
+      "created_at": "2026-09-06T00:53:35.632232",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "a6419743-e8d7-4d2f-9ce8-ba7cd37a254c",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "13e57eca-bc34-4396-ab2b-278ae28b5f76",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788656015.6322327,
+    "last_access": 1788656015.6322327,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "5edb8f9e-16ce-47a9-aacd-63ae46fe4c88"
+  },
+  "17eedf19f2a8af4a436dd08e80d7f579": {
+    "design": {
+      "plan_id": "8704294c-4f03-40bb-a7ee-51db95963ac0",
+      "design_id": "f1cd531f-14fd-4fd3-81bc-3243c5317cf0",
+      "created_at": "2026-09-06T00:53:42.483954",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "f9910fa8-a48d-49f8-95c7-a2d4dc6b446a",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "2dd48ee1-0e1b-42f7-940a-2c2f23e38f65",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788656022.4839542,
+    "last_access": 1788656022.4839542,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "f1cd531f-14fd-4fd3-81bc-3243c5317cf0"
+  },
+  "160dea6815666412aec9e8a2467185c0": {
+    "design": {
+      "plan_id": "5c5b41c4-7d8c-4cec-af2a-aa7d60d78177",
+      "design_id": "4e06231d-8fef-4349-8be3-502654a81c6a",
+      "created_at": "2026-09-07T05:14:49.026927",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "28f797d6-6eb6-4fbb-88c6-2a2014ef81ad",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "ddfe6531-df60-4f62-bf2d-f601caadd92b",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788758089.026927,
+    "last_access": 1788758089.026927,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "4e06231d-8fef-4349-8be3-502654a81c6a"
+  },
+  "79615219fe9555e86cd26260235484bd": {
+    "design": {
+      "plan_id": "beb23718-6b62-489c-a2a3-43c686e3cb34",
+      "design_id": "76160346-1e40-4c4c-a114-fd1c4b56e141",
+      "created_at": "2026-09-07T05:15:01.160288",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "61d20bf6-070f-414c-9226-34621018a1f1",
+          "description": "创建",
+          "steps": [
+            {
+              "step_id": "12f2529c-6aae-4243-9d58-ddeb636d0217",
+              "order": 1,
+              "description": "创建 counter",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "counter.py",
+                "content": "def value():\n    return 0"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "852713cb-dbd2-4cf3-b087-6529794e12ca",
+              "order": 2,
+              "description": "创建测试",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "test_counter.py",
+                "content": "test"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "test_counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "4ed83aaf-fa28-4d8e-81d5-56177284f544",
+          "description": "修改并验证",
+          "steps": [
+            {
+              "step_id": "b9a271c7-7283-4d97-a20d-0f7b81ceadbd",
+              "order": 3,
+              "description": "修改 counter",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "counter.py",
+                "instruction": "return 0 to 1",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "counter.py",
+                  "text": "return 1"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "a83ee0ab-7a47-4fd4-b700-756949cd0dd5",
+              "order": 4,
+              "description": "运行测试",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "pytest",
+                "test_path": "test_counter.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "exit_code",
+                  "equals": 0
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "counter.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788758101.1602883,
+    "last_access": 1788758101.1602883,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "76160346-1e40-4c4c-a114-fd1c4b56e141"
+  },
+  "6991eacfdf462e8e0c47f5e7b6914ee5": {
+    "design": {
+      "plan_id": "42d6fbc1-bae8-409f-902a-8893a7c31768",
+      "design_id": "3fb14425-5921-45d1-95b4-241a17706450",
+      "created_at": "2026-09-07T05:15:45.196329",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "e2ed1a26-1cb0-4df1-99ca-515bede3f5d7",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "6a273044-7fc2-48a7-b389-157961dfceff",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788758145.1963298,
+    "last_access": 1788758145.1963298,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "3fb14425-5921-45d1-95b4-241a17706450"
+  },
+  "4869147c4d5b74e11b62d4511e92f8bf": {
+    "design": {
+      "plan_id": "bea42f84-f586-484b-987f-e6abad5010ad",
+      "design_id": "2e30fc47-c38f-401e-9aae-de7e089d0ee1",
+      "created_at": "2026-09-07T05:15:45.204574",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "fd426101-03cc-4ce1-aa3c-80d252a7a4b9",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "4b2598ba-4624-424f-b7ee-22b7d10725cc",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788758145.204574,
+    "last_access": 1788758145.204574,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "2e30fc47-c38f-401e-9aae-de7e089d0ee1"
+  },
+  "fd807d0159ad696d58f3b3bc07695f6d": {
+    "design": {
+      "plan_id": "01eba6e6-2ed5-4319-92b6-18c8ec0753d0",
+      "design_id": "f6091b5f-d8ff-4aa3-abea-7930a2a352af",
+      "created_at": "2026-09-07T05:15:52.282721",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "784af194-4ac5-41e5-8cf1-1122fc809b50",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "0e2b1d11-8d7a-42d9-92ac-86a0a52c4d8e",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788758152.2832336,
+    "last_access": 1788758152.2832336,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "f6091b5f-d8ff-4aa3-abea-7930a2a352af"
+  },
+  "465f7bbbafef7026c8da13b79678ad75": {
+    "design": {
+      "plan_id": "3a548aef-e6ff-4c59-892c-8865ac12db9d",
+      "design_id": "d3974963-585d-4786-b726-d0bbc294e1c7",
+      "created_at": "2026-09-07T09:41:06.401602",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "8e49708e-46be-4f82-8f29-d6dc518cc65a",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "6eeefd30-20c2-4610-afa4-d4f6f83d8cf3",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788774066.4016027,
+    "last_access": 1788774066.4016027,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "d3974963-585d-4786-b726-d0bbc294e1c7"
+  },
+  "c9a6726a731a2786b6d0fe3cffaf23cc": {
+    "design": {
+      "plan_id": "99d59b5d-bad6-43b9-9e91-5ca80de98636",
+      "design_id": "3cbf6fb0-d7cd-4401-a4b0-029118322ad9",
+      "created_at": "2026-09-07T09:41:18.450692",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "debe6329-bd4e-4b70-9f0c-d55bbe29495f",
+          "description": "创建",
+          "steps": [
+            {
+              "step_id": "cff46109-6214-41cb-bad1-0bd6885fe52d",
+              "order": 1,
+              "description": "创建 counter",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "counter.py",
+                "content": "def value():\n    return 0"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "ab16f81e-98f6-4063-856e-c463b0f62906",
+              "order": 2,
+              "description": "创建测试",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "test_counter.py",
+                "content": "test"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "test_counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "96d086ba-0f44-4f5c-82d0-c3a3a43f2ae9",
+          "description": "修改并验证",
+          "steps": [
+            {
+              "step_id": "93af51d7-127a-4c69-91f9-229be2325443",
+              "order": 3,
+              "description": "修改 counter",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "counter.py",
+                "instruction": "return 0 to 1",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "counter.py",
+                  "text": "return 1"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "48704593-39b5-4d2e-87aa-7f672f0c5a7c",
+              "order": 4,
+              "description": "运行测试",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "pytest",
+                "test_path": "test_counter.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "exit_code",
+                  "equals": 0
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "counter.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788774078.450693,
+    "last_access": 1788774078.450693,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "3cbf6fb0-d7cd-4401-a4b0-029118322ad9"
+  },
+  "dcb55753efdc2d70230ec86fc3acbebf": {
+    "design": {
+      "plan_id": "934d5f42-1ddb-4228-a0f1-82087647a480",
+      "design_id": "a70355f8-bbf1-48b2-9b29-eeb4d05daecf",
+      "created_at": "2026-09-07T09:42:02.083032",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "ce0e94bf-53b2-4824-861a-e8600d702221",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "e60ea562-7ee2-4385-b3e7-fdebd8531dae",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788774122.0830321,
+    "last_access": 1788774122.0830321,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "a70355f8-bbf1-48b2-9b29-eeb4d05daecf"
+  },
+  "4752751777faf3e188a3a946cf7a165e": {
+    "design": {
+      "plan_id": "3203b217-0fa0-4557-a1d2-ce3f141539f1",
+      "design_id": "d4413787-3cd6-4e83-b579-8ed05dbc5339",
+      "created_at": "2026-09-07T09:42:02.092034",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "6be23568-3940-4070-8985-c1cfd8da2c35",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "2d5694a0-c7d5-49f9-b6b6-f290b1231d3c",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788774122.0920348,
+    "last_access": 1788774122.0920348,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "d4413787-3cd6-4e83-b579-8ed05dbc5339"
+  },
+  "1dd93c213f301e8b0791b3f62f4ce8fa": {
+    "design": {
+      "plan_id": "d8dddfda-502a-40e7-8530-334a1ca7ca82",
+      "design_id": "f3df725a-65bb-4836-b5fc-4dfcf161ce8b",
+      "created_at": "2026-09-07T09:42:09.019020",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "a86a73c7-3370-4c32-89d5-0b9969aee2b5",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "fc70549d-818a-43c0-b1c7-e07cf80f1996",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788774129.0200129,
+    "last_access": 1788774129.0200129,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "f3df725a-65bb-4836-b5fc-4dfcf161ce8b"
+  },
+  "8671454021d8b7bb825ccb2f186e9e34": {
+    "design": {
+      "plan_id": "1c6c3b10-11da-4664-8322-fcf5c897497d",
+      "design_id": "4d9ff1f8-2036-4c2e-a8ed-e8c61c5449c8",
+      "created_at": "2026-09-07T14:12:02.503132",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "4be937d0-3738-4183-94f8-1f6324ab3dae",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "cd2cc43e-5955-4cd2-a928-fd477c9d57db",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788790322.5031323,
+    "last_access": 1788790322.5031323,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "4d9ff1f8-2036-4c2e-a8ed-e8c61c5449c8"
+  },
+  "d9719cb5018f44df35c49049827d86d5": {
+    "design": {
+      "plan_id": "7bcd5f09-d79e-4357-922b-69b263a25699",
+      "design_id": "52993ad5-1195-4216-8331-199bfeb12cb6",
+      "created_at": "2026-09-07T14:12:14.562212",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "1188a897-1738-4a4b-b42d-17a91431ba95",
+          "description": "创建",
+          "steps": [
+            {
+              "step_id": "eddd3be9-2568-41d2-9e23-440df7caa26f",
+              "order": 1,
+              "description": "创建 counter",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "counter.py",
+                "content": "def value():\n    return 0"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "d0481943-2a66-4744-9b13-c72079634104",
+              "order": 2,
+              "description": "创建测试",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "test_counter.py",
+                "content": "test"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "test_counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "551040be-b20b-416b-8b71-299bf0c7fdb9",
+          "description": "修改并验证",
+          "steps": [
+            {
+              "step_id": "a7b9ca84-a8c7-4f62-8979-3173d764de5d",
+              "order": 3,
+              "description": "修改 counter",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "counter.py",
+                "instruction": "return 0 to 1",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "counter.py",
+                  "text": "return 1"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "492b9274-f01a-46de-b456-81cadc3e4acc",
+              "order": 4,
+              "description": "运行测试",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "pytest",
+                "test_path": "test_counter.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "exit_code",
+                  "equals": 0
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "counter.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788790334.562212,
+    "last_access": 1788790334.562212,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "52993ad5-1195-4216-8331-199bfeb12cb6"
+  },
+  "d78ea5174541461090e9d65c14cfafc4": {
+    "design": {
+      "plan_id": "0951237e-178d-4819-b676-5f8b18797b32",
+      "design_id": "d6d2c081-d394-4972-9268-349f1665ac8c",
+      "created_at": "2026-09-07T14:13:01.101940",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "246279f1-46c0-4274-86a8-2328a2bffb88",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "68956397-9181-48eb-a8ce-80fece95efbc",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788790381.10194,
+    "last_access": 1788790381.10194,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "d6d2c081-d394-4972-9268-349f1665ac8c"
+  },
+  "1f78f0e105630b7dbcc5395cd59f1eac": {
+    "design": {
+      "plan_id": "1f36cf2e-32fc-47b0-b88b-efb4307dd3aa",
+      "design_id": "5503cc7a-1b8f-4211-b115-872e79b3dfa6",
+      "created_at": "2026-09-07T14:13:01.124038",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "0faafec9-054d-44ed-adda-ee0ab749bc6a",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "9f5ea2ef-7252-4111-a1a8-f37ea616764e",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788790381.1240382,
+    "last_access": 1788790381.1240382,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "5503cc7a-1b8f-4211-b115-872e79b3dfa6"
+  },
+  "072de9b7445cac5d649d3933ecbbe7d6": {
+    "design": {
+      "plan_id": "fc4de038-de65-40d4-9d69-3f06b89a0ac4",
+      "design_id": "0c3bedbd-d415-426c-9480-106aa3bd4d49",
+      "created_at": "2026-09-07T14:13:08.133943",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "9d0a5c82-3b28-45cb-b294-2f67d0a03c7b",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "19586db3-0bfa-49fc-a386-6be5ff53ab41",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788790388.1339433,
+    "last_access": 1788790388.1339433,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "0c3bedbd-d415-426c-9480-106aa3bd4d49"
+  },
+  "0ef6d221edf9b7f447fff0e1c3c943f2": {
+    "design": {
+      "plan_id": "3b80490f-ff38-45e8-a84f-987f920e71c7",
+      "design_id": "4c215818-b89d-430f-b1ce-aefd9e9ec97d",
+      "created_at": "2026-09-08T15:11:16.056973",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "012826e7-ce51-4297-b73f-b94d9ca6136d",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "e74205b8-e3c6-41b3-b864-5619fc9f3194",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788880276.0579834,
+    "last_access": 1788880276.0579834,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "4c215818-b89d-430f-b1ce-aefd9e9ec97d"
+  },
+  "71d215a200fe9ea817ab9787e6661690": {
+    "design": {
+      "plan_id": "6f4a42ef-6e85-4288-ab44-43c50e9c5dd7",
+      "design_id": "24a301b8-555d-4ac4-a389-e94fa98d121d",
+      "created_at": "2026-09-08T15:11:28.127449",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "21fcc221-8f20-4162-b4d2-4fe979bb614b",
+          "description": "创建",
+          "steps": [
+            {
+              "step_id": "79047786-c830-4b87-9491-33015cc8019b",
+              "order": 1,
+              "description": "创建 counter",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "counter.py",
+                "content": "def value():\n    return 0"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "bb1daff8-679f-4bbe-baea-564b14719fb4",
+              "order": 2,
+              "description": "创建测试",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "test_counter.py",
+                "content": "test"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "test_counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "21ed06ab-1435-42ae-a6cb-12ec9c04b30b",
+          "description": "修改并验证",
+          "steps": [
+            {
+              "step_id": "a068f63c-5a8a-4112-aaf4-a2a6bd275f63",
+              "order": 3,
+              "description": "修改 counter",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "counter.py",
+                "instruction": "return 0 to 1",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "counter.py",
+                  "text": "return 1"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "6ed9cfe4-0b74-46b4-9e41-85b4d06b7d01",
+              "order": 4,
+              "description": "运行测试",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "pytest",
+                "test_path": "test_counter.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "exit_code",
+                  "equals": 0
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "counter.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788880288.1274495,
+    "last_access": 1788880288.1274495,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "24a301b8-555d-4ac4-a389-e94fa98d121d"
+  },
+  "d823ace1aa359b7c39950f37a682c27c": {
+    "design": {
+      "plan_id": "0d89c3bd-f318-4e8c-875a-25997baca1e4",
+      "design_id": "67536a5a-bd63-4c99-8e4b-f55987ffdbdf",
+      "created_at": "2026-09-08T15:12:04.475957",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "6684cecb-e51b-4d1b-907f-8c0b7b29579f",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "5dce0cbd-a16d-4cc0-9775-66ff072f168f",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788880324.475957,
+    "last_access": 1788880324.475957,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "67536a5a-bd63-4c99-8e4b-f55987ffdbdf"
+  },
+  "a5ba577b7353046df4cb92df6186d74a": {
+    "design": {
+      "plan_id": "855f8f73-18b6-44c0-afd4-bb8aa988e713",
+      "design_id": "4a38fb83-3f72-4983-9bc5-08f43c1a9373",
+      "created_at": "2026-09-08T15:12:04.485959",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "effdb92c-186c-4d61-b053-4c714453e17a",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "219476f9-eb2d-4d0a-aaf3-86de10dfec43",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788880324.4859595,
+    "last_access": 1788880324.4859595,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "4a38fb83-3f72-4983-9bc5-08f43c1a9373"
+  },
+  "f1abd2b8b335b304d2cfac46f41396e4": {
+    "design": {
+      "plan_id": "20788a9f-a696-478c-bf62-42a042bb7d30",
+      "design_id": "c984c328-72d9-4278-9d27-30d3f0f4ba48",
+      "created_at": "2026-09-08T15:12:11.147301",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "21210ed2-53ff-4486-9a5a-edb01581c1a0",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "10ed28ae-8eef-4311-8fcf-e4cb3e43a132",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788880331.1473017,
+    "last_access": 1788880331.1473017,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "c984c328-72d9-4278-9d27-30d3f0f4ba48"
+  },
+  "69be1571e14825967bc45996f47f8f6a": {
+    "design": {
+      "plan_id": "3d8cb5ba-6956-40d9-bd1c-04d274693323",
+      "design_id": "ffb5808e-c408-4680-8ba7-9a757da3bac1",
+      "created_at": "2026-09-09T10:27:35.500926",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "b3407fb9-d9b3-4ec8-9f66-1d10cbd8b2fe",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "116eb9fa-ab50-4011-8583-8dd97cb4f9b0",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788949655.5009263,
+    "last_access": 1788949655.5009263,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "ffb5808e-c408-4680-8ba7-9a757da3bac1"
+  },
+  "caa983e88482d153a4bbe65bcc6be379": {
+    "design": {
+      "plan_id": "ceab9d6b-88fe-4fe5-92e7-5871f22bf83b",
+      "design_id": "7f4ed171-7387-419a-8573-ed64b21aebd5",
+      "created_at": "2026-09-09T10:27:47.570837",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "656bff36-ca86-409d-a24c-36fdc774294d",
+          "description": "创建",
+          "steps": [
+            {
+              "step_id": "633e4b61-e066-4f2e-aee6-af381cabc6d4",
+              "order": 1,
+              "description": "创建 counter",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "counter.py",
+                "content": "def value():\n    return 0"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "12bc3c81-7169-4b7f-9d4f-dd0f234f4c50",
+              "order": 2,
+              "description": "创建测试",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "test_counter.py",
+                "content": "test"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "test_counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "02e0fa74-3663-4739-b308-4efe046a3fe9",
+          "description": "修改并验证",
+          "steps": [
+            {
+              "step_id": "8a053a52-12cc-40eb-9e13-1fae379a50fc",
+              "order": 3,
+              "description": "修改 counter",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "counter.py",
+                "instruction": "return 0 to 1",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "counter.py",
+                  "text": "return 1"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "07d89ece-2f45-4cae-9dad-9063d119e68d",
+              "order": 4,
+              "description": "运行测试",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "pytest",
+                "test_path": "test_counter.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "exit_code",
+                  "equals": 0
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "counter.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788949667.5708373,
+    "last_access": 1788949667.5708373,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "7f4ed171-7387-419a-8573-ed64b21aebd5"
+  },
+  "9794eeac19ec9451e18287ca2a571449": {
+    "design": {
+      "plan_id": "733f1637-8758-46db-a021-e4f1fb85316b",
+      "design_id": "147f599c-11d4-4fa2-a0de-06e00394531d",
+      "created_at": "2026-09-09T10:28:29.890431",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "104ce293-ddff-487f-bb00-58765f065bb2",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "5c759f4d-cb9f-4468-9bd4-0758ef218474",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788949709.8904316,
+    "last_access": 1788949709.8904316,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "147f599c-11d4-4fa2-a0de-06e00394531d"
+  },
+  "04eba1da2f7e0fa2236316cb6f04ed01": {
+    "design": {
+      "plan_id": "44f44957-ff51-415d-8c7c-e4b75f9a2ad1",
+      "design_id": "6b4ea60b-54d8-4633-b328-efb9506dd9c0",
+      "created_at": "2026-09-09T10:28:29.937958",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "4e74acf4-9243-4f3a-a008-0aab70481d54",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "efe7a89a-03eb-4edf-a57b-caab634af301",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788949709.9379582,
+    "last_access": 1788949709.9379582,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "6b4ea60b-54d8-4633-b328-efb9506dd9c0"
+  },
+  "d1c2aeb2b07ef17ebf53c3fbaea89932": {
+    "design": {
+      "plan_id": "22d787e5-bfc8-45e1-a9de-12659596bd35",
+      "design_id": "bec8e324-9fed-4e95-8929-a6addb04d23c",
+      "created_at": "2026-09-09T10:28:36.728903",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "a82d1c6d-3a54-47a4-9d43-eb09b6cacccf",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "94577495-4038-4017-8c3f-e726aed5a318",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788949716.7289038,
+    "last_access": 1788949716.7289038,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "bec8e324-9fed-4e95-8929-a6addb04d23c"
+  },
+  "de4ace69c543eccda2d5e81e52c30f77": {
+    "design": {
+      "plan_id": "c884224e-77b4-4640-8a5f-6b2966e3b7ea",
+      "design_id": "9758bebf-1edb-4292-8484-3a45ad216275",
+      "created_at": "2026-09-09T12:56:15.849532",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "5d83e331-5aad-40f6-bcbf-aac8712b1cc6",
+          "description": "读取历史执行状态",
+          "steps": [
+            {
+              "step_id": "44d9ee4f-cd5a-4eb6-9117-bdbf8bd91efa",
+              "order": 1,
+              "description": "检索项目历史风险",
+              "tool": "project_memory",
+              "inputs": {
+                "path": "project_memory",
+                "content": "读取 Harness 仓库既有执行状态、失败记录、未完成事项和已知风险，重点关注 Python 后端、React 前端、测试与报告任务背景。"
+              },
+              "check_criteria": "需人工确认已获得历史状态、失败记录和风险信息。",
+              "acceptance": [],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "7baa8190-2074-4842-941f-5d7db39baf3a",
+          "description": "分析仓库结构",
+          "steps": [
+            {
+              "step_id": "1ba031e9-6d37-456c-84ee-0558ff1dac31",
+              "order": 2,
+              "description": "获取仓库地图",
+              "tool": "code_context",
+              "inputs": {
+                "path": "Harness/",
+                "content": "读取仓库地图，识别 Python 后端、React 前端、测试目录、配置入口及主要依赖关系。"
+              },
+              "check_criteria": "需人工确认仓库地图覆盖后端、前端和测试入口。",
+              "acceptance": [],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "af583f47-abb1-485f-a4f9-956eb7dde1a8",
+              "order": 3,
+              "description": "检索后端实现",
+              "tool": "code_context",
+              "inputs": {
+                "path": "Harness/",
+                "content": "检索 Python 后端的应用入口、核心模块、路由、数据访问、配置引用和相关测试符号。"
+              },
+              "check_criteria": "需人工确认已归纳 Python 后端结构、入口和关键依赖。",
+              "acceptance": [],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "665e8691-b8c6-4466-b526-5fec447f041b",
+              "order": 4,
+              "description": "检索前端实现",
+              "tool": "code_context",
+              "inputs": {
+                "path": "Harness/",
+                "content": "检索 React 前端的启动入口、组件、页面、状态管理、接口调用和构建测试引用。"
+              },
+              "check_criteria": "需人工确认已归纳 React 前端结构、入口和接口关系。",
+              "acceptance": [],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "a5eefb90-a83d-44f3-b4c4-b8d43a433033",
+              "order": 5,
+              "description": "检索测试与风险",
+              "tool": "code_context",
+              "inputs": {
+                "path": "Harness/",
+                "content": "检索测试配置、测试入口、运行说明、关键断言、跨端依赖和潜在风险相关文件与符号。"
+              },
+              "check_criteria": "需人工确认测试入口、依赖关系和主要风险已覆盖。",
+              "acceptance": [],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "0c90e677-9a21-4010-806b-bac82212ec5b",
+          "description": "整理报告内容",
+          "steps": [
+            {
+              "step_id": "c6ff37d4-8429-454b-a6b2-28f6d5b5d907",
+              "order": 6,
+              "description": "生成 Markdown 报告",
+              "tool": "project_memory",
+              "inputs": {
+                "path": "out/daily-task-1-repo-report.md",
+                "content": "基于仓库检索结果整理简洁 Markdown 报告，包含项目概览、Python 后端、React 前端、测试入口、依赖关系、主要风险和历史背景；不得修改源码、配置或数据库。"
+              },
+              "check_criteria": "需人工确认报告内容完整、简洁，并已保存到指定路径。",
+              "acceptance": [],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "623de307-a49a-4c7c-b570-cc5182b894b1",
+              "order": 7,
+              "description": "核对报告文件",
+              "tool": "project_memory",
+              "inputs": {
+                "path": "out/daily-task-1-repo-report.md",
+                "content": "重新读取并核对目标报告，确认文件已创建、内容非空且为有效 Markdown；不得删除或修改其他文件。"
+              },
+              "check_criteria": "需人工确认 out/daily-task-1-repo-report.md 存在且可读取。",
+              "acceptance": [],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/daily-task-1-repo-report.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788958575.8515327,
+    "last_access": 1788958575.8515327,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "9758bebf-1edb-4292-8484-3a45ad216275"
+  },
+  "b04942ff60c4e0f0018758b3ce9d6bec": {
+    "design": {
+      "plan_id": "ef3319f7-5924-46ac-8c38-1beb1cc9f03d",
+      "design_id": "a9e45e03-aac4-42bc-84e8-effd78791eb1",
+      "created_at": "2026-09-09T12:58:15.040691",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "7e6ed6d6-6588-472b-9cf3-a06145a48ca9",
+          "description": "创建并验证任务文件",
+          "steps": [
+            {
+              "step_id": "204128d2-076b-49f5-b950-d3c027e6d2ed",
+              "order": 1,
+              "description": "写入每日任务完成标记",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-2.md",
+                "content": "Daily task 2 completed"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-2.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-2.md",
+                  "text": "Daily task 2 completed"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/daily-task-2.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788958695.0406916,
+    "last_access": 1788958695.0406916,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "a9e45e03-aac4-42bc-84e8-effd78791eb1"
+  },
+  "dc71e2feb4ddf5dc5d322582b357c057": {
+    "design": {
+      "plan_id": "d831b7c3-8108-44e8-b64e-7b405430e406",
+      "design_id": "666f8cf5-5ded-4c65-ab48-3e4a06e8d5ac",
+      "created_at": "2026-09-09T13:00:00.829578",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "f58aff8f-ad67-4470-b82a-2a7e59270b05",
+          "description": "创建每日任务脚本",
+          "steps": [
+            {
+              "step_id": "c4a38899-76e2-489e-b3b5-d258b6dd9ffd",
+              "order": 1,
+              "description": "写入每日任务脚本",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-3.py",
+                "content": "print(\"daily task 3\")"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-3.py",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-3.py",
+                  "text": "daily task 3"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "af16e4d8-d5bc-4aa8-810d-f0be04e966a8",
+              "order": 2,
+              "description": "运行每日任务脚本",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "python_script",
+                "test_path": "out/daily-task-3.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "test_passes",
+                  "suite": "python_script",
+                  "test_path": "out/daily-task-3.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/daily-task-3.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788958800.829578,
+    "last_access": 1788958800.829578,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "666f8cf5-5ded-4c65-ab48-3e4a06e8d5ac"
+  },
+  "68c43c592f8e1b2682ec89e18631fa66": {
+    "design": {
+      "plan_id": "fdad6fdb-2059-41fd-a304-2290b1990524",
+      "design_id": "948d3da2-520e-4ae1-826b-562cb3601711",
+      "created_at": "2026-09-09T13:01:17.482794",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "d19c803e-a1fb-46aa-b3ab-5aaac08a0c8d",
+          "description": "创建每日任务脚本",
+          "steps": [
+            {
+              "step_id": "9bb0a0d6-6b4d-40b2-9481-37cd27c1032c",
+              "order": 1,
+              "description": "写入脚本内容",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-3b.py",
+                "content": "print(\"daily task 3b\")"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-3b.py",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-3b.py",
+                  "text": "daily task 3b"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "8733d45c-5d76-4690-ab12-d327fde5f245",
+          "description": "检查脚本语法",
+          "steps": [
+            {
+              "step_id": "7a25dbb0-3617-4ea8-9bac-cc9efbbfa2a8",
+              "order": 2,
+              "description": "执行 Python 语法检查",
+              "tool": "lint_gate",
+              "inputs": {
+                "path": "out/daily-task-3b.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "exit_code",
+                  "equals": 0
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/daily-task-3b.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788958877.4827945,
+    "last_access": 1788958877.4827945,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "948d3da2-520e-4ae1-826b-562cb3601711"
+  },
+  "431f946edabf1a14ff00c47bfd19d73c": {
+    "design": {
+      "plan_id": "afbf579b-af42-4159-a943-72fc9f145cfd",
+      "design_id": "4dca8d88-4706-4ca7-aa21-7f9b6daff023",
+      "created_at": "2026-09-09T13:03:06.662625",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "f814c082-f30d-496f-a5aa-650d623542bc",
+          "description": "创建 Git 变更摘要",
+          "steps": [
+            {
+              "step_id": "94c195ac-a573-407b-ab35-731a1d428eab",
+              "order": 1,
+              "description": "写入提交摘要报告",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-4-git-summary.md",
+                "content": "# Git 变更摘要\n\n生成说明：根据最近 5 条 Git 提交记录整理。\n\n## 最近 5 条提交\n\n1. 待人工填入 `git log -5 --oneline` 第 1 条记录\n2. 待人工填入 `git log -5 --oneline` 第 2 条记录\n3. 待人工填入 `git log -5 --oneline` 第 3 条记录\n4. 待人工填入 `git log -5 --oneline` 第 4 条记录\n5. 待人工填入 `git log -5 --oneline` 第 5 条记录\n"
+              },
+              "check_criteria": "当前允许工具无法执行 git log -5 --oneline，也无法用 lint_gate 校验 Markdown；需人工补录实际 5 条提交记录并确认文件非空。",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-4-git-summary.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-4-git-summary.md",
+                  "text": "# Git 变更摘要"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/daily-task-4-git-summary.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788958986.6633675,
+    "last_access": 1788958986.6633675,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "4dca8d88-4706-4ca7-aa21-7f9b6daff023"
+  },
+  "2a1324418ae409e78fdb099857b3a3b4": {
+    "design": {
+      "plan_id": "adbaf0b4-20ea-4ef9-8ac7-539df4442ffc",
+      "design_id": "feec78fc-2bf6-40f5-afbb-fdb5ef431d13",
+      "created_at": "2026-09-09T13:04:58.220042",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "622a5ece-2405-49d3-95b8-c4a9953e7fc7",
+          "description": "生成恢复结果文件",
+          "steps": [
+            {
+              "step_id": "ccd99448-6851-4df9-b2ec-57e9ed95a92b",
+              "order": 1,
+              "description": "创建恢复报告",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-5-recovery.md",
+                "content": "checkpoint recovered"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-5-recovery.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-5-recovery.md",
+                  "text": "checkpoint recovered"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/daily-task-5-recovery.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788959098.2200425,
+    "last_access": 1788959098.2200425,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "feec78fc-2bf6-40f5-afbb-fdb5ef431d13"
+  },
+  "6bd79418b87e955c2b78fd2ffee3b91b": {
+    "design": {
+      "plan_id": "20269259-f770-448c-b35a-68e013d0d55f",
+      "design_id": "100d48cc-7244-4c49-bcf0-244e67cdb519",
+      "created_at": "2026-09-09T13:07:25.264661",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "2aee45de-dfa4-4464-a41e-6ce0a7ae52d9",
+          "description": "创建恢复标记",
+          "steps": [
+            {
+              "step_id": "1214615c-9bcb-4b84-a43f-e78a85e20df0",
+              "order": 1,
+              "description": "创建 checkpoint 标记文件",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-6-marker.txt",
+                "content": ""
+              },
+              "check_criteria": "需人工确认首次失败与恢复重试语义。",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-6-marker.txt",
+                  "kind": "file"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "8c2590e4-fc63-4ee8-8bbb-76be23b592b1",
+          "description": "写入恢复结果",
+          "steps": [
+            {
+              "step_id": "24d44861-055f-47ab-b181-69936c776234",
+              "order": 2,
+              "description": "创建恢复结果报告",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-6-recovery.md",
+                "content": "checkpoint recovered"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-6-recovery.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-6-recovery.md",
+                  "text": "checkpoint recovered"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/daily-task-6-marker.txt",
+        "out/daily-task-6-recovery.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788959245.264662,
+    "last_access": 1788959245.264662,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "100d48cc-7244-4c49-bcf0-244e67cdb519"
+  },
+  "652d14f8b0b0cf3009bf3841038a9f14": {
+    "design": {
+      "plan_id": "f5fc61e2-0f7c-4317-8286-0cdbc6095458",
+      "design_id": "a24215a7-fa78-4575-bc35-72cb05524952",
+      "created_at": "2026-09-09T13:09:29.777972",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "d59d453d-4ae5-4262-9cde-8fd456558f5a",
+          "description": "创建每日任务脚本",
+          "steps": [
+            {
+              "step_id": "012dee24-d20f-4c6f-8f50-5b4aa44d5184",
+              "order": 1,
+              "description": "写入每日任务脚本",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-3c.py",
+                "content": "print(\"daily task 3c\")"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-3c.py",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-3c.py",
+                  "text": "daily task 3c"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "4cf48ee0-e2b8-4c2c-9a57-01ddb09fca1c",
+          "description": "运行指定测试",
+          "steps": [
+            {
+              "step_id": "f7b51afa-cf49-4ebf-9338-e511ef6d3c4c",
+              "order": 2,
+              "description": "执行计划状态测试",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "pytest",
+                "test_path": "tests/python/test_plan_state_domain.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "test_passes",
+                  "suite": "pytest",
+                  "test_path": "tests/python/test_plan_state_domain.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/daily-task-3c.py",
+        "tests/python/test_plan_state_domain.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788959369.7779722,
+    "last_access": 1788959369.7779722,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "a24215a7-fa78-4575-bc35-72cb05524952"
+  },
+  "cbabf6b1dde6c4d073ebe1aad6fb1775": {
+    "design": {
+      "plan_id": "c885530d-decd-4d34-a6a8-659e43cdc13a",
+      "design_id": "e0787aae-d769-4fe9-90fe-a4d71bc867d1",
+      "created_at": "2026-09-09T13:11:05.520573",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "11255e73-9afd-45a2-9569-297d2b49fbd2",
+          "description": "创建链接检查报告",
+          "steps": [
+            {
+              "step_id": "390e3d36-f7ed-4efc-8014-0e0f17426d19",
+              "order": 1,
+              "description": "写入链接检查结果",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-7-links.md",
+                "content": "链接检查完成：README.md docs/STATUS.md docs/STRUCTURE.md"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-7-links.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-7-links.md",
+                  "text": "链接检查完成：README.md docs/STATUS.md docs/STRUCTURE.md"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "15204745-3c20-429f-89c3-3bf45cdd0f9d",
+          "description": "验证报告文件",
+          "steps": [
+            {
+              "step_id": "84bdd237-717b-46d5-b6e8-c5392ade7bb3",
+              "order": 2,
+              "description": "检查报告语法内容",
+              "tool": "lint_gate",
+              "inputs": {
+                "path": "out/daily-task-7-links.md"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "exit_code",
+                  "equals": 0
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/daily-task-7-links.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788959465.5205731,
+    "last_access": 1788959465.5205731,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "e0787aae-d769-4fe9-90fe-a4d71bc867d1"
+  },
+  "50f7f266451ee482f6e64cc4c106508d": {
+    "design": {
+      "plan_id": "aa6a9014-77e7-41fd-858a-184ff50579c9",
+      "design_id": "4e9cd2a1-1aa1-4c5c-bce1-7fcc1b34d48e",
+      "created_at": "2026-09-09T13:12:47.779457",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "2c1efcb1-78da-43d7-b481-0f738097c441",
+          "description": "创建加法测试文件",
+          "steps": [
+            {
+              "step_id": "12bf4141-9aeb-409f-b5a6-9b79ddac9256",
+              "order": 1,
+              "description": "写入 Python 测试",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-8-code-change.py",
+                "content": "def add(a, b):\n    return a + b\n\nassert add(1, 2) == 3\nassert add(-1, 1) == 0\n"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-8-code-change.py",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-8-code-change.py",
+                  "text": "def add"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "46fb3c6a-d2e8-4315-be53-c796156b53ee",
+          "description": "运行单文件测试",
+          "steps": [
+            {
+              "step_id": "f11de830-b22c-434a-9afd-5c6e1ebdabde",
+              "order": 2,
+              "description": "验证 pytest 通过",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "pytest",
+                "test_path": "out/daily-task-8-code-change.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "test_passes",
+                  "suite": "pytest",
+                  "test_path": "out/daily-task-8-code-change.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/daily-task-8-code-change.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788959567.779457,
+    "last_access": 1788959567.779457,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "4e9cd2a1-1aa1-4c5c-bce1-7fcc1b34d48e"
+  },
+  "5cbb07411262013a7084ec497ded8f0a": {
+    "design": {
+      "plan_id": "ad9b4e2d-6a26-430b-a42a-d3acc990c21a",
+      "design_id": "3e9ec7f0-25d1-4168-8a6d-cdf2b7fc2d32",
+      "created_at": "2026-09-09T13:15:29.888420",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "00fff583-ead4-491e-9030-8b715c6dc888",
+          "description": "创建测试目录",
+          "steps": [
+            {
+              "step_id": "ce9d2cfe-34b4-4555-bba0-6b88d5bd269c",
+              "order": 1,
+              "description": "创建输出目录",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/",
+                "content": ""
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/",
+                  "kind": "directory"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "4865305d-425e-4f0a-9964-88f53daf9ef5",
+          "description": "写入测试文件",
+          "steps": [
+            {
+              "step_id": "ea1707f5-71c1-4c8b-85ca-ad90253fed55",
+              "order": 2,
+              "description": "创建 pytest 测试",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-9-test.py",
+                "content": "def test_add(): assert 1 + 1 == 2"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-9-test.py",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-9-test.py",
+                  "text": "def test_add"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "c042d67d-fe17-48ed-93b1-4885be0f1840",
+          "description": "运行指定测试",
+          "steps": [
+            {
+              "step_id": "95058466-a029-4d7d-8522-d230d29e7078",
+              "order": 3,
+              "description": "验证 pytest 通过",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "pytest",
+                "test_path": "out/daily-task-9-test.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "test_passes",
+                  "suite": "pytest",
+                  "test_path": "out/daily-task-9-test.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/daily-task-9-test.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788959729.8894196,
+    "last_access": 1788959729.8894196,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "3e9ec7f0-25d1-4168-8a6d-cdf2b7fc2d32"
+  },
+  "0b538106031a9f64fe19ff596d41219a": {
+    "design": {
+      "plan_id": "b4986a10-7477-44a5-812a-e026265f510d",
+      "design_id": "2ead91b7-8ef9-49a1-be2e-7d4f95bc1111",
+      "created_at": "2026-09-09T13:19:48.050158",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "00649cc2-6531-449f-bcd0-5e9119f46c47",
+          "description": "创建恢复标记文件",
+          "steps": [
+            {
+              "step_id": "4238bfbd-4231-4d41-a22c-03c0c1507d9d",
+              "order": 1,
+              "description": "写入恢复标记",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-recovery-marker.txt",
+                "content": "ready"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-recovery-marker.txt",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-recovery-marker.txt",
+                  "text": "ready"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "8773e948-8587-40cf-93db-a6657330eee7",
+          "description": "生成恢复报告",
+          "steps": [
+            {
+              "step_id": "37dd8b15-0fcc-4052-a800-e9b5d39cdb44",
+              "order": 2,
+              "description": "写入恢复报告",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-recovery.md",
+                "content": "checkpoint recovered"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-recovery.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-recovery.md",
+                  "text": "checkpoint recovered"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/daily-task-recovery-marker.txt",
+        "out/daily-task-recovery.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788959988.0511649,
+    "last_access": 1788959988.0511649,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "2ead91b7-8ef9-49a1-be2e-7d4f95bc1111"
+  },
+  "59c0e557932a6abfe867ca2a18093b32": {
+    "design": {
+      "plan_id": "5a756708-4d90-4104-b9c4-42c3ca1aaea4",
+      "design_id": "fc4940cc-7bdf-4181-afc9-dc0eb2f2357a",
+      "created_at": "2026-09-09T13:22:59.539952",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "56dbb6dd-667c-4409-aef4-c2ebcab76ba3",
+          "description": "创建失败检查标记",
+          "steps": [
+            {
+              "step_id": "dc136cb3-d432-422e-b808-b9979148453c",
+              "order": 1,
+              "description": "创建标记文件",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-checkpoint-marker.txt",
+                "content": "ready"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-checkpoint-marker.txt",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-checkpoint-marker.txt",
+                  "text": "ready"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "abfe4276-26c7-4ebe-b690-75b53b85398a",
+          "description": "创建恢复报告",
+          "steps": [
+            {
+              "step_id": "d946136f-646a-4c10-801f-49ec8ab707ee",
+              "order": 2,
+              "description": "写入恢复报告",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/daily-task-checkpoint-recovered.md",
+                "content": "checkpoint recovered"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/daily-task-checkpoint-recovered.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/daily-task-checkpoint-recovered.md",
+                  "text": "checkpoint recovered"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/daily-task-checkpoint-marker.txt",
+        "out/daily-task-checkpoint-recovered.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788960179.5399528,
+    "last_access": 1788960179.5399528,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "fc4940cc-7bdf-4181-afc9-dc0eb2f2357a"
+  },
+  "450dbee0030896d52f8c841a50b5db6c": {
+    "design": {
+      "plan_id": "7873cec2-5a56-4fff-af1f-3cf7f45eca22",
+      "design_id": "5d294186-345a-4451-948d-9fd5ebdc6b4c",
+      "created_at": "2026-09-09T13:36:19.472193",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "5e35825d-d68b-4b4f-99c6-172a4d6091bc",
+          "description": "执行恢复门控命令",
+          "steps": [
+            {
+              "step_id": "05c90cf8-352d-4a40-a7ca-d309a2cec929",
+              "order": 1,
+              "description": "首次执行并触发检查点",
+              "tool": "command_runner",
+              "inputs": {
+                "command": "python -c \"from pathlib import Path; p=Path('out/recovery-gate.txt'); existed=p.exists(); p.write_text('created', encoding='utf-8'); raise SystemExit(0 if existed else 1)\""
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "exit_code",
+                  "equals": 1
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "d1181a24-185c-448d-94f1-2273de78d949",
+          "description": "创建恢复结果文件",
+          "steps": [
+            {
+              "step_id": "4c78edf9-cd66-4f14-abfd-db93aff3e40a",
+              "order": 2,
+              "description": "写入恢复完成内容",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/recovery-final.md",
+                "content": "checkpoint recovered"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/recovery-final.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/recovery-final.md",
+                  "text": "checkpoint recovered"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/recovery-gate.txt",
+        "out/recovery-final.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788960979.4721932,
+    "last_access": 1788960979.4721932,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "5d294186-345a-4451-948d-9fd5ebdc6b4c"
+  },
+  "0ddc5f7ff4dcfafa8fdf19bb7a138799": {
+    "design": {
+      "plan_id": "77bbe5a6-e2b0-43c1-8ed8-751787e9b472",
+      "design_id": "2ad569f2-f95c-41c5-8301-0b29c94622ca",
+      "created_at": "2026-09-09T13:38:50.900675",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "32b63dee-2157-47ec-a6d4-74f8a01786f7",
+          "description": "创建检查点状态文件",
+          "steps": [
+            {
+              "step_id": "e61bf982-5650-47cf-8146-604c7921e0fb",
+              "order": 1,
+              "description": "写入检查点状态",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/checkpoint-once-20260909.txt",
+                "content": "seen"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/checkpoint-once-20260909.txt",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/checkpoint-once-20260909.txt",
+                  "text": "seen"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "966837fe-2e10-44d7-aedc-d177ec0436b1",
+          "description": "创建恢复完成文件",
+          "steps": [
+            {
+              "step_id": "2e3e4deb-5f69-4332-bf64-f410dd7dfda3",
+              "order": 2,
+              "description": "写入恢复标记",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/checkpoint-once-final.md",
+                "content": "checkpoint recovered"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/checkpoint-once-final.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/checkpoint-once-final.md",
+                  "text": "checkpoint recovered"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/checkpoint-once-20260909.txt",
+        "out/checkpoint-once-final.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788961130.9006753,
+    "last_access": 1788961130.9006753,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "2ad569f2-f95c-41c5-8301-0b29c94622ca"
+  },
+  "e27579b0c9089002198d57ffee6399d2": {
+    "design": {
+      "plan_id": "8ffdfe44-1256-4872-9377-9e19a2af78ab",
+      "design_id": "1c3ef29b-302d-47bc-91f9-27ae0c08257e",
+      "created_at": "2026-09-09T13:43:16.837088",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "1316be84-685f-4000-a2bb-32951c064bc7",
+          "description": "创建一次性标记",
+          "steps": [
+            {
+              "step_id": "e0784df7-21e4-448e-9cc6-ef9f082b2353",
+              "order": 1,
+              "description": "写入执行标记文件",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/once-marker-20260909.txt",
+                "content": "seen"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/once-marker-20260909.txt",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/once-marker-20260909.txt",
+                  "text": "seen"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "5877b9c9-9851-4489-992c-ce1f6bc75156",
+              "order": 2,
+              "description": "写入最终恢复文件",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/once-final-20260909.md",
+                "content": "checkpoint recovered"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/once-final-20260909.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/once-final-20260909.md",
+                  "text": "checkpoint recovered"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/once-marker-20260909.txt",
+        "out/once-final-20260909.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788961396.837088,
+    "last_access": 1788961396.837088,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "1c3ef29b-302d-47bc-91f9-27ae0c08257e"
+  },
+  "d2aaa662f44e561afd87bd3287828d62": {
+    "design": {
+      "plan_id": "3be2283d-c97d-4eea-b11b-3361217dfab1",
+      "design_id": "cfd16c35-da16-446e-b02e-756742a27b06",
+      "created_at": "2026-09-09T13:46:00.670650",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "f4bddcf3-2e88-4dc9-a7e8-03601e5cc285",
+          "description": "创建重试门控文件",
+          "steps": [
+            {
+              "step_id": "bd5e59b2-afd1-4753-b499-e64cfc3095cc",
+              "order": 1,
+              "description": "写入门控标记",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/retryable-gate-final.txt",
+                "content": "seen"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/retryable-gate-final.txt",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/retryable-gate-final.txt",
+                  "text": "seen"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "e7c74bb7-c0f9-4b76-98e2-7566a98be8a8",
+          "description": "写入恢复文件",
+          "steps": [
+            {
+              "step_id": "0354994d-3b61-4bb9-aa62-635a7675e7a8",
+              "order": 2,
+              "description": "创建恢复结果",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/retryable-final.md",
+                "content": "checkpoint recovered"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/retryable-final.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/retryable-final.md",
+                  "text": "checkpoint recovered"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/retryable-gate-final.txt",
+        "out/retryable-final.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788961560.6706505,
+    "last_access": 1788961560.6706505,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "cfd16c35-da16-446e-b02e-756742a27b06"
+  },
+  "3e6ee32d56c711d10025d7615023b992": {
+    "design": {
+      "plan_id": "de262e01-a754-471b-85b5-36f723635c83",
+      "design_id": "e6103bf9-cc98-49aa-b897-4fd9d00d8160",
+      "created_at": "2026-09-09T13:50:07.057272",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "da51aa08-c806-40b9-96bb-be0b38fc74b1",
+          "description": "检查恢复标记",
+          "steps": [
+            {
+              "step_id": "f782208f-a2c0-42f8-ab79-194d06667979",
+              "order": 1,
+              "description": "验证 readiness 标记",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "pytest",
+                "test_path": "out/readiness-marker-20260909.txt"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "test_passes",
+                  "suite": "pytest",
+                  "test_path": "out/readiness-marker-20260909.txt"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "f80ad8a7-7e38-4832-b95a-787a6d133016",
+          "description": "写入恢复文件",
+          "steps": [
+            {
+              "step_id": "1f47a11a-bb6c-465e-8812-6435623774c3",
+              "order": 2,
+              "description": "创建最终恢复文件",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/readiness-final.md",
+                "content": "checkpoint recovered"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/readiness-final.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/readiness-final.md",
+                  "text": "checkpoint recovered"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/readiness-final.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788961807.0582712,
+    "last_access": 1788961807.0582712,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "e6103bf9-cc98-49aa-b897-4fd9d00d8160"
+  },
+  "7a7587beb8f18983094cb451fa1be2f7": {
+    "design": {
+      "plan_id": "b36b0353-7ced-4299-840e-b62aae09a64e",
+      "design_id": "4eb2b8e1-de95-406a-ad8e-afb8e611a925",
+      "created_at": "2026-09-09T14:11:22.737159",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "efb895ec-f4ce-43d1-b6a4-c90ca5463a01",
+          "description": "创建门控标记文件",
+          "steps": [
+            {
+              "step_id": "efefefed-c399-42ca-a3fc-fc79865a16c4",
+              "order": 1,
+              "description": "写入恢复标记",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/final-gate-marker.txt",
+                "content": "seen"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/final-gate-marker.txt",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/final-gate-marker.txt",
+                  "text": "seen"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "bccab02c-39b0-4f81-9677-afa0ac915e7e",
+          "description": "创建恢复结果",
+          "steps": [
+            {
+              "step_id": "fa1f2a66-037e-4d18-8822-1d6938ce0594",
+              "order": 2,
+              "description": "写入恢复完成内容",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/final-recovered.md",
+                "content": "checkpoint recovered"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/final-recovered.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/final-recovered.md",
+                  "text": "checkpoint recovered"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/final-gate-marker.txt",
+        "out/final-recovered.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788963082.7381673,
+    "last_access": 1788963082.7381673,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "4eb2b8e1-de95-406a-ad8e-afb8e611a925"
+  },
+  "09a2ee5350dd05d7e103ce0244166e33": {
+    "design": {
+      "plan_id": "77dcfd45-b48e-468c-b0b7-09f704b34388",
+      "design_id": "d48f5a49-9efb-4ac8-8225-02db5947a51b",
+      "created_at": "2026-09-09T14:16:41.500784",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "43477790-85f6-4cd2-a5e6-d244513bfe17",
+          "description": "写入恢复闸门标记",
+          "steps": [
+            {
+              "step_id": "1f45abb6-cb09-46ba-928f-a19ac1970e8b",
+              "order": 1,
+              "description": "创建恢复闸门文件",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/real-recovery-gate.txt",
+                "content": "seen"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/real-recovery-gate.txt",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/real-recovery-gate.txt",
+                  "text": "seen"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "9bc3c3ce-c6da-4981-8dc1-e1756a6ed4b7",
+          "description": "创建最终恢复文件",
+          "steps": [
+            {
+              "step_id": "873aa810-55f6-4194-ab66-79b10891cf40",
+              "order": 2,
+              "description": "写入最终恢复内容",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/real-recovery-final.md",
+                "content": "checkpoint recovered"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/real-recovery-final.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/real-recovery-final.md",
+                  "text": "checkpoint recovered"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/real-recovery-gate.txt",
+        "out/real-recovery-final.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788963401.5007849,
+    "last_access": 1788963401.5007849,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "d48f5a49-9efb-4ac8-8225-02db5947a51b"
+  },
+  "a65f2aef3c6dabe2ce572ede44a8d1d2": {
+    "design": {
+      "plan_id": "d3b2b703-64ea-4f00-bee9-9eae6adae747",
+      "design_id": "a68ce610-d4fb-45af-bf89-33f6dbed73f3",
+      "created_at": "2026-09-09T14:18:17.460934",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "4e733efe-e4bf-43fc-b7e0-ce9d74daf7d6",
+          "description": "创建恢复闸门文件",
+          "steps": [
+            {
+              "step_id": "2a1781fd-b7cf-4479-bbdb-d231bc40c2c3",
+              "order": 1,
+              "description": "写入恢复闸门标记",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/real-recovery-gate2.txt",
+                "content": "seen"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/real-recovery-gate2.txt",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/real-recovery-gate2.txt",
+                  "text": "seen"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "37a5db1a-679d-4779-96d8-09ffdf4e850c",
+          "description": "生成最终恢复文件",
+          "steps": [
+            {
+              "step_id": "ffed61b3-0910-499b-aec6-54886e8a3662",
+              "order": 2,
+              "description": "写入恢复完成内容",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "out/real-recovery-final2.md",
+                "content": "checkpoint recovered"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "out/real-recovery-final2.md",
+                  "kind": "file"
+                },
+                {
+                  "type": "content_contains",
+                  "path": "out/real-recovery-final2.md",
+                  "text": "checkpoint recovered"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "out/real-recovery-gate2.txt",
+        "out/real-recovery-final2.md"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788963497.4609344,
+    "last_access": 1788963497.4609344,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "a68ce610-d4fb-45af-bf89-33f6dbed73f3"
+  },
+  "7591e731ea2f7fcc3361b383b7821867": {
+    "design": {
+      "plan_id": "68111bf1-a2e3-4428-acea-a445e3c5ffe9",
+      "design_id": "c7d9cdc8-dda3-4492-bd0f-0e0208944dd9",
+      "created_at": "2026-09-09T15:07:08.816841",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "e3a39e7d-2362-4020-b91c-fe5bed568ff6",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "da346054-25c0-40d4-8831-de4a7843fbbd",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788966428.8168411,
+    "last_access": 1788966428.8168411,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "c7d9cdc8-dda3-4492-bd0f-0e0208944dd9"
+  },
+  "29d8a97aa2d1733cd47fe93e7a637c3f": {
+    "design": {
+      "plan_id": "e7be7973-be04-4ca0-abee-a2fcac7249f6",
+      "design_id": "e402a31e-bcfe-4e9b-9a3a-bebf75a3ead9",
+      "created_at": "2026-09-09T15:07:20.990798",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "a9e3eed2-28bb-4523-88e6-e0a4e70682ee",
+          "description": "创建",
+          "steps": [
+            {
+              "step_id": "830380c8-4fdf-480d-afaf-5efdc3c28074",
+              "order": 1,
+              "description": "创建 counter",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "counter.py",
+                "content": "def value():\n    return 0"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "c8a05b48-915d-44de-a775-fe0be4e352fc",
+              "order": 2,
+              "description": "创建测试",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "test_counter.py",
+                "content": "test"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "test_counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "2bd673d0-c661-4b1b-b6be-7fe87022eb3f",
+          "description": "修改并验证",
+          "steps": [
+            {
+              "step_id": "4585d91f-1a75-43b2-99b5-91ce6e1626f4",
+              "order": 3,
+              "description": "修改 counter",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "counter.py",
+                "instruction": "return 0 to 1",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "counter.py",
+                  "text": "return 1"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "871ec913-8bc4-4c61-966d-99075bd06c6f",
+              "order": 4,
+              "description": "运行测试",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "pytest",
+                "test_path": "test_counter.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "exit_code",
+                  "equals": 0
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "counter.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788966440.9907985,
+    "last_access": 1788966440.9907985,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "e402a31e-bcfe-4e9b-9a3a-bebf75a3ead9"
+  },
+  "9d0d78d1f5e11e359f3ce9474ed7633e": {
+    "design": {
+      "plan_id": "0f813232-cd77-44fe-8bdf-0e18b05b0804",
+      "design_id": "644977c1-ce2e-4e0e-ae37-4b5bd33e09f4",
+      "created_at": "2026-09-09T15:08:04.591923",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "9bf76c24-f7fa-42b8-9c50-ea5b05c42937",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "485187fe-4d44-473a-a28c-af6268e3975a",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788966484.5919237,
+    "last_access": 1788966484.5919237,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "644977c1-ce2e-4e0e-ae37-4b5bd33e09f4"
+  },
+  "ed08ee67d28d3b2f4cb097236334a243": {
+    "design": {
+      "plan_id": "fd6a3d8f-c69e-467b-b968-9b6db5b4a309",
+      "design_id": "a81c0021-fa57-430f-a2b5-6340042a9f44",
+      "created_at": "2026-09-09T15:08:04.686176",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "616fd27c-b5d7-4d24-862b-95f18eed4dc7",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "17acb7fc-5a09-477f-9066-86a0d00568d2",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788966484.6861765,
+    "last_access": 1788966484.6861765,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "a81c0021-fa57-430f-a2b5-6340042a9f44"
+  },
+  "6aa984eb326d75f2afeb136fe007eb56": {
+    "design": {
+      "plan_id": "d3543cda-1633-4775-8b75-11b977b677cb",
+      "design_id": "dc21563e-cc52-446c-aa24-eda27e78cb49",
+      "created_at": "2026-09-09T15:08:11.962951",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "af61f17f-b527-4280-a3b8-7a23a1e4bc45",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "d956203c-f164-4d0e-b962-74ae098680bc",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1788966491.9629512,
+    "last_access": 1788966491.9629512,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "dc21563e-cc52-446c-aa24-eda27e78cb49"
+  },
+  "996e4a4c9dba2c226eaf103800ff3642": {
+    "design": {
+      "plan_id": "84102cf0-3c7d-4cfb-836f-7a6769efc0dc",
+      "design_id": "4009f544-ac3f-4090-8201-e4de6751fefe",
+      "created_at": "2026-09-10T06:04:13.763605",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "c3246196-6ff5-4d76-b04e-dc13a3a8ca78",
+          "description": "修改代码",
+          "steps": [
+            {
+              "step_id": "5a7e00b4-d691-4610-9997-33decbca24bc",
+              "order": 1,
+              "description": "修改 greet 返回值",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "src/app.py",
+                "instruction": "把 return 1 改成 return 'hello, world'",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "src/app.py",
+                  "text": "hello, world"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "src/app.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1789020253.7636056,
+    "last_access": 1789020253.7636056,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "4009f544-ac3f-4090-8201-e4de6751fefe"
+  },
+  "d65253c4be5b5c383a3f2cd374196924": {
+    "design": {
+      "plan_id": "8d2d3f6f-c4f9-4bdf-98d4-79dc607c4042",
+      "design_id": "e2649e31-1d37-4e68-951a-73f14e8052c0",
+      "created_at": "2026-09-10T06:04:25.857383",
+      "status": "Pending",
+      "segments": [
+        {
+          "segment_id": "f80c96ec-56b9-418d-8e10-785f519a1cfc",
+          "description": "创建",
+          "steps": [
+            {
+              "step_id": "7334c2d0-43e1-4029-b9f6-7f9cbba36168",
+              "order": 1,
+              "description": "创建 counter",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "counter.py",
+                "content": "def value():\n    return 0"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "d22ad20a-bf75-4092-bef0-c21b0863f8c2",
+              "order": 2,
+              "description": "创建测试",
+              "tool": "file_creator",
+              "inputs": {
+                "path": "test_counter.py",
+                "content": "test"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "file_exists",
+                  "path": "test_counter.py"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        },
+        {
+          "segment_id": "0f05f19f-c848-4bd5-929d-fa3a1fd41774",
+          "description": "修改并验证",
+          "steps": [
+            {
+              "step_id": "391850e0-2777-476b-b402-d055f8e6af76",
+              "order": 3,
+              "description": "修改 counter",
+              "tool": "coding_agent",
+              "inputs": {
+                "path": "counter.py",
+                "instruction": "return 0 to 1",
+                "allowed_tools": [
+                  "text_editor"
+                ]
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "content_contains",
+                  "path": "counter.py",
+                  "text": "return 1"
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            },
+            {
+              "step_id": "b2f336ba-03a2-49e6-9d0c-f5da9de87a19",
+              "order": 4,
+              "description": "运行测试",
+              "tool": "test_runner",
+              "inputs": {
+                "suite": "pytest",
+                "test_path": "test_counter.py"
+              },
+              "check_criteria": "执行成功",
+              "acceptance": [
+                {
+                  "type": "exit_code",
+                  "equals": 0
+                }
+              ],
+              "outputs": null,
+              "status": "Pending",
+              "executed_at": null,
+              "retry_count": 0,
+              "max_retries": 2,
+              "parent_step_id": null,
+              "branch_version": 1,
+              "state_snapshot": null,
+              "compressed_context": null,
+              "duration_ms": null,
+              "failure_reason": null,
+              "is_obsolete": false
+            }
+          ]
+        }
+      ],
+      "implementation_list": [
+        "counter.py"
+      ],
+      "dynamic_insertions": [],
+      "current_branch": 1,
+      "resume_from_step_id": null,
+      "paused_at_step_id": null
+    },
+    "timestamp": 1789020265.8573835,
+    "last_access": 1789020265.8573835,
+    "hits": 0,
+    "fingerprint": null,
+    "user_request": "e2649e31-1d37-4e68-951a-73f14e8052c0"
+  }
+}

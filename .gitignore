@@ -1,3 +1,6 @@
+# Dependencies
+**/node_modules/
+
 # Rust
 /target/
 **/*.rs.bk
@@ -84,15 +87,17 @@ temp/
 .mimosa/
 
 # Isolated run workspaces & scratch
+.tmp_*/
 .tmp_*_root/
 .tmp_*.txt
 .ruff_cache/
 .zcode/
 
 # Runtime caches & SQLite sidecars
-data/design_cache.json
-data/plan_cache.json
-data/usage/
+**/data/usage/*.db-wal
+**/data/usage/*.db-shm
+python/data/design_cache.json
+python/data/plan_cache.json
 # 敏感配置（2026-08-31 密钥泄露修复）
 config/models.local.yaml
 

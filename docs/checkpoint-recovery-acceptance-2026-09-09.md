@@ -4,9 +4,17 @@
 
 同一计划执行两次：第一次步骤 1 失败并保留 checkpoint；第二次从同一计划的 checkpoint 恢复，步骤 1 与步骤 2 成功，计划和第二次 Run 完成，并保留审计事件与最终产物。
 
-## 真实运行证据
+## 隔离验收复现
 
-- 计划 ID：`e531e98f-eaa3-4aac-a041-92486643f546`
+从任意目录运行：
+
+```bash
+PYTHONPATH=python python scripts/live_checkpoint_acceptance.py --output out/live-checkpoint-acceptance.json
+```
+
+脚本按自身位置定位仓库，使用临时数据库和临时工作区。步骤 1 的第一次失败由真实 `command_runner` 执行受控非零命令构造；第二次恢复时更换为成功命令，仍经过真实 Executor/工具路径。该验收不是 LLM 生成计划测试；真实 LLM 任务记录见 `docs/daily-task-trials-2026-09-09.md`。
+
+## 运行记录（历史样本）
 - 执行方式：初始化真实服务 lifespan 后，直接调用当前服务的 `execute_plan_background`；步骤 2 使用真实 `file_creator`，未注入凭据。
 - 产物：`out/live-checkpoint-acceptance/final-artifact.txt`
 - 产物内容：`checkpoint recovery accepted`
@@ -30,9 +38,9 @@
 - 最终产物：存在，内容精确为 `checkpoint recovery accepted\n`
 - 步骤调用序列：步骤 1（失败）、步骤 1（恢复成功）、步骤 2（成功）
 
-原始结构化证据保存在被 `.gitignore` 忽略的 `out/live-checkpoint-acceptance.json`，没有提交运行时数据库、token、日志或凭据。
+原始历史样本由旧版本脚本生成，未作为当前可重复验收证据；当前脚本的每次结果会写入 `--output` 指定的脱敏 JSON，验收失败也会先写结果再返回非零退出码。
 
-## 回归验证
+## 历史样本回归记录
 
 - checkpoint focused tests：通过
 - lifecycle focused tests：通过（5 passed）

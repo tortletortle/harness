@@ -2,14 +2,15 @@
 
 AI 任务编排与执行系统：用户提出需求 → Designer（LLM）生成技术设计书 → 用户审批 → 生成执行计划 → Executor 按步骤调用工具执行 → 全程 SQLite 持久化 + React 仪表盘可视化。
 
-## 当前状态（2026-08-30）
+## 当前状态（2026-09-10）
 
-核心链路完整可用：设计书生成与审批、执行计划生成、计划执行与实时日志、执行控制（暂停/恢复/跳步/回滚）、审计日志、配置管理。错误处理遵循明确契约（见 [docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md)）。
+核心链路完整可用：设计书生成与审批、执行计划生成、计划执行与实时日志、执行控制（暂停/恢复/跳步/回滚）、审计日志、配置管理。产品运行模式使用真实 LLM；凭据只从环境变量或密钥服务读取。错误处理遵循明确契约（见 [docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md)）。
 
-- 后端测试：`pytest` 392 通过 + 7 跳过（真实 LLM 用例用 `RUN_REAL_LLM_EVAL=1` 开启）
-- 前端测试：`vitest` 35 通过
-- Agent 即工具：`coding_agent`（Grant 受限、支持有界多轮自测迭代）已贯通设计与执行链路，见 [docs/AGENT_HARNESS_DESIGN.md](docs/AGENT_HARNESS_DESIGN.md) §19/§22
-- CI：三任务流水线（Rust / pytest / vitest）
+- 默认离线后端回归：`python -m pytest -q --ignore=tests/python/test_exec_e2e.py --ignore=tests/python/test_browser_check.py`（本轮验证 614 passed / 11 skipped）
+- 前端测试：`vitest` 36 passed；production build 成功
+- 真实 LLM 任务与隔离 checkpoint 验收：见 [docs/checkpoint-recovery-acceptance-2026-09-09.md](docs/checkpoint-recovery-acceptance-2026-09-09.md)
+- CI：Python 离线回归、frontend test/build、Rust workspace test；真实 LLM 和浏览器测试需单独配置环境
+- Rust：本机未安装 cargo，未声称已验证
 
 - 超级搜索工具：super_search（多引擎聚合搜索 + 深度检索 + 正文抽取；无 Key 可用，可选 Tavily/Brave/Serper 增强）
 - 代码上下文工具：code_context（Aider 式仓库地图 + SQLite FTS5 全文检索 + 知识笔记长期记忆，参考 docs/CODE_CONTEXT.md）
@@ -88,6 +89,7 @@ harness/
 | [docs/STRUCTURE.md](docs/STRUCTURE.md) | 目录结构与代码分布 |
 | [docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md) | 错误处理契约（改错误路径前必读） |
 | [docs/state-machine-design.md](docs/state-machine-design.md) | 计划状态机设计 |
+| [docs/checkpoint-recovery-acceptance-2026-09-09.md](docs/checkpoint-recovery-acceptance-2026-09-09.md) | 隔离 checkpoint 恢复验收记录与复现命令 |
 | [docs/NEW_ARCHITECTURE_DESIGN.md](docs/NEW_ARCHITECTURE_DESIGN.md) | 原始架构设计（历史参考） |
 
 历史测试报告与早期使用说明在 [docs/archive/](docs/archive/)，描述的是当时状态，不代表现状。

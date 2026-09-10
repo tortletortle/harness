@@ -19,12 +19,13 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 - Skills、MCP、coding_agent、chat 和 IM 通知已具备生态层实现。
 - 前端计划页支持连接状态显示、计划状态刷新、空计划提示、展开/收起阶段、操作错误反馈和活动流过滤。
 
-## 当前验证基线（2026-09-09）
+## 当前验证基线（2026-09-10）
 
 - 前端 Vitest：36 passed。
 - 前端生产构建：成功。
-- 计划领域/生命周期/广播回归：39 passed。
-- 全量 Python 基线：635 passed、11 skipped、2 failed、2 errors；失败项依赖真实外部 LLM 凭据或 Playwright 环境，不能视为离线代码失败。
+- checkpoint focused/lifecycle：5 passed；隔离脚本 `scripts/live_checkpoint_acceptance.py` 退出码 0，结果写入临时数据库/工作区。
+- 默认离线 Python 命令：本轮需以 `python -m pytest -q --ignore=tests/python/test_exec_e2e.py --ignore=tests/python/test_browser_check.py` 重新复跑后更新；该命令不代表真实 LLM 或浏览器验收。
+- 完整 Python 基线：仍包含依赖真实 provider、Playwright 和部分历史环境假设的测试；不把这些失败误报为产品链路失败。
 - Rust 测试：当前开发机未安装 cargo，尚未执行。
 
 ## 已知短板
