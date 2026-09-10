@@ -43,7 +43,9 @@ PYTHONPATH=python python scripts/live_checkpoint_acceptance.py --output out/live
 ## 历史样本回归记录
 
 - checkpoint focused tests：通过
-- lifecycle focused tests：通过（5 passed）
+- lifecycle focused tests：通过（29 passed）
 - 前端 Vitest：36 passed
 - 前端 production build：成功
-- 完整 Python suite：存在与本机 Playwright、未配置真实 provider 的既有环境相关失败；未把它们误报为全绿。
+- browser_check 真实浏览器：安装 Playwright Chromium 后 11 passed
+- 完整 Python suite：646 passed / 11 skipped / 2 errors；errors 仅剩 test_exec_e2e.py（需要真实 LLM 凭据）
+- 完整安全审计：尚未通过（Mimosa 静态 finding 未全部复核关闭）

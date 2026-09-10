@@ -23,10 +23,13 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 
 - 前端 Vitest：36 passed；生产构建成功。
 - 隔离 checkpoint 验收脚本：`PYTHONPATH=python python scripts/live_checkpoint_acceptance.py` 退出码 0（首次 Failed + checkpoint 保留；同计划恢复 Completed；Run/步骤/审计/Attempt/产物全部核对）。
-- 默认离线 Python 回归（CI 同款命令）：635 passed / 9 skipped / 2 deselected。
-- 安全回归：URL/SSRF（web_fetcher、super_search、http_api、authorization）45 passed。
-- Mimosa 深度扫描（2026-09-10）：6 个静态 finding（path-traversal 5、SSRF 1）；super_search 的 SSRF 已修复（引擎请求统一走 `_validate_url`）；其余为脚本型工具/缓存写入路径，需要逐项复核后再关闭。
+- 默认离线 Python 回归：635 passed / 9 skipped / 2 deselected。
+- 真实浏览器（Playwright Chromium）检查：11 passed。
+- 完整 Python 套件：646 passed / 11 skipped / 2 errors；errors 为 `test_exec_e2e.py`，需要真实 LLM 凭据。
+- A 标准五任务验收脚本：`scripts/real_llm_acceptance_a.py`，需注入 `EAS_LLM_API_KEY_STEPFUN`/`EAS_LLM_API_KEY_NEWAPI` 后运行；当前凭据未配置。
+- Mimosa 深度扫描（2026-09-10）：6 个静态 finding（path-traversal 5、SSRF 1）；super_search 的 SSRF 已修复；其余待逐项复核关闭。
 - Rust 测试：当前开发机未安装 cargo，尚未执行。
+
 
 ## 已知短板
 
