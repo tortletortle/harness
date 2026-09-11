@@ -216,8 +216,6 @@ async def test_plan_execution_redirects_workspace_to_worktree(tmp_path, monkeypa
     # 产物落在 worktree，而非主仓库
     assert (Path(added["worktree_path"]) / "out" / "wt-proof.txt").read_text(encoding="utf-8") == "hello-wt"
     assert not (repo / "out" / "wt-proof.txt").exists()
-    # 执行结束后 env 恢复
-    assert os.environ.get("EAS_WORKSPACE_ROOT") == str(repo)
 
     # 合并回主仓库
     merged = GitOperator.execute("worktree_merge", {

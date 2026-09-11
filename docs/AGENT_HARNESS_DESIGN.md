@@ -5,9 +5,9 @@
 
 ## 版本
 
-- 当前版本：`1.16-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；test_passes 测试即验收类型（削接缝动作 B 第一级，§27）已实施；失败 checkpoint 续跑与 Retry 孤儿恢复已实施；worktree 路线已定；最小 WorkGraph（依赖声明 + DAG 校验 + 依赖感知取步，1.15）与资源声明 + 受控并行（1.16）已实施
-- 最后更新：2026-09-11
+- 当前版本：`1.17-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；test_passes 测试即验收类型（削接缝动作 B 第一级，§27）已实施；失败 checkpoint 续跑与 Retry 孤儿恢复已实施；worktree 路线已定；最小 WorkGraph（依赖声明 + DAG 校验 + 依赖感知取步，1.15）、资源声明 + 受控并行（1.16）与 Worktree 隔离第一阶段（1.17）已实施
+- 最后更新：2026-09-12
 
 ## 1. 目标
 
@@ -1175,3 +1175,12 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
 - 配置：`models.executor.max_concurrency`（默认 1）与顶层 `parallel_graphs`（默认 false）；默认关闭 = 与旧版行为完全一致。
 - 验证：`test_dependency_scheduler.py` 覆盖独立节点同批、写写/写读冲突、旧计划串行、开关关闭；端到端确认 a→b、a→c 在并行开启时 b/c 并发完成。离线回归 652 passed / 9 skipped / 2 deselected。
 - 仍待后续：跨任务并发（current_execution 单执行权保持不变）、worktree 隔离、动态重规划。
+
+### 1.17-draft — 2026-09-12：Worktree 隔离第一阶段（已实施）
+
+- `git_operator` 新增 worktree 指令组：`worktree_add`（新分支 `worktree/<name>`，落点仓库同级 `<repo>-wt-<name>`，name 禁路径分隔符防逃逸）/ `worktree_list` / `worktree_diff`（stat+补丁截断）/ `worktree_merge`（合并前自动快照未提交改动，对齐 git_commit auto_stage 语义；冲突返回结构化失败不自动重试）/ `worktree_remove`。实现按仓库约定走 `_run` + `execute = staticmethod(_run)` 别名（§24.5 扫描器误报规避）。
+- SQLite 新增 `worktrees` 表（plan_id FK、repo/worktree 路径、分支、base_commit、status ∈ active/merged/discarded）与 CRUD（create/get/get_active/list/close，非法终态拒绝）。
+- API：`POST /api/plan/{id}/worktree`（创建+绑定，重复绑定 409）、`GET .../worktree`（绑定 + diff 摘要）、`POST .../worktree/merge`（Running 拒绝；冲突 409 且保持 active；审计入档）、`POST .../worktree/discard`。合并/丢弃由用户显式发起（人即审批方）。
+- 执行绑定：计划存在 active worktree 时，执行循环把 `EAS_WORKSPACE_ROOT` 重定向到 worktree（全局单计划执行权保证安全，finally 恢复），Grant workspace 同步指向 worktree——文件类工具相对路径与命令类工具隐式 cwd 一致落在 worktree。
+- 验证：`test_worktree_isolation.py` 6 项（真实 git：roundtrip、路径逃逸拒绝、冲突结构化失败、DB 生命周期、端到端 workspace 重定向 + 合并带回产物）。离线回归 660 passed / 9 skipped / 2 deselected。
+- 待后续：多计划各占 worktree 并行执行（替换 current_execution 单执行权）、worktree 冲突的 review 流程接入。

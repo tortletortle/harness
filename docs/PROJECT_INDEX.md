@@ -166,6 +166,6 @@ Windows 根目录一键批处理：`启动完整系统.bat`、`一键启动.bat`
 1. pytest 必须从**仓库根目录**运行（conftest 导入约定）。
 2. 凭据只从环境变量/密钥服务或 gitignore 的 `models.local.yaml` 读取，不提交。
 3. HTTP 出站仅 http/https，拒绝 localhost/环回/私有/保留地址；SQL 一律参数绑定。
-4. **WorkGraph 第一/二阶段**：`Step.depends_on` + DAG fail-closed 校验 + 依赖感知取步（1.15），`Step.resources` 读写资源声明 + 冲突检测 + `select_next_batch` 批取步 + 有界并发执行（1.16）已经落地。并行默认关闭（`models.executor.max_concurrency=1`、`parallel_graphs=false`），旧线性计划与现有串行行为完全不变；真正跨任务并行、worktree、完整 Artifact Store 内容层、Session/Turn 分层和动态重规划仍未完成。
+4. **WorkGraph 第一/二阶段 + worktree**：`Step.depends_on` + DAG fail-closed 校验 + 依赖感知取步（1.15）；`Step.resources` 读写资源声明 + 冲突检测 + `select_next_batch` 批取步 + 有界并发执行（1.16）；worktree 隔离（`git_operator` worktree 指令组、`worktrees` 表、计划级绑定执行、API 合并/丢弃，1.17）已落地。并行默认关闭（`models.executor.max_concurrency=1`、`parallel_graphs=false`）；多计划并行执行、完整 Artifact Store 内容层、Session/Turn 分层和动态重规划仍未完成。
 5. 工具必须返回**结构化失败**，不得把业务失败冒充成功。
 6. CI 三个 job：Python 离线回归、前端 test+build、Rust workspace test（本机无 cargo 时不声称已验证）。

@@ -991,22 +991,26 @@ async def execute_plan(plan_id: str):
 
         # check-then-set 必须在同一把锁内完成。
         # 否则两个并发请求可以同时通过检查，产出两个后台任务争抢同一份 DB 和文件系统。
-        async with state.execution_lock:
-            if state.current_execution:
-                # 认领残留自愈：进程重启可能发生在 claim 之后、执行任务死亡之前，
-                # 留下"current_execution 残留 + 计划非 Running"僵局（孤儿恢复不覆盖此态）。
-                # 只有被认领计划确实 Running 时才视为真冲突（409）；否则释放残留并放行。
-                claimed = state.current_execution
-                claimed_status = state.database.get_plan_status(claimed)
-                if claimed_status == "Running":
-                    raise HTTPException(
-                        status_code=409,
-                        detail=f"已有任务在执行中: {claimed}",
-                    )
-                logger.warning("释放残留执行认领: {}（计划 DB 状态: {}，非 Running）", claimed, claimed_status)
-                state.current_execution = None
-                state.current_execution_owner = None
-            state.current_execution = plan_id
+        # 绑定 active worktree 的计划走隔离工作区，不占用主工作区执行权，
+        # 可与其它计划并行（同计划重复执行由 DB 状态机原子认领兜底拒绝）。
+        _worktree_bound = state.database.get_active_worktree(plan_id) is not None
+        if not _worktree_bound:
+            async with state.execution_lock:
+                if state.current_execution:
+                    # 认领残留自愈：进程重启可能发生在 claim 之后、执行任务死亡之前，
+                    # 留下"current_execution 残留 + 计划非 Running"僵局（孤儿恢复不覆盖此态）。
+                    # 只有被认领计划确实 Running 时才视为真冲突（409）；否则释放残留并放行。
+                    claimed = state.current_execution
+                    claimed_status = state.database.get_plan_status(claimed)
+                    if claimed_status == "Running":
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"已有任务在执行中: {claimed}",
+                        )
+                    logger.warning("释放残留执行认领: {}（计划 DB 状态: {}，非 Running）", claimed, claimed_status)
+                    state.current_execution = None
+                    state.current_execution_owner = None
+                state.current_execution = plan_id
 
         # 在后台执行（run 由 execute_plan_background 内部原子认领并签发）
         task = asyncio.create_task(execute_plan_background(plan))
@@ -1128,21 +1132,24 @@ async def resume_plan(plan_id: str):
                 detail=f"只能恢复 Paused 状态的计划，当前状态: {current_status}",
             )
 
-        async with state.execution_lock:
-            if state.current_execution:
-                # 认领残留自愈：进程重启可能发生在 claim 之后、执行任务死亡之前，
-                # 留下"current_execution 残留 + 计划非 Running"僵局（孤儿恢复不覆盖此态）。
-                # 只有被认领计划确实 Running 时才视为真冲突（409）；否则释放残留并放行。
-                claimed = state.current_execution
-                claimed_status = state.database.get_plan_status(claimed)
-                if claimed_status == "Running":
-                    raise HTTPException(
-                        status_code=409,
-                        detail=f"已有任务在执行中: {claimed}",
-                    )
-                logger.warning("释放残留执行认领: {}（计划 DB 状态: {}，非 Running）", claimed, claimed_status)
-                state.current_execution = None
-            state.current_execution = plan_id
+        # 绑定 active worktree 的计划走隔离工作区，不占用主工作区执行权。
+        _worktree_bound = state.database.get_active_worktree(plan_id) is not None
+        if not _worktree_bound:
+            async with state.execution_lock:
+                if state.current_execution:
+                    # 认领残留自愈：进程重启可能发生在 claim 之后、执行任务死亡之前，
+                    # 留下"current_execution 残留 + 计划非 Running"僵局（孤儿恢复不覆盖此态）。
+                    # 只有被认领计划确实 Running 时才视为真冲突（409）；否则释放残留并放行。
+                    claimed = state.current_execution
+                    claimed_status = state.database.get_plan_status(claimed)
+                    if claimed_status == "Running":
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"已有任务在执行中: {claimed}",
+                        )
+                    logger.warning("释放残留执行认领: {}（计划 DB 状态: {}，非 Running）", claimed, claimed_status)
+                    state.current_execution = None
+                state.current_execution = plan_id
 
         asyncio.create_task(execute_plan_background(plan, resume=True))
 
@@ -1913,7 +1920,7 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
 
     attempt_id = None
     _bound_worktree = None
-    _workspace_env_backup = None
+    _workspace_override_token = None
     try:
         debug_log(f"execute_plan_background STARTED for plan {plan.plan_id} (resume={resume})")
 
@@ -1990,14 +1997,14 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
         from utils import usage_tracker as _usage_tracker
         _usage_tracker.set_context(plan_id=str(plan.plan_id), phase="executor")
 
-        # Worktree 隔离：计划绑定 active worktree 时，把工作区根重定向到
-        # worktree——所有文件类工具的相对路径解析（tools/workspace.py 读
-        # EAS_WORKSPACE_ROOT）随之一致。当前全局单计划执行权保证 env 切换
-        # 不会影响其他执行；finally 中恢复原值。
+        # Worktree 隔离：计划绑定 active worktree 时，把本执行上下文的工作区根
+        # 重定向到 worktree（contextvar 随 asyncio 任务传播，to_thread 工具线程
+        # 内同样生效；多计划并行时各执行上下文互不影响，无需进程级 env 切换）。
         _bound_worktree = state.database.get_active_worktree(str(plan.plan_id))
-        _workspace_env_backup = os.environ.get("EAS_WORKSPACE_ROOT")
+        _workspace_override_token = None
         if _bound_worktree:
-            os.environ["EAS_WORKSPACE_ROOT"] = str(_bound_worktree["worktree_path"])
+            from tools.workspace import set_workspace_override
+            _workspace_override_token = set_workspace_override(_bound_worktree["worktree_path"])
             await broadcast_log(
                 f"[WORKTREE] 计划绑定隔离 worktree: {_bound_worktree['worktree_path']}（分支 {_bound_worktree['branch']}）",
                 "info",
@@ -2169,15 +2176,13 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
             debug_log(f"update_plan failed during exception handling: {inner}")
         await broadcast_log(f"执行失败: {str(e)}", "error")
     finally:
-        # Worktree 隔离：恢复工作区根 env（无论执行成功、失败还是异常）。
-        if _bound_worktree is not None:
+        # Worktree 隔离：恢复本执行上下文的工作区覆盖（无论成功、失败还是异常）。
+        if _workspace_override_token is not None:
             try:
-                if _workspace_env_backup is None:
-                    os.environ.pop("EAS_WORKSPACE_ROOT", None)
-                else:
-                    os.environ["EAS_WORKSPACE_ROOT"] = _workspace_env_backup
-            except Exception as _env_restore_err:
-                debug_log(f"恢复 EAS_WORKSPACE_ROOT 失败（忽略）: {_env_restore_err}")
+                from tools.workspace import reset_workspace_override
+                reset_workspace_override(_workspace_override_token)
+            except Exception as _ws_restore_err:
+                debug_log(f"恢复工作区覆盖失败（忽略）: {_ws_restore_err}")
         # 项目工作记忆：计划结束时把执行状态写入工作区，让后续任务"接着干"
         try:
             from tools.project_memory import save_entry as _pm_save
@@ -2201,9 +2206,12 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
         except Exception:
             pass
         async with state.execution_lock:
-            state.current_execution = None
-            if state.current_execution_owner and state.current_execution_owner.get("plan_id") == str(plan.plan_id):
-                state.current_execution_owner = None
+            # 绑定 worktree 的计划不占用主工作区执行权，也不得清理它——
+            # 并行运行的主工作区计划可能正由其他任务持有。
+            if not _bound_worktree:
+                state.current_execution = None
+                if state.current_execution_owner and state.current_execution_owner.get("plan_id") == str(plan.plan_id):
+                    state.current_execution_owner = None
         # P0-a 安全网：计划已终止（完成/失败/异常），批量拒绝其未决审批，
         # 防止残留的挂起请求泄漏或被后续计划误 resolve。
         try:

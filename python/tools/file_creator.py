@@ -10,6 +10,8 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from pathlib import Path
 from typing import Any, Dict
 
+import contextvars
+
 from tools.lint_gate import lint_python
 from tools.workspace import resolve_workspace_path
 
@@ -21,7 +23,9 @@ DEFAULT_TIMEOUT = 10
 def _run_with_timeout(func, timeout: float, *args, **kwargs) -> Dict[str, Any]:
     """用线程池包一层，实现对同步阻塞调用的真实超时熔断（跨平台，不依赖 signal.alarm）"""
     with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(func, *args, **kwargs)
+        # ThreadPoolExecutor 不传播 contextvars：显式捕获当前上下文（含工作区覆盖）执行
+        ctx = contextvars.copy_context()
+        future = executor.submit(ctx.run, func, *args, **kwargs)
         try:
             return future.result(timeout=timeout)
         except FutureTimeoutError:
