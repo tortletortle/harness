@@ -255,11 +255,29 @@ class Database:
                 )
             """)
 
+            # Worktree 隔离表：计划可绑定一个独立 git worktree 执行，
+            # 完成后经人工合并回主仓库或丢弃。status ∈ active/merged/discarded。
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS worktrees (
+                    worktree_id TEXT PRIMARY KEY,
+                    plan_id TEXT,
+                    repo_path TEXT NOT NULL,
+                    worktree_path TEXT NOT NULL,
+                    branch TEXT NOT NULL,
+                    base_commit TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL,
+                    closed_at TEXT,
+                    FOREIGN KEY (plan_id) REFERENCES plans(plan_id)
+                )
+            """)
+
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_steps_plan_branch_status_order ON steps(plan_id, branch_version, status, is_obsolete, step_order)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_step_events_plan_event ON step_events(plan_id, event_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_plans_created_at ON plans(created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_plan_timestamp ON audit_logs(plan_id, timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_plan_step ON artifacts(plan_id, step_id, created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_worktrees_plan_status ON worktrees(plan_id, status, created_at)")
             conn.commit()
     
     def create_artifact(
@@ -318,6 +336,81 @@ class Database:
         except Exception as e:
             logger.exception("列出产物失败: {}", e)
             raise DatabaseError(f"列出产物失败: {e}") from e
+
+    # ===== Worktree 隔离：计划级绑定与生命周期 =====
+
+    def create_worktree_record(
+        self, worktree_id: str, plan_id: str, repo_path: str,
+        worktree_path: str, branch: str, base_commit: str = None,
+    ) -> bool:
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                conn.execute("""
+                    INSERT INTO worktrees
+                    (worktree_id, plan_id, repo_path, worktree_path, branch,
+                     base_commit, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
+                """, (
+                    str(worktree_id), str(plan_id), str(repo_path), str(worktree_path),
+                    str(branch), base_commit, datetime.utcnow().isoformat(),
+                ))
+                return True
+        except Exception as e:
+            logger.exception("登记 worktree 失败: {}", e)
+            raise DatabaseError(f"登记 worktree 失败: {e}") from e
+
+    def get_active_worktree(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        """计划当前 active 的 worktree 绑定；无则 None。"""
+        try:
+            with closing(self._get_connection()) as conn:
+                row = conn.execute("""
+                    SELECT * FROM worktrees
+                    WHERE plan_id = ? AND status = 'active'
+                    ORDER BY created_at DESC LIMIT 1
+                """, (str(plan_id),)).fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.exception("查询 worktree 绑定失败: {}", e)
+            raise DatabaseError(f"查询 worktree 绑定失败: {e}") from e
+
+    def get_worktree(self, worktree_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            with closing(self._get_connection()) as conn:
+                row = conn.execute(
+                    "SELECT * FROM worktrees WHERE worktree_id = ?", (str(worktree_id),)
+                ).fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.exception("查询 worktree 失败: {}", e)
+            raise DatabaseError(f"查询 worktree 失败: {e}") from e
+
+    def list_worktrees(self, plan_id: str) -> List[Dict[str, Any]]:
+        try:
+            with closing(self._get_connection()) as conn:
+                rows = conn.execute("""
+                    SELECT * FROM worktrees WHERE plan_id = ?
+                    ORDER BY created_at ASC
+                """, (str(plan_id),)).fetchall()
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.exception("列出 worktree 失败: {}", e)
+            raise DatabaseError(f"列出 worktree 失败: {e}") from e
+
+    def close_worktree(self, worktree_id: str, status: str) -> bool:
+        """终态收敛：status ∈ merged/discarded；非法值拒绝。"""
+        if status not in ("merged", "discarded"):
+            logger.warning("拒绝非法 worktree 终态: {!r}", status)
+            return False
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.execute(
+                    "UPDATE worktrees SET status = ?, closed_at = ? WHERE worktree_id = ?",
+                    (status, datetime.utcnow().isoformat(), str(worktree_id)),
+                )
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.exception("更新 worktree 终态失败: {}", e)
+            raise DatabaseError(f"更新 worktree 终态失败: {e}") from e
 
     def save_design(self, design: DesignDocument) -> bool:
         """保存设计书"""

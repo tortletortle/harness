@@ -1472,6 +1472,9 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
         else None
     )
     agent_extra_tools, agent_limits = agent_step_grant_params(step_model, agent_capability)
+    # Worktree 绑定：计划挂在隔离 worktree 上时，Grant 的 workspace 指向
+    # worktree 而非主工作区——命令类工具的隐式 cwd/path 与资源检查随之一致。
+    _active_wt = state.database.get_active_worktree(plan_id)
     grant = state.authorization_manager.issue_for_step(
         plan_id=plan_id,
         step=step_model,
@@ -1479,6 +1482,7 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
         approval_required=False,
         extra_allowed_tools=agent_extra_tools,
         limits=agent_limits,
+        workspace_root=_active_wt["worktree_path"] if _active_wt else None,
     )
     state.database.add_step_event(
         step_id, plan_id, "grant_issued",
@@ -1908,6 +1912,8 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
     print(f"[BG] STARTED plan={plan.plan_id} resume={resume}", flush=True)
 
     attempt_id = None
+    _bound_worktree = None
+    _workspace_env_backup = None
     try:
         debug_log(f"execute_plan_background STARTED for plan {plan.plan_id} (resume={resume})")
 
@@ -1983,6 +1989,19 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
         # P0 用量记账：为本次执行绑定 plan 上下文，执行期内所有 LLM 调用自动归账
         from utils import usage_tracker as _usage_tracker
         _usage_tracker.set_context(plan_id=str(plan.plan_id), phase="executor")
+
+        # Worktree 隔离：计划绑定 active worktree 时，把工作区根重定向到
+        # worktree——所有文件类工具的相对路径解析（tools/workspace.py 读
+        # EAS_WORKSPACE_ROOT）随之一致。当前全局单计划执行权保证 env 切换
+        # 不会影响其他执行；finally 中恢复原值。
+        _bound_worktree = state.database.get_active_worktree(str(plan.plan_id))
+        _workspace_env_backup = os.environ.get("EAS_WORKSPACE_ROOT")
+        if _bound_worktree:
+            os.environ["EAS_WORKSPACE_ROOT"] = str(_bound_worktree["worktree_path"])
+            await broadcast_log(
+                f"[WORKTREE] 计划绑定隔离 worktree: {_bound_worktree['worktree_path']}（分支 {_bound_worktree['branch']}）",
+                "info",
+            )
 
         current_step_id = None
         while True:
@@ -2150,6 +2169,15 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
             debug_log(f"update_plan failed during exception handling: {inner}")
         await broadcast_log(f"执行失败: {str(e)}", "error")
     finally:
+        # Worktree 隔离：恢复工作区根 env（无论执行成功、失败还是异常）。
+        if _bound_worktree is not None:
+            try:
+                if _workspace_env_backup is None:
+                    os.environ.pop("EAS_WORKSPACE_ROOT", None)
+                else:
+                    os.environ["EAS_WORKSPACE_ROOT"] = _workspace_env_backup
+            except Exception as _env_restore_err:
+                debug_log(f"恢复 EAS_WORKSPACE_ROOT 失败（忽略）: {_env_restore_err}")
         # 项目工作记忆：计划结束时把执行状态写入工作区，让后续任务"接着干"
         try:
             from tools.project_memory import save_entry as _pm_save
@@ -2346,6 +2374,155 @@ async def rollback_plan(plan_id: str, request: Optional[Dict[str, Any]] = None):
     except Exception as e:
         logger.exception("回滚计划失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===== Worktree 隔离端点：创建绑定 / 查看 / 合并 / 丢弃 =====
+# 合并与丢弃是用户显式发起的人工动作（人即审批方）；Running 状态一律拒绝。
+
+@app.post("/api/plan/{plan_id}/worktree", dependencies=[Depends(require_token)])
+async def create_plan_worktree(plan_id: str, request: Optional[Dict[str, Any]] = None):
+    """为计划创建并绑定隔离 worktree（新分支 worktree/<name>）。"""
+    try:
+        plan = state.database.get_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="执行计划不存在")
+        if state.database.get_active_worktree(plan_id):
+            raise HTTPException(status_code=409, detail="该计划已绑定 active worktree")
+
+        body = request or {}
+        name = str(body.get("name") or f"plan-{str(plan_id)[:8]}")
+        from tools.git_operator import GitOperator
+        repo_path = str(state.authorization_manager.workspace_root)
+        result = GitOperator.execute("worktree_add", {"path": repo_path, "name": name})
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error") or "worktree 创建失败")
+
+        worktree_id = str(uuid4())
+        state.database.create_worktree_record(
+            worktree_id=worktree_id,
+            plan_id=plan_id,
+            repo_path=repo_path,
+            worktree_path=result["worktree_path"],
+            branch=result["branch"],
+            base_commit=result.get("base_commit"),
+        )
+        await broadcast_log(
+            f"[WORKTREE] 计划 {plan_id} 绑定隔离 worktree {result['worktree_path']}", "info"
+        )
+        return {"success": True, "worktree_id": worktree_id, **{
+            k: result[k] for k in ("worktree_path", "branch", "base_commit") if k in result
+        }}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("创建 worktree 失败: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/plan/{plan_id}/worktree", dependencies=[Depends(require_token)])
+async def get_plan_worktree(plan_id: str):
+    """查看计划的 worktree 绑定状态与相对主仓库的变更摘要。"""
+    plan = state.database.get_plan(plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="执行计划不存在")
+    binding = state.database.get_active_worktree(plan_id)
+    if not binding:
+        return {"success": True, "worktree": None}
+    from tools.git_operator import GitOperator
+    diff = GitOperator.execute("worktree_diff", {
+        "path": binding["repo_path"], "worktree_path": binding["worktree_path"],
+    })
+    return {
+        "success": True,
+        "worktree": {k: binding[k] for k in (
+            "worktree_id", "repo_path", "worktree_path", "branch", "base_commit", "created_at"
+        )},
+        "diff": {"stat": diff.get("stat"), "patch_truncated": diff.get("patch_truncated")} if diff.get("success") else {"error": diff.get("error")},
+    }
+
+
+@app.post("/api/plan/{plan_id}/worktree/merge", dependencies=[Depends(require_token)])
+async def merge_plan_worktree(plan_id: str, request: Optional[Dict[str, Any]] = None):
+    """把计划的 worktree 分支合并回主仓库（人工发起；冲突不自动处理）。"""
+    try:
+        plan = state.database.get_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="执行计划不存在")
+        current_status = state.database.get_plan_status(plan_id)
+        if current_status == "Running":
+            raise HTTPException(status_code=409, detail="计划执行中，禁止合并 worktree")
+        binding = state.database.get_active_worktree(plan_id)
+        if not binding:
+            raise HTTPException(status_code=404, detail="该计划没有 active worktree 绑定")
+
+        body = request or {}
+        from tools.git_operator import GitOperator
+        result = GitOperator.execute("worktree_merge", {
+            "path": binding["repo_path"],
+            "worktree_path": binding["worktree_path"],
+            "message": body.get("message"),
+        })
+        state.database.save_audit_log(
+            tool_id="worktree_merge",
+            instruction=f"merge worktree {binding['worktree_path']} -> {binding['repo_path']}",
+            inputs={"plan_id": plan_id, "branch": binding["branch"]},
+            plan_id=plan_id,
+            success=bool(result.get("success")),
+            blocked=bool(result.get("conflict")),
+            block_reason=result.get("error") if not result.get("success") else None,
+            actor="user",
+        )
+        if not result.get("success"):
+            # 冲突/失败保持 active 绑定，由用户解决后重试或丢弃。
+            return JSONResponse(status_code=409, content={
+                "success": False,
+                "conflict": bool(result.get("conflict")),
+                "message": result.get("message"),
+                "output": result.get("output"),
+                "error": result.get("error"),
+            })
+        state.database.close_worktree(binding["worktree_id"], "merged")
+        await broadcast_plan_update(plan_id)
+        await broadcast_log(
+            f"[WORKTREE] 计划 {plan_id} 的分支 {result.get('branch')} 已合并回主仓库", "success"
+        )
+        return {"success": True, "branch": result.get("branch"), "output": result.get("output")}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("合并 worktree 失败: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/plan/{plan_id}/worktree/discard", dependencies=[Depends(require_token)])
+async def discard_plan_worktree(plan_id: str):
+    """丢弃计划的 worktree（移除目录与分支绑定，标记 discarded）。"""
+    try:
+        plan = state.database.get_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="执行计划不存在")
+        current_status = state.database.get_plan_status(plan_id)
+        if current_status == "Running":
+            raise HTTPException(status_code=409, detail="计划执行中，禁止丢弃 worktree")
+        binding = state.database.get_active_worktree(plan_id)
+        if not binding:
+            raise HTTPException(status_code=404, detail="该计划没有 active worktree 绑定")
+
+        from tools.git_operator import GitOperator
+        result = GitOperator.execute("worktree_remove", {
+            "path": binding["repo_path"], "worktree_path": binding["worktree_path"],
+        })
+        state.database.close_worktree(binding["worktree_id"], "discarded")
+        await broadcast_log(
+            f"[WORKTREE] 计划 {plan_id} 的 worktree 已丢弃: {binding['worktree_path']}", "warning"
+        )
+        return {"success": True, "removed": bool(result.get("success")), "detail": result.get("message")}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("丢弃 worktree 失败: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/audit-logs", dependencies=[Depends(require_token)])
 async def get_audit_logs(limit: int = 100, plan_id: Optional[str] = None):
