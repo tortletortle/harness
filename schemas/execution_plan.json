@@ -45,6 +45,12 @@
                 "description": { "type": "string" },
                 "tool": { "type": "string" },
                 "inputs": { "type": "object" },
+                "depends_on": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "uniqueItems": true,
+                  "default": []
+                },
                 "check_criteria": { "type": "string" },
                 "acceptance": {
                   "type": "array",

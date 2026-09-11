@@ -24,6 +24,7 @@ from models import (
 from utils.interfaces import Designer
 from llm_client import LLMClient, Message
 from logging_config import get_logger
+from domain.work_graph import normalize_dependencies, validate_graph
 
 logger = get_logger(__name__)
 
@@ -636,13 +637,27 @@ class DefaultDesigner(Designer):
             # 复用计划结构，但换掉 plan_id 与所有 step_id。
             from uuid import uuid4
             cached["plan_id"] = str(uuid4())
+            # step_id 全部重生成，depends_on 引用的旧 id 必须同步重映射，
+            # 否则复用缓存会得到一个依赖悬空的图。
+            id_map: Dict[str, str] = {}
+            raw_segments = cached.get("segments") or []
+            for segment in raw_segments:
+                for step in segment.get("steps") or []:
+                    old_id = step.get("step_id")
+                    if old_id is not None:
+                        id_map[str(old_id)] = str(uuid4())
             segments = []
-            for segment in cached.get("segments") or []:
+            for segment in raw_segments:
                 seg = dict(segment)
                 steps = []
                 for step in seg.get("steps") or []:
                     raw = dict(step)
-                    raw["step_id"] = str(uuid4())
+                    old_id = str(raw.get("step_id"))
+                    raw["step_id"] = id_map.get(old_id, str(uuid4()))
+                    raw["depends_on"] = [
+                        id_map.get(str(dep), str(dep))
+                        for dep in (raw.get("depends_on") or raw.get("dependencies") or [])
+                    ]
                     raw["status"] = "Pending"
                     raw["executed_at"] = None
                     raw["outputs"] = None
@@ -661,6 +676,15 @@ class DefaultDesigner(Designer):
             cached["current_branch"] = 1
             cached["resume_from_step_id"] = None
             cached["paused_at_step_id"] = None
+            # 缓存计划也必须经过同一套图校验，避免旧缓存绕过契约。
+            cached_steps = [
+                step
+                for segment in segments
+                for step in segment.get("steps") or []
+            ]
+            graph_result = validate_graph(cached_steps)
+            if not graph_result.valid:
+                raise GenerationError(f"缓存执行计划图校验失败: {graph_result.error}")
             return ExecutionPlan(**cached)
         
         system_prompt = """你是一个执行计划专家。根据设计书生成详细的、可执行的步骤计划。
@@ -702,8 +726,9 @@ class DefaultDesigner(Designer):
 2. 最后一个元素后不要有逗号
 3. inputs 必须使用键 `path` 和 `content`，不要用 `file_path` / `file_content`
 4. 每个能自动验证的步骤必须返回 `acceptance` 数组；支持 `file_exists`、`content_contains`、`exit_code`、`diff_scope`、`test_passes`（测试即验收：用 test_runner 同源白名单模板跑测试，exit 0 才通过）
-5. 无法自动验证的步骤返回 `acceptance: []`，并在 `check_criteria` 中说明需要人工检查
-6. 确保所有括号都正确闭合
+5. 步骤可选 `depends_on` 数组，填写所依赖步骤的 `step_id`；无依赖时使用空数组，先依赖后执行。依赖必须引用同一计划中已声明的步骤，不能形成循环。
+6. 无法自动验证的步骤返回 `acceptance: []`，并在 `check_criteria` 中说明需要人工检查
+7. 确保所有括号都正确闭合
 
 【计划体积约束（重要，响应超长会被截断导致计划无效）】
 - 全计划总步骤数不超过 20 步、segment 不超过 6 个；超出时合并同类操作（如多个目录创建合并为一步）
@@ -906,6 +931,14 @@ class DefaultDesigner(Designer):
                 # 原 bug：按 segment 内编号（每段都从 1 开始），多 segment 计划
                 # 全部平局 → 执行顺序随机。
                 global_step_order = 0
+                # LLM 可使用任意稳定的 step_id（如 step-1）；运行时使用 UUID。
+                # 先建立映射，再把 depends_on 引用改写到新 UUID。
+                step_id_map: Dict[str, str] = {}
+                for seg_data in plan_data["segments"]:
+                    for step_data in seg_data["steps"]:
+                        raw_id = step_data.get("step_id", step_data.get("id"))
+                        if raw_id is not None:
+                            step_id_map[str(raw_id)] = str(uuid4())
                 for seg_data in plan_data["segments"]:
                     steps = []
                     for step_data in seg_data["steps"]:
@@ -932,13 +965,19 @@ class DefaultDesigner(Designer):
                         
                         global_step_order += 1
                         steps.append(Step(
-                            step_id=uuid4(),
+                            step_id=UUID(step_id_map[str(step_data.get("step_id", step_data.get("id")))]) if step_data.get("step_id", step_data.get("id")) is not None and str(step_data.get("step_id", step_data.get("id"))) in step_id_map else uuid4(),
                             order=global_step_order,  # 全计划内递增序号
                             description=step_data.get("description", "未知步骤"),
                             tool=step_data.get("tool", "manual_tool"),
                             inputs=inputs_value,
                             check_criteria=check_criteria,
                             acceptance=acceptance,
+                            depends_on=[
+                                step_id_map.get(str(dep), str(dep))
+                                for dep in normalize_dependencies(
+                                    step_data.get("depends_on", step_data.get("dependencies"))
+                                )
+                            ],
                             outputs=None,  # 使用默认值
                             status="Pending",
                         ))
@@ -959,7 +998,17 @@ class DefaultDesigner(Designer):
                     segments=segments,
                     implementation_list=plan_data.get("implementation_list", []),
                 )
-                
+                graph_steps = [
+                    {"step_id": str(step.step_id), "depends_on": step.depends_on}
+                    for segment in plan.segments
+                    for step in segment.steps
+                ]
+                graph_result = validate_graph(graph_steps)
+                if not graph_result.valid:
+                    last_error = f"WorkGraph 校验失败: {graph_result.error}"
+                    logger.error("{}", last_error)
+                    continue
+
                 # 保存到缓存
                 cache_key = str(design.design_id)
                 self.plan_cache.set(cache_key, plan.model_dump(mode="json"))

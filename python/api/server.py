@@ -1715,12 +1715,34 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
                     await broadcast_plan_update(str(plan.plan_id))
                     break
 
-            step = state.database.get_next_runnable_step(
+            # 依赖感知取步：返回可执行步骤，或说明为何没有可执行步骤
+            # （依赖失败 / 存在无法就绪的 pending 步骤）。
+            selection = state.database.select_next_step(
                 str(plan.plan_id),
                 branch_version=branch_version,
                 resume_from_step_id=resume_from_step_id,
             )
+            step = selection["step"]
             if not step:
+                blocked_reason = selection.get("blocked_reason")
+                blocked_step_ids = selection.get("blocked_step_ids") or []
+                if blocked_reason or blocked_step_ids:
+                    # 仍有 pending 步骤但依赖无法满足：绝不能报 Completed。
+                    anchor_step_id = blocked_step_ids[0] if blocked_step_ids else current_step_id
+                    reason = blocked_reason or f"依赖未就绪的步骤: {blocked_step_ids[:5]}"
+                    _require_write(
+                        state.database.update_plan_state_machine(
+                            str(plan.plan_id), "Failed",
+                            resume_from_step_id=anchor_step_id,
+                            current_branch=branch_version,
+                        ),
+                        f"计划 {plan.plan_id} 状态 → Failed（依赖阻塞）",
+                    )
+                    await broadcast_plan_update(str(plan.plan_id))
+                    await broadcast_log(
+                        f"计划 {plan.plan_id} 依赖阻塞，无法继续: {reason}", "error"
+                    )
+                    break
                 active_failed = state.database.get_active_failed_steps(
                     str(plan.plan_id), branch_version
                 )

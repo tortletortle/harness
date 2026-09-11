@@ -21,6 +21,7 @@ from models import (
     AttemptStatus,
 )
 from logging_config import get_logger
+from domain.work_graph import dependency_statuses, normalize_dependencies, validate_graph
 
 logger = get_logger(__name__)
 
@@ -142,6 +143,7 @@ class Database:
                     status TEXT NOT NULL,
                     executed_at TEXT,
                     retry_count INTEGER NOT NULL DEFAULT 0,
+                    depends_on TEXT NOT NULL DEFAULT '[]',
                     FOREIGN KEY (plan_id) REFERENCES plans(plan_id)
                 )
             """)
@@ -166,6 +168,8 @@ class Database:
                 ("max_retries", "ALTER TABLE steps ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 2"),
                 # 结构化验收规则（AcceptanceRunner 用）：JSON 数组，为空表示旧版字符串验收
                 ("acceptance_json", "ALTER TABLE steps ADD COLUMN acceptance_json TEXT"),
+                # WorkGraph 依赖：JSON 数组的 step_id，空数组 = 旧版按 step_order 线性执行
+                ("depends_on", "ALTER TABLE steps ADD COLUMN depends_on TEXT NOT NULL DEFAULT '[]'"),
             ]:
                 if column not in existing_columns:
                     cursor.execute(ddl)
@@ -233,12 +237,88 @@ class Database:
             if "grant_id" not in audit_columns:
                 cursor.execute("ALTER TABLE audit_logs ADD COLUMN grant_id TEXT")
 
+            # 产物元数据表：只登记引用与哈希，不把大文件内容写进 SQLite。
+            # WorkGraph 的 Agent/步骤之间通过 artifact://<artifact_id> 协作。
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS artifacts (
+                    artifact_id TEXT PRIMARY KEY,
+                    plan_id TEXT,
+                    run_id TEXT,
+                    step_id TEXT,
+                    kind TEXT NOT NULL,
+                    uri TEXT NOT NULL,
+                    content_hash TEXT,
+                    size_bytes INTEGER,
+                    metadata_json TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (plan_id) REFERENCES plans(plan_id)
+                )
+            """)
+
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_steps_plan_branch_status_order ON steps(plan_id, branch_version, status, is_obsolete, step_order)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_step_events_plan_event ON step_events(plan_id, event_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_plans_created_at ON plans(created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_plan_timestamp ON audit_logs(plan_id, timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_plan_step ON artifacts(plan_id, step_id, created_at)")
             conn.commit()
     
+    def create_artifact(
+        self, artifact_id: str, kind: str, uri: str, *, plan_id: str = None,
+        run_id: str = None, step_id: str = None, content_hash: str = None,
+        size_bytes: int = None, metadata: Dict[str, Any] = None,
+    ) -> bool:
+        """登记产物元数据；内容留在 uri 指向的外部存储。"""
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                conn.execute("""
+                    INSERT INTO artifacts
+                    (artifact_id, plan_id, run_id, step_id, kind, uri, content_hash,
+                     size_bytes, metadata_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    str(artifact_id), plan_id, run_id, step_id, str(kind), str(uri),
+                    content_hash, size_bytes,
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                    datetime.utcnow().isoformat(),
+                ))
+                return True
+        except Exception as e:
+            logger.exception("登记产物失败: {}", e)
+            raise DatabaseError(f"登记产物失败: {e}") from e
+
+    def get_artifact(self, artifact_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            with closing(self._get_connection()) as conn:
+                row = conn.execute("SELECT * FROM artifacts WHERE artifact_id = ?", (str(artifact_id),)).fetchone()
+                if not row:
+                    return None
+                result = dict(row)
+                result["metadata"] = json.loads(result.pop("metadata_json") or "{}")
+                return result
+        except Exception as e:
+            logger.exception("查询产物失败: {}", e)
+            raise DatabaseError(f"查询产物失败: {e}") from e
+
+    def list_artifacts(self, plan_id: str = None, step_id: str = None) -> List[Dict[str, Any]]:
+        try:
+            with closing(self._get_connection()) as conn:
+                query = "SELECT * FROM artifacts WHERE 1=1"
+                params: list[Any] = []
+                if plan_id is not None:
+                    query += " AND plan_id = ?"
+                    params.append(str(plan_id))
+                if step_id is not None:
+                    query += " AND step_id = ?"
+                    params.append(str(step_id))
+                query += " ORDER BY created_at ASC"
+                rows = [dict(row) for row in conn.execute(query, params).fetchall()]
+                for row in rows:
+                    row["metadata"] = json.loads(row.pop("metadata_json") or "{}")
+                return rows
+        except Exception as e:
+            logger.exception("列出产物失败: {}", e)
+            raise DatabaseError(f"列出产物失败: {e}") from e
+
     def save_design(self, design: DesignDocument) -> bool:
         """保存设计书"""
         try:
@@ -319,6 +399,14 @@ class Database:
                 [insertion.model_dump(mode="json") for insertion in plan.dynamic_insertions],
                 ensure_ascii=False,
             )
+            graph_steps = [
+                {"step_id": str(step.step_id), "depends_on": normalize_dependencies(getattr(step, "depends_on", []))}
+                for segment in plan.segments
+                for step in segment.steps
+            ]
+            graph_result = validate_graph(graph_steps)
+            if not graph_result.valid:
+                raise DatabaseError(f"执行计划图校验失败: {graph_result.error}")
             status = plan.status.value if hasattr(plan.status, "value") else str(plan.status)
 
             # `conn` 自身作为上下文管理器：正常退出时 COMMIT，异常时 ROLLBACK。
@@ -381,9 +469,10 @@ class Database:
                                 description, tool, inputs, check_criteria, acceptance_json,
                                 outputs, status, executed_at, retry_count,
                                 parent_step_id, branch_version, state_snapshot,
-                                compressed_context, duration_ms, failure_reason, is_obsolete
+                                compressed_context, duration_ms, failure_reason, is_obsolete,
+                                depends_on
                             )
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (
                             str(step.step_id),
                             str(plan.plan_id),
@@ -405,6 +494,7 @@ class Database:
                             getattr(step, 'duration_ms', None),
                             getattr(step, 'failure_reason', None),
                             1 if getattr(step, 'is_obsolete', False) else 0,
+                            json.dumps(list(getattr(step, 'depends_on', []) or []), ensure_ascii=False),
                         ))
                         step_count += 1
 
@@ -503,6 +593,7 @@ class Database:
                             'compressed_context': row['compressed_context'],
                             'state_snapshot': json.loads(row['state_snapshot']) if row['state_snapshot'] else None,
                             'acceptance': json.loads(row['acceptance_json']) if row['acceptance_json'] else [],
+                            'depends_on': json.loads(row['depends_on']) if row['depends_on'] else [],
                             'is_obsolete': row['is_obsolete'],
                             'step_order': row['step_order'],
                             'branch_version': row['branch_version'],
@@ -521,6 +612,7 @@ class Database:
                             'executed_at': r['executed_at'],
                             'retry_count': r['retry_count'],
                             'acceptance': json.loads(r['acceptance_json']) if r['acceptance_json'] else [],
+                            'depends_on': json.loads(r['depends_on']) if r['depends_on'] else [],
                             'is_obsolete': r['is_obsolete'],
                             'branch_version': r['branch_version'],
                         }
@@ -960,29 +1052,64 @@ class Database:
             raise DatabaseError(f"查询 step_events 失败: {e}") from e
 
     def get_next_runnable_step(self, plan_id: str, branch_version: int = 1, resume_from_step_id: str = None):
-        """
-        获取当前计划下一个可运行的 step。
-        优先返回指定 resume_from_step_id，否则返回最早 pending 且非 obsolete 的 step。
+        """兼容旧接口：仅返回依赖感知选择出的步骤行。"""
+        return self.select_next_step(plan_id, branch_version, resume_from_step_id)["step"]
+
+    def select_next_step(self, plan_id: str, branch_version: int = 1, resume_from_step_id: str = None):
+        """依赖感知的取步：返回 {step, blocked_reason, blocked_step_ids}。
+
+        - step: 可执行步骤行（dict）或 None
+        - blocked_step_ids: 因依赖未满足而无法执行的 pending 步骤 id
+        - blocked_reason: 存在依赖失败导致永久阻塞时的结构化原因
         """
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
-                if resume_from_step_id:
-                    cursor.execute("""
-                        SELECT * FROM steps
-                        WHERE plan_id = ? AND step_id = ? AND is_obsolete = 0
-                        ORDER BY step_order ASC
-                        LIMIT 1
-                    """, (plan_id, resume_from_step_id))
-                else:
-                    cursor.execute("""
-                        SELECT * FROM steps
-                        WHERE plan_id = ? AND status = ? AND is_obsolete = 0 AND branch_version = ?
-                        ORDER BY step_order ASC
-                        LIMIT 1
-                    """, (plan_id, StepStatus.PENDING.value, branch_version))
-                row = cursor.fetchone()
-                return dict(row) if row else None
+                # 一次取全计划行：状态解析需要跨 branch（回滚克隆以 parent_step_id
+                # 指回原步骤），排序保证「活动分支、未废弃」的有效状态最后生效。
+                cursor.execute("""
+                    SELECT * FROM steps
+                    WHERE plan_id = ?
+                    ORDER BY is_obsolete DESC, branch_version ASC, step_order ASC
+                """, (plan_id,))
+                rows = [dict(r) for r in cursor.fetchall()]
+
+            if resume_from_step_id:
+                for row in rows:
+                    if str(row["step_id"]) == str(resume_from_step_id) and not row.get("is_obsolete"):
+                        return {"step": row, "blocked_reason": None, "blocked_step_ids": []}
+                return {"step": None, "blocked_reason": None, "blocked_step_ids": []}
+
+            statuses: Dict[str, str] = {}
+            for row in rows:
+                statuses[str(row["step_id"])] = str(row["status"])
+                # 回滚克隆沿用原步骤血缘：依赖原 id 的步骤要能看到克隆行的最新状态。
+                parent = row.get("parent_step_id")
+                if parent:
+                    statuses[str(parent)] = str(row["status"])
+
+            active = [
+                row for row in rows
+                if not row.get("is_obsolete") and int(row.get("branch_version") or 1) == int(branch_version)
+            ]
+            pending = [row for row in active if str(row["status"]) == StepStatus.PENDING.value]
+            if not pending:
+                return {"step": None, "blocked_reason": None, "blocked_step_ids": []}
+
+            blocked: List[str] = []
+            failed_deps: List[str] = []
+            for row in pending:
+                ready, failed, blocking = dependency_statuses(row, statuses)
+                if ready:
+                    return {"step": row, "blocked_reason": None, "blocked_step_ids": blocked}
+                blocked.append(str(row["step_id"]))
+                if failed:
+                    failed_deps.extend(blocking)
+
+            reason = None
+            if failed_deps:
+                reason = f"依赖步骤失败，无法继续: {sorted(set(failed_deps))}"
+            return {"step": None, "blocked_reason": reason, "blocked_step_ids": blocked}
         except Exception as e:
             logger.exception("获取下一个可运行步骤失败: {}", e)
             raise DatabaseError(f"获取下一个可运行步骤失败: {e}") from e
@@ -1043,9 +1170,10 @@ class Database:
                             description, tool, inputs, check_criteria, acceptance_json,
                             outputs, status, executed_at, retry_count,
                             parent_step_id, branch_version, state_snapshot,
-                            compressed_context, duration_ms, failure_reason, is_obsolete
+                            compressed_context, duration_ms, failure_reason, is_obsolete,
+                            depends_on
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         str(uuid.uuid4()),
                         str(row["plan_id"]),
@@ -1067,6 +1195,7 @@ class Database:
                         None,
                         None,
                         0,
+                        row["depends_on"] if "depends_on" in row.keys() else "[]",
                     ))
                 return True
         except Exception as e:
