@@ -272,12 +272,49 @@ class Database:
                 )
             """)
 
+            # Agent 运行记录分层：一次 agent_tool 步骤执行 = 一个 Session，
+            # Session 内每轮模型调用 = 一个 Turn（§8.1 概念分层的第一阶段落地）。
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agent_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    plan_id TEXT,
+                    run_id TEXT,
+                    step_id TEXT,
+                    agent_tool TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'running',
+                    turns_used INTEGER NOT NULL DEFAULT 0,
+                    model_calls INTEGER NOT NULL DEFAULT 0,
+                    tool_calls INTEGER NOT NULL DEFAULT 0,
+                    input_tokens INTEGER NOT NULL DEFAULT 0,
+                    output_tokens INTEGER NOT NULL DEFAULT 0,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    error TEXT
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agent_turns (
+                    turn_row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    turn_no INTEGER NOT NULL,
+                    outcome TEXT NOT NULL DEFAULT 'model_ok',
+                    input_tokens INTEGER NOT NULL DEFAULT 0,
+                    output_tokens INTEGER NOT NULL DEFAULT 0,
+                    duration_ms INTEGER,
+                    detail_json TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES agent_sessions(session_id)
+                )
+            """)
+
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_steps_plan_branch_status_order ON steps(plan_id, branch_version, status, is_obsolete, step_order)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_step_events_plan_event ON step_events(plan_id, event_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_plans_created_at ON plans(created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_plan_timestamp ON audit_logs(plan_id, timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_plan_step ON artifacts(plan_id, step_id, created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_worktrees_plan_status ON worktrees(plan_id, status, created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_sessions_plan ON agent_sessions(plan_id, started_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_turns_session ON agent_turns(session_id, turn_no)")
             conn.commit()
     
     def create_artifact(
@@ -316,6 +353,54 @@ class Database:
         except Exception as e:
             logger.exception("查询产物失败: {}", e)
             raise DatabaseError(f"查询产物失败: {e}") from e
+
+    def store_artifact_content(self, artifact_id: str, content: bytes, *, plan_id: str = None,
+                               run_id: str = None, step_id: str = None, kind: str = "file",
+                               metadata: Dict[str, Any] = None) -> Dict[str, Any]:
+        """产物内容落盘（data/artifacts/）+ SHA-256 登记元数据；返回登记记录。"""
+        import hashlib
+
+        content = bytes(content)
+        content_hash = f"sha256:{hashlib.sha256(content).hexdigest()}"
+        artifacts_root = Path(self.db_path).parent / "artifacts"
+        artifacts_root.mkdir(parents=True, exist_ok=True)
+        safe_id = str(artifact_id).replace("/", "_").replace("\\", "_")
+        content_path = artifacts_root / safe_id
+        content_path.write_bytes(content)
+        uri = f"artifact://{safe_id}"
+        self.create_artifact(
+            artifact_id=safe_id, kind=str(kind), uri=uri,
+            plan_id=plan_id, run_id=run_id, step_id=step_id, content_hash=content_hash,
+            size_bytes=len(content), metadata=metadata,
+        )
+        return {
+            "artifact_id": safe_id, "kind": kind, "uri": uri,
+            "content_hash": content_hash, "size_bytes": len(content),
+            "content_path": str(content_path),
+        }
+
+    def read_artifact_content(self, artifact_id: str) -> Optional[bytes]:
+        """读取产物内容；未登记或文件缺失返回 None。"""
+        record = self.get_artifact(artifact_id)
+        if not record:
+            return None
+        safe_id = str(artifact_id).replace("/", "_").replace("\\", "_")
+        content_path = Path(self.db_path).parent / "artifacts" / safe_id
+        if not content_path.exists():
+            # 元数据存在但内容未入库（例如仅登记了外部路径引用）
+            return None
+        return content_path.read_bytes()
+
+    def verify_artifact_hash(self, artifact_id: str) -> Optional[bool]:
+        """校验内容与登记哈希一致；无法校验返回 None。"""
+        record = self.get_artifact(artifact_id)
+        content = self.read_artifact_content(artifact_id)
+        if not record or content is None or not record.get("content_hash"):
+            return None
+        import hashlib
+
+        actual = f"sha256:{hashlib.sha256(content).hexdigest()}"
+        return actual == record["content_hash"]
 
     def list_artifacts(self, plan_id: str = None, step_id: str = None) -> List[Dict[str, Any]]:
         try:
@@ -411,6 +496,173 @@ class Database:
         except Exception as e:
             logger.exception("更新 worktree 终态失败: {}", e)
             raise DatabaseError(f"更新 worktree 终态失败: {e}") from e
+
+    # ===== Agent Session / Turn 运行记录（§8.1 分层第一阶段）=====
+
+    def create_agent_session(
+        self, session_id: str, plan_id: str = None, run_id: str = None,
+        step_id: str = None, agent_tool: str = "coding_agent",
+    ) -> bool:
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                conn.execute("""
+                    INSERT INTO agent_sessions
+                    (session_id, plan_id, run_id, step_id, agent_tool, status, started_at)
+                    VALUES (?, ?, ?, ?, ?, 'running', ?)
+                """, (str(session_id), plan_id, run_id, step_id, str(agent_tool),
+                      datetime.utcnow().isoformat()))
+                return True
+        except Exception as e:
+            logger.exception("登记 agent session 失败: {}", e)
+            raise DatabaseError(f"登记 agent session 失败: {e}") from e
+
+    def finish_agent_session(
+        self, session_id: str, status: str, turns_used: int = 0,
+        model_calls: int = 0, tool_calls: int = 0, input_tokens: int = 0,
+        output_tokens: int = 0, error: str = None,
+    ) -> bool:
+        """Session 终态收敛（usage 取 Grant 聚合值，涵盖全部轮次）。"""
+        if status not in ("completed", "failed"):
+            logger.warning("拒绝非法 agent session 终态: {!r}", status)
+            return False
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.execute("""
+                    UPDATE agent_sessions
+                    SET status = ?, turns_used = ?, model_calls = ?, tool_calls = ?,
+                        input_tokens = ?, output_tokens = ?, error = ?, finished_at = ?
+                    WHERE session_id = ?
+                """, (status, int(turns_used), int(model_calls), int(tool_calls),
+                      int(input_tokens), int(output_tokens),
+                      str(error)[:2000] if error else None,
+                      datetime.utcnow().isoformat(), str(session_id)))
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.exception("收尾 agent session 失败: {}", e)
+            raise DatabaseError(f"收尾 agent session 失败: {e}") from e
+
+    def record_agent_turn(
+        self, session_id: str, turn_no: int, outcome: str = "model_ok",
+        input_tokens: int = 0, output_tokens: int = 0,
+        duration_ms: int = None, detail: Dict[str, Any] = None,
+    ) -> int:
+        """记录一轮模型调用，返回 turn_row_id 供后续回写 outcome。"""
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.execute("""
+                    INSERT INTO agent_turns
+                    (session_id, turn_no, outcome, input_tokens, output_tokens,
+                     duration_ms, detail_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (str(session_id), int(turn_no), str(outcome),
+                      int(input_tokens), int(output_tokens), duration_ms,
+                      json.dumps(detail or {}, ensure_ascii=False),
+                      datetime.utcnow().isoformat()))
+                return cursor.lastrowid
+        except Exception as e:
+            logger.exception("记录 agent turn 失败: {}", e)
+            raise DatabaseError(f"记录 agent turn 失败: {e}") from e
+
+    def update_agent_turn_outcome(self, turn_row_id: int, outcome: str, detail: Dict[str, Any] = None) -> bool:
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                if detail is not None:
+                    cursor = conn.execute(
+                        "UPDATE agent_turns SET outcome = ?, detail_json = ? WHERE turn_row_id = ?",
+                        (str(outcome), json.dumps(detail, ensure_ascii=False), int(turn_row_id)),
+                    )
+                else:
+                    cursor = conn.execute(
+                        "UPDATE agent_turns SET outcome = ? WHERE turn_row_id = ?",
+                        (str(outcome), int(turn_row_id)),
+                    )
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.exception("更新 agent turn 结果失败: {}", e)
+            raise DatabaseError(f"更新 agent turn 结果失败: {e}") from e
+
+    def list_agent_sessions(self, plan_id: str = None, step_id: str = None, limit: int = 100) -> List[Dict[str, Any]]:
+        try:
+            with closing(self._get_connection()) as conn:
+                query = "SELECT * FROM agent_sessions WHERE 1=1"
+                params: List[Any] = []
+                if plan_id is not None:
+                    query += " AND plan_id = ?"
+                    params.append(str(plan_id))
+                if step_id is not None:
+                    query += " AND step_id = ?"
+                    params.append(str(step_id))
+                query += " ORDER BY started_at DESC LIMIT ?"
+                params.append(int(limit))
+                return [dict(r) for r in conn.execute(query, params).fetchall()]
+        except Exception as e:
+            logger.exception("列出 agent sessions 失败: {}", e)
+            raise DatabaseError(f"列出 agent sessions 失败: {e}") from e
+
+    def list_agent_turns(self, session_id: str) -> List[Dict[str, Any]]:
+        try:
+            with closing(self._get_connection()) as conn:
+                rows = conn.execute(
+                    "SELECT * FROM agent_turns WHERE session_id = ? ORDER BY turn_no ASC",
+                    (str(session_id),),
+                ).fetchall()
+                result = []
+                for row in rows:
+                    item = dict(row)
+                    item["detail"] = json.loads(item.pop("detail_json") or "{}")
+                    result.append(item)
+                return result
+        except Exception as e:
+            logger.exception("列出 agent turns 失败: {}", e)
+            raise DatabaseError(f"列出 agent turns 失败: {e}") from e
+
+    # ===== 动态重规划：插入修复步骤 + 依赖改写 =====
+
+    def insert_repair_step(
+        self, plan_id: str, branch_version: int, segment_id: str,
+        step_id: str, step_order: int, description: str, tool: str,
+        inputs: Dict[str, Any], acceptance: List[Dict[str, Any]],
+        depends_on: List[str], check_criteria: str = "手动检查",
+    ) -> bool:
+        """把动态重规划生成的修复步骤写入指定分支（Pending）。"""
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                conn.execute("""
+                    INSERT INTO steps (
+                        step_id, plan_id, segment_id, step_order,
+                        description, tool, inputs, check_criteria, acceptance_json,
+                        outputs, status, executed_at, retry_count,
+                        parent_step_id, branch_version, state_snapshot,
+                        compressed_context, duration_ms, failure_reason, is_obsolete,
+                        depends_on
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'Pending', NULL, 0,
+                            NULL, ?, NULL, NULL, NULL, NULL, 0, ?)
+                """, (
+                    str(step_id), str(plan_id), str(segment_id), int(step_order),
+                    str(description), str(tool),
+                    json.dumps(inputs or {}, ensure_ascii=False), str(check_criteria),
+                    json.dumps(acceptance or [], ensure_ascii=False),
+                    int(branch_version),
+                    json.dumps(list(depends_on or []), ensure_ascii=False),
+                ))
+                return True
+        except Exception as e:
+            logger.exception("插入修复步骤失败: {}", e)
+            raise DatabaseError(f"插入修复步骤失败: {e}") from e
+
+    def update_step_dependencies(self, step_id: str, depends_on: List[str]) -> bool:
+        """改写步骤的依赖列表（动态重规划：把重跑点挂在修复链之后）。"""
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.execute(
+                    "UPDATE steps SET depends_on = ? WHERE step_id = ?",
+                    (json.dumps(list(depends_on or []), ensure_ascii=False), str(step_id)),
+                )
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.exception("更新步骤依赖失败: {}", e)
+            raise DatabaseError(f"更新步骤依赖失败: {e}") from e
 
     def save_design(self, design: DesignDocument) -> bool:
         """保存设计书"""

@@ -416,6 +416,35 @@ async def lifespan(app: FastAPI):
                 database=state.database,
             )
         )
+        # review / diagnosis Agent（单轮，Grant 受限，复用同一 Capability 管道）
+        from agent_tools import SingleTurnAgentTool
+        state.capability_registry.register(
+            SingleTurnAgentTool(
+                agent_id="review_agent",
+                description=(
+                    "代码审查 Agent：审查指定文件或变更，输出结构化 review 报告"
+                    "（status/issues[{severity,title,detail}]/conclusion）。inputs: {path}"
+                ),
+                llm_client=state.llm_client,
+                authorization_manager=state.authorization_manager,
+                provider_name=executor_primary.get("provider", ""),
+                model=executor_primary.get("model", ""),
+            )
+        )
+        state.capability_registry.register(
+            SingleTurnAgentTool(
+                agent_id="diagnosis_agent",
+                description=(
+                    "故障诊断 Agent：基于失败步骤与失败原因输出结构化诊断"
+                    "（status/root_cause_hypotheses/recommended_action(retry|repair|manual|replan)）。"
+                    "inputs: {step_description, failure_reason, tool}"
+                ),
+                llm_client=state.llm_client,
+                authorization_manager=state.authorization_manager,
+                provider_name=executor_primary.get("provider", ""),
+                model=executor_primary.get("model", ""),
+            )
+        )
         state.executor.capability_registry = state.capability_registry
 
         logger.info("EAS 2.0 API 服务启动成功")
@@ -978,6 +1007,78 @@ async def get_run_attempts(run_id: str, limit: int = 500):
     for attempt in attempts:
         attempt.pop("owner_token", None)
     return {"success": True, "attempts": attempts}
+
+
+@app.get("/api/agent-sessions", dependencies=[Depends(require_token)])
+async def list_agent_sessions(plan_id: Optional[str] = None, step_id: Optional[str] = None, limit: int = 100):
+    """Agent 运行记录（Session 层）：每次 agent_tool 步骤执行一条。"""
+    sessions = state.database.list_agent_sessions(plan_id=plan_id, step_id=step_id, limit=limit)
+    return {"success": True, "sessions": sessions}
+
+
+@app.get("/api/agent-sessions/{session_id}/turns", dependencies=[Depends(require_token)])
+async def get_agent_session_turns(session_id: str):
+    """Agent 运行记录（Turn 层）：一次 session 内逐轮模型调用与结果。"""
+    sessions = state.database.list_agent_sessions(limit=1000)
+    if not any(s["session_id"] == session_id for s in sessions):
+        raise HTTPException(status_code=404, detail="agent session 不存在")
+    return {"success": True, "turns": state.database.list_agent_turns(session_id)}
+
+
+@app.get("/api/artifacts", dependencies=[Depends(require_token)])
+async def list_artifacts(plan_id: Optional[str] = None, step_id: Optional[str] = None):
+    """产物元数据列表（内容通过 /api/artifacts/{id}/content 拉取）。"""
+    return {"success": True, "artifacts": state.database.list_artifacts(plan_id=plan_id, step_id=step_id)}
+
+
+@app.get("/api/artifacts/{artifact_id}", dependencies=[Depends(require_token)])
+async def get_artifact(artifact_id: str):
+    artifact = state.database.get_artifact(artifact_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="产物不存在")
+    return {"success": True, "artifact": artifact}
+
+
+@app.get("/api/artifacts/{artifact_id}/content", dependencies=[Depends(require_token)])
+async def get_artifact_content(artifact_id: str):
+    """拉取产物内容（未入库的外部引用返回 404 与说明）。"""
+    content = state.database.read_artifact_content(artifact_id)
+    if content is None:
+        artifact = state.database.get_artifact(artifact_id)
+        if not artifact:
+            raise HTTPException(status_code=404, detail="产物不存在")
+        raise HTTPException(status_code=404, detail="产物内容未入库（仅登记了外部引用）")
+    from fastapi.responses import Response
+    return Response(content=content, media_type="application/octet-stream",
+                    headers={"X-Artifact-Id": artifact_id})
+
+
+@app.post("/api/artifacts", dependencies=[Depends(require_token)])
+async def create_artifact(request: Dict[str, Any]):
+    """登记产物：支持纯引用（uri）或直接携带内容入库（content 文本，SHA-256 落盘）。"""
+    body = request or {}
+    kind = str(body.get("kind") or "file")
+    artifact_id = str(body.get("artifact_id") or uuid4())
+    content = body.get("content")
+    if content is not None:
+        if isinstance(content, str):
+            content_bytes = content.encode("utf-8")
+        else:
+            raise HTTPException(status_code=400, detail="content 必须是文本")
+        record = state.database.store_artifact_content(
+            artifact_id, content_bytes, plan_id=body.get("plan_id"),
+            step_id=body.get("step_id"), kind=kind, metadata=body.get("metadata"),
+        )
+        return {"success": True, "artifact": record}
+    uri = str(body.get("uri") or "").strip()
+    if not uri:
+        raise HTTPException(status_code=400, detail="缺少 uri 或 content")
+    state.database.create_artifact(
+        artifact_id=artifact_id, kind=kind, uri=uri,
+        plan_id=body.get("plan_id"), step_id=body.get("step_id"),
+        content_hash=body.get("content_hash"), metadata=body.get("metadata"),
+    )
+    return {"success": True, "artifact": state.database.get_artifact(artifact_id)}
 
 
 
@@ -1600,6 +1701,71 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
     return result
 
 
+async def _generate_final_report(plan, run_id: str = None) -> None:
+    """计划 Completed 后生成最终交付报告（Designer LLM），落 artifacts 表。
+
+    fail-open：Designer 缺失或 LLM 失败只记日志，绝不影响收尾状态。
+    """
+    try:
+        if state.designer is None or state.llm_client is None:
+            return
+        results = [step for segment in plan.segments for step in segment.steps]
+        summary = await state.designer.generate_summary(plan, results)
+        if not summary or not str(summary).strip():
+            return
+        record = state.database.store_artifact_content(
+            artifact_id=f"report-{str(plan.plan_id)[:8]}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+            content=str(summary).encode("utf-8"),
+            plan_id=str(plan.plan_id),
+            run_id=run_id,
+            kind="delivery_report",
+            metadata={"source": "final_report", "plan_status": "Completed"},
+        )
+        await broadcast_log(f"[REPORT] 最终交付报告已生成: {record['artifact_id']}", "success")
+    except Exception as report_exc:
+        logger.warning("最终交付报告生成失败（忽略）: {}", report_exc)
+
+
+def _register_step_artifacts(plan_id: str, step_id: str, result: Dict[str, Any]) -> None:
+    """步骤成功后把产物引用登记进 artifacts 表（仅元数据，不拷贝内容）。
+
+    收集来源：工具输出的 path（file_creator/text_editor 类）、agent 的
+    file:// 产物引用。登记失败只降级（观察性），绝不影响执行主链路。
+    """
+    try:
+        candidates: List[str] = []
+        output = result.get("output")
+        if isinstance(output, dict):
+            p = output.get("path")
+            if isinstance(p, str) and p.strip():
+                candidates.append(p.strip())
+        for ref in (result.get("agent_artifacts") or []):
+            if isinstance(ref, str) and ref.startswith("file://"):
+                candidates.append(ref[len("file://"):])
+        seen = set()
+        for path_text in candidates:
+            normalized = path_text.replace("\\", "/")
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            try:
+                p = Path(path_text)
+                size = p.stat().st_size if p.exists() else None
+            except OSError:
+                size = None
+            state.database.create_artifact(
+                artifact_id=f"{plan_id[:8]}-{step_id[:8]}-{len(seen)}-{normalized.replace('/', '_')[-60:]}",
+                kind="file",
+                uri=f"file://{normalized}",
+                plan_id=plan_id,
+                step_id=step_id,
+                size_bytes=size,
+                metadata={"source": "step_execution"},
+            )
+    except Exception as register_exc:
+        logger.warning("步骤产物登记失败（忽略）: {}", register_exc)
+
+
 async def _execute_step_to_completion(
     plan,
     step,
@@ -1865,6 +2031,7 @@ async def _execute_step_to_completion(
             ):
                 logger.warning("step_event success 写入失败: {}", step_id)
             await broadcast_plan_update(str(plan.plan_id))
+            _register_step_artifacts(str(plan.plan_id), step_id, result)
             return "continue", step_id
 
         attempt += 1
@@ -1896,6 +2063,7 @@ async def _execute_step_to_completion(
 
     # 成功但未校验：视为完成，继续执行后续步骤
     await broadcast_log(f"[OK] 步骤 {step_id} 完成（未校验）", "success")
+    _register_step_artifacts(str(plan.plan_id), step_id, result)
     return "continue", step_id
 
 
@@ -2101,6 +2269,7 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
                 await broadcast_plan_update(str(plan.plan_id))
                 await broadcast_log(f"计划执行完成: {plan.plan_id}", "success")
                 debug_log(f"Plan {plan.plan_id} execution COMPLETED")
+                await _generate_final_report(plan, run_id)
                 break
 
             # 本轮一旦取出断点，后续步骤按普通 pending 语义继续；失败时会重新保存
@@ -2160,6 +2329,7 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
                 )
                 await broadcast_plan_update(str(plan.plan_id))
                 await broadcast_log(f"计划执行完成: {plan.plan_id}", "success")
+                await _generate_final_report(plan, run_id)
 
     except Exception as e:
         debug_log(f"EXCEPTION in execute_plan_background: {e}")
@@ -2530,6 +2700,199 @@ async def discard_plan_worktree(plan_id: str):
     except Exception as e:
         logger.exception("丢弃 worktree 失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===== 动态重规划：失败计划生成修复步骤并挂入图（Level-3 介入的落地形态）=====
+
+@app.post("/api/plan/{plan_id}/replan", dependencies=[Depends(require_token)])
+async def replan_plan(plan_id: str):
+    """对 Failed 计划做局部重规划。
+
+    语义（依赖驱动，不重排既有 order）：
+    - 锚点 = resume_from_step_id 或第一个活动失败步骤 F；
+    - 有前驱 P：回滚到 P（F 及之后的步骤克隆到新分支，Pending），
+      修复步骤 R1..Rn 依赖链挂在 P 之后；F 的克隆依赖追加 Rn（先修复再重跑）；
+    - 无前驱（F 即首步）：不回滚，F 置回 Pending，R 链挂在 F 之前（F 依赖追加 Rn）；
+    - 修复步骤由 Designer 基于失败上下文生成，复用计划契约校验，fail-closed；
+    - 旧线性计划在追加依赖后显式化克隆链顺序，避免隐式链失效导致乱序；
+    - 成功后计划转 Pending（新分支），由用户重新 /execute。
+    """
+    try:
+        plan = state.database.get_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="执行计划不存在")
+        current_status = state.database.get_plan_status(plan_id)
+        if current_status != "Failed":
+            raise HTTPException(
+                status_code=409,
+                detail=f"只能对 Failed 计划做重规划，当前状态: {current_status}",
+            )
+
+        branch_version = getattr(plan, "current_branch", 1) or 1
+        all_steps = state.database.get_steps(plan_id)
+        active_rows = [
+            r for r in all_steps
+            if not r.get("is_obsolete") and int(r.get("branch_version") or 1) == branch_version
+        ]
+        failed_rows = [r for r in active_rows if r["status"] == "Failed"]
+        anchor_id = (
+            str(getattr(plan, "resume_from_step_id", None))
+            if getattr(plan, "resume_from_step_id", None)
+            else (str(failed_rows[0]["step_id"]) if failed_rows else None)
+        )
+        if not anchor_id:
+            raise HTTPException(status_code=409, detail="计划中没有失败步骤可重规划")
+        anchor = next(r for r in all_steps if str(r["step_id"]) == anchor_id)
+        anchor_order = int(anchor["step_order"])
+
+        same_branch = [
+            r for r in active_rows
+            if int(r.get("branch_version") or 1) == branch_version
+        ]
+        predecessors = [r for r in same_branch if int(r["step_order"]) < anchor_order]
+        predecessor = max(predecessors, key=lambda r: int(r["step_order"])) if predecessors else None
+
+        new_branch = branch_version + 1
+        if predecessor is not None:
+            target = str(predecessor["step_id"])
+            if not state.database.clone_steps_from(plan_id, target, new_branch):
+                raise HTTPException(status_code=500, detail="克隆失败步骤链失败")
+            state.database.mark_steps_obsolete(plan_id, target, branch_version)
+            clone_rows = [
+                r for r in state.database.get_steps(plan_id)
+                if int(r.get("branch_version") or 1) == new_branch and not r.get("is_obsolete")
+            ]
+            clone_rows.sort(key=lambda r: int(r["step_order"]))
+            anchor_clone = next(
+                (r for r in clone_rows if r.get("parent_step_id") == anchor_id), None
+            )
+        else:
+            target = anchor_id
+            clone_rows = []
+            anchor_clone = anchor  # 无前驱：F 原地置回 Pending
+
+        has_explicit_graph = any(
+            str(r.get("depends_on") or "").strip() not in ("", "[]", "null")
+            for r in same_branch
+        )
+
+        # Designer 生成修复步骤（契约校验 fail-closed）
+        _design = state.database.get_design(str(plan.design_id))
+        anchor_deps_raw = json.loads(anchor["depends_on"]) if anchor.get("depends_on") else []
+        failed_inputs = anchor.get("inputs")
+        if isinstance(failed_inputs, str):
+            try:
+                failed_inputs = json.loads(failed_inputs)
+            except (ValueError, TypeError):
+                failed_inputs = {}
+        repair_steps = await state.designer.generate_repair_steps(
+            failed_step={
+                "description": anchor.get("description", ""),
+                "tool": anchor.get("tool", ""),
+                "inputs": failed_inputs or {},
+            },
+            failure_reason=anchor.get("failure_reason") or "未知原因",
+            user_request=str(_design.user_request) if _design else "",
+        )
+
+        # ===== 在内存中构造最终依赖计划，再统一写库 =====
+        # R 链：R1 挂在其前置（P 或就绪即跑）之后，Ri 依赖 R(i-1)；
+        # F 重跑点依赖追加 Rn（先修复再重跑）；
+        # 旧线性计划追加依赖后隐式链失效 → 克隆链显式化（按 order 顺序链接）。
+        max_order = max((int(r["step_order"]) for r in all_steps), default=0)
+        segment_id = str(anchor.get("segment_id") or uuid4())
+        p_id = str(predecessor["step_id"]) if predecessor is not None else None
+        repair_ids: List[str] = []
+        prev_id = p_id
+        repair_branch = new_branch if predecessor is not None else branch_version
+        for i, rs in enumerate(repair_steps):
+            sid = str(uuid4())
+            deps = [prev_id] if prev_id else []
+            ok = state.database.insert_repair_step(
+                plan_id=plan_id,
+                branch_version=repair_branch,
+                segment_id=segment_id,
+                step_id=sid,
+                step_order=max_order + 1 + i,
+                description=str(rs.get("description", "修复步骤")),
+                tool=str(rs.get("tool", "manual_tool")),
+                inputs=rs.get("inputs") or {},
+                acceptance=rs.get("acceptance") or [],
+                depends_on=deps,
+            )
+            if not ok:
+                raise HTTPException(status_code=500, detail="修复步骤写入失败")
+            repair_ids.append(sid)
+            prev_id = sid
+        last_repair_id = repair_ids[-1] if repair_ids else None
+        f_deps = list(anchor_deps_raw) + ([last_repair_id] if last_repair_id else [])
+
+        if predecessor is not None:
+            anchor_clone_id = str(anchor_clone["step_id"]) if anchor_clone else None
+            if not has_explicit_graph:
+                # legacy 链显式化：F' = [P] + 原deps + [Rn]；其余克隆行按 order 链接
+                chain_prev = None
+                for row in clone_rows:
+                    rid = str(row["step_id"])
+                    if rid == anchor_clone_id:
+                        deps = ([p_id] if p_id else []) + f_deps
+                    else:
+                        deps = [chain_prev] if chain_prev else ([p_id] if p_id else [])
+                    state.database.update_step_dependencies(rid, deps)
+                    chain_prev = rid
+            else:
+                # 显式图：F' 追加 Rn；其余克隆行保留原依赖（父映射解析）
+                if anchor_clone_id:
+                    state.database.update_step_dependencies(anchor_clone_id, f_deps)
+        else:
+            # 无前驱（F 即首步）：F 原地置回 Pending，依赖追加 Rn；
+            # legacy 隐式链显式化：F 之后的同分支未完成步骤按 order 链接。
+            state.database.update_step_dependencies(anchor_id, f_deps)
+            state.database.update_step(anchor_id, "Pending")
+            if not has_explicit_graph:
+                followers = [
+                    r for r in same_branch
+                    if int(r["step_order"]) > anchor_order
+                    and r["status"] in (StepStatus.PENDING.value, StepStatus.RETRY.value)
+                ]
+                followers.sort(key=lambda r: int(r["step_order"]))
+                chain_prev = anchor_id
+                for row in followers:
+                    state.database.update_step_dependencies(str(row["step_id"]), [chain_prev])
+                    chain_prev = str(row["step_id"])
+
+        state.database.clear_plan_checkpoint(plan_id)
+        _require_write(
+            state.database.update_plan_state_machine(
+                plan_id, PlanStatus.PENDING.value, current_branch=new_branch,
+            ),
+            f"计划 {plan_id} 状态 → Pending（重规划，新分支 {new_branch}）",
+        )
+        state.database.add_step_event(
+            anchor_id, plan_id, "replanned",
+            {"repair_steps": len(repair_steps), "new_branch": new_branch,
+             "anchor": anchor_id, "strategy": "repair_before_retry"},
+            branch_version=new_branch,
+        )
+        await broadcast_plan_update(plan_id)
+        await broadcast_log(
+            f"[REPLAN] 计划 {plan_id} 重规划完成：插入 {len(repair_steps)} 个修复步骤（分支 {new_branch}），"
+            "可重新执行", "warning",
+        )
+        return {
+            "success": True,
+            "new_branch": new_branch,
+            "repair_steps": len(repair_steps),
+            "anchor": anchor_id,
+        }
+    except HTTPException:
+        raise
+    except GenerationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        logger.exception("重规划失败: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.get("/api/audit-logs", dependencies=[Depends(require_token)])

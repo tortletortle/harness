@@ -622,6 +622,80 @@ class DefaultDesigner(Designer):
             # 修订失败必须显式暴露：静默返回原设计书会让用户以为反馈已生效。
             raise GenerationError(f"设计书修订失败: {e}") from e
     
+    async def generate_repair_steps(self, failed_step: Dict[str, Any], failure_reason: str,
+                                    user_request: str = "") -> List[Dict[str, Any]]:
+        """动态重规划：基于失败上下文生成 1-3 个修复步骤（在重跑失败步骤之前执行）。
+
+        输出步骤复用计划生成同款契约校验（agent/工具轻契约 + 验收白名单），
+        fail-closed：无法生成合法步骤时抛 GenerationError，由调用方保持 Failed。
+        """
+        system_prompt = """你是修复规划专家。执行计划中某步骤失败，需要生成修复步骤（在重跑失败步骤之前执行）。
+
+❗ 只返回 JSON，不要解释文字：
+{"steps": [{"description": "…", "tool": "…", "inputs": {…}, "acceptance": [{…}]}]}
+
+约束：
+1. 只生成 1-3 个步骤；修复"前置条件缺失/环境问题"，不要重复失败步骤本身的目标
+2. 允许的工具：file_creator（创建缺失文件/目录）、coding_agent（修改已存在代码文件，inputs 必含 path/instruction/allowed_tools=["text_editor"]）、test_runner（inputs 必含 suite）、lint_gate（inputs 必含 path）
+3. 每步必须携带非空 acceptance（file_exists / content_contains / exit_code / test_passes）
+4. description 控制在 20 字以内
+"""
+        user_content = f"""**用户目标：**
+{user_request or "（未提供）"}
+
+**失败步骤：**
+- 描述：{failed_step.get('description', '')}
+- 工具：{failed_step.get('tool', '')}
+- 输入：{failed_step.get('inputs', {})}
+
+**失败原因：**
+{failure_reason}
+
+请生成修复步骤。"""
+
+        max_retries = 2
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                response = await self.llm_client.chat(
+                    provider_name=self.model_config["primary"]["provider"],
+                    messages=[
+                        Message(role="system", content=system_prompt),
+                        Message(role="user", content=user_content),
+                    ],
+                    model=self.model_config["primary"]["model"],
+                    temperature=0.1,
+                    max_tokens=2000,
+                )
+                text = response.content.strip()
+                from utils.json_fixer import JSONFixer, validate_agent_steps, validate_tool_contracts
+                data, error = JSONFixer.fix_json(text)
+                if data is None:
+                    last_error = f"修复步骤 JSON 解析失败: {error}"
+                    logger.error("{}", last_error)
+                    continue
+                steps = data.get("steps")
+                if not isinstance(steps, list) or not (1 <= len(steps) <= 3):
+                    last_error = f"修复步骤数量非法: {steps!r}"
+                    logger.error("{}", last_error)
+                    continue
+                wrapped = {"segments": [{"description": "repair", "steps": steps}]}
+                agent_ok, agent_err = validate_agent_steps(wrapped)
+                if not agent_ok:
+                    last_error = f"修复步骤契约校验失败: {agent_err}"
+                    logger.error("{}", last_error)
+                    continue
+                tool_ok, tool_err = validate_tool_contracts(wrapped)
+                if not tool_ok:
+                    last_error = f"修复步骤工具契约校验失败: {tool_err}"
+                    logger.error("{}", last_error)
+                    continue
+                return steps
+            except Exception as e:
+                last_error = str(e)
+                logger.error("生成修复步骤失败: {}", e)
+        raise GenerationError(f"修复步骤生成失败: {last_error}")
+
     async def generate_plan(self, design: DesignDocument, project_memory: str = "") -> ExecutionPlan:
         """生成执行计划（带重试机制）"""
         

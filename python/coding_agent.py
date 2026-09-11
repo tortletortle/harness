@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from agent_tools import AgentRuntimeContext, BaseAgentTool, _parse_result
@@ -110,6 +112,48 @@ class CodingAgentTool(BaseAgentTool):
             {"key": "coding_agent_output_mode", "value": output_mode},
         ]
 
+        # Session/Turn 记录（§8.1 分层）：一次 run = 一个 session，每轮模型调用 = 一个 turn。
+        # 记录失败只降级（观察性分层），绝不影响执行主链路。
+        session_id = str(uuid.uuid4())
+        session_open = False
+        if self.database is not None:
+            try:
+                self.database.create_agent_session(
+                    session_id=session_id,
+                    plan_id=getattr(context, "plan_id", "") or request.work_item_id,
+                    step_id=str(request.work_item_id or ""),
+                    agent_tool=self.agent_id,
+                )
+                session_open = True
+                facts.append({"key": "agent_session_id", "value": session_id})
+            except Exception:
+                session_open = False
+
+        def _turn_outcome(turn_row: Optional[int], outcome: str, detail: Optional[Dict[str, Any]] = None) -> None:
+            if turn_row is None:
+                return
+            try:
+                self.database.update_agent_turn_outcome(turn_row, outcome, detail)
+            except Exception:
+                pass
+
+        def _finish_session(status: str, turns: int, error: Optional[str] = None) -> None:
+            if not session_open:
+                return
+            try:
+                grant_now = context.authorization_manager.get(context.grant_id)
+                usage = grant_now.usage() if grant_now else {}
+                self.database.finish_agent_session(
+                    session_id=session_id, status=status, turns_used=turns,
+                    model_calls=int(usage.get("model_calls") or 0),
+                    tool_calls=int(usage.get("tool_calls") or 0),
+                    input_tokens=int(usage.get("input_tokens") or 0),
+                    output_tokens=int(usage.get("output_tokens") or 0),
+                    error=error,
+                )
+            except Exception:
+                pass
+
         # P2 反馈回路：执行器的验收缺口通过 inputs.feedback 注入首轮提示词
         feedback = str(inputs.get("feedback") or "")
         last_test_exit: Optional[int] = None
@@ -176,6 +220,7 @@ class CodingAgentTool(BaseAgentTool):
                 context.grant_id,
             )
             try:
+                started_at = time.monotonic()
                 response = await client.chat(
                     provider_name=context.provider_name,
                     messages=messages,
@@ -185,9 +230,27 @@ class CodingAgentTool(BaseAgentTool):
                 )
                 response_content = response.content
             except PermissionError as exc:
+                if session_open:
+                    try:
+                        self.database.record_agent_turn(
+                            session_id, turn, outcome="model_denied",
+                            detail={"error": str(exc)[:500]},
+                        )
+                    except Exception:
+                        pass
+                    _finish_session("failed", turns_used, error=str(exc))
                 facts.append({"key": "coding_agent_turns_used", "value": turns_used})
                 return CapabilityResult(status="failed", error=str(exc), facts=facts)
             except Exception as exc:
+                if session_open:
+                    try:
+                        self.database.record_agent_turn(
+                            session_id, turn, outcome="model_error",
+                            detail={"error": str(exc)[:500]},
+                        )
+                    except Exception:
+                        pass
+                    _finish_session("failed", turns_used, error=f"coding_agent 模型调用失败: {exc}")
                 facts.append({"key": "coding_agent_turns_used", "value": turns_used})
                 return CapabilityResult(
                     status="failed",
@@ -195,17 +258,34 @@ class CodingAgentTool(BaseAgentTool):
                     facts=facts,
                 )
 
+            # Turn 记录：每轮一次模型调用即一条；后续失败分支回写 outcome。
+            turn_row = None
+            if session_open:
+                turn_usage = response.usage if isinstance(response.usage, dict) else {}
+                try:
+                    turn_row = self.database.record_agent_turn(
+                        session_id, turn, outcome="model_ok",
+                        input_tokens=int(turn_usage.get("prompt_tokens") or turn_usage.get("input_tokens") or 0),
+                        output_tokens=int(turn_usage.get("completion_tokens") or turn_usage.get("output_tokens") or 0),
+                        duration_ms=int((time.monotonic() - started_at) * 1000),
+                        detail={"mode": output_mode},
+                    )
+                except Exception:
+                    turn_row = None
+
             # ---- 输出解析：patch 模式（动作 A：代码内容不进 JSON）与 full 模式分叉 ----
             if output_mode == "patch":
                 from patcher import apply_patches, error_feedback_text
                 pr = apply_patches(current_content if read_status == "ok" else None, response_content)
                 if not pr.ok:
                     err = pr.error
+                    _turn_outcome(turn_row, "patch_error", {"kind": err.kind, "message": err.message})
                     if turn < max_turns:
                         # 补丁错误作为反馈进入下一轮；消息回填统一由循环顶部完成
                         feedback = error_feedback_text(pr) or err.message
                         facts.append({"key": f"coding_agent_turn{turn}_patch_error", "value": err.kind})
                         continue
+                    _finish_session("failed", turns_used, error=f"第 {turn} 轮补丁未应用: {err.message}")
                     facts.append({"key": "coding_agent_turns_used", "value": turns_used})
                     return CapabilityResult(
                         status="failed",
@@ -224,6 +304,8 @@ class CodingAgentTool(BaseAgentTool):
                         parsed = repaired
                         facts.append({"key": "coding_agent_json_repaired", "value": f"turn{turn}"})
                 if parsed is None:
+                    _turn_outcome(turn_row, "json_error")
+                    _finish_session("failed", turns_used, error=f"第 {turn} 轮返回不是合法 JSON")
                     facts.append({"key": "coding_agent_turns_used", "value": turns_used})
                     return CapabilityResult(
                         status="failed",
@@ -239,6 +321,8 @@ class CodingAgentTool(BaseAgentTool):
                     proposed_path = None
                     new_content = output
                 else:
+                    _turn_outcome(turn_row, "invalid_output")
+                    _finish_session("failed", turns_used, error=f"第 {turn} 轮输出缺少 content 字段")
                     facts.append({"key": "coding_agent_turns_used", "value": turns_used})
                     return CapabilityResult(
                         status="failed",
@@ -246,6 +330,8 @@ class CodingAgentTool(BaseAgentTool):
                         facts=facts,
                     )
                 if not isinstance(new_content, str):
+                    _turn_outcome(turn_row, "invalid_output")
+                    _finish_session("failed", turns_used, error=f"第 {turn} 轮的 content 不是字符串")
                     facts.append({"key": "coding_agent_turns_used", "value": turns_used})
                     return CapabilityResult(
                         status="failed",
@@ -255,6 +341,8 @@ class CodingAgentTool(BaseAgentTool):
 
                 # 写入位置由 Runtime 决定；模型声明的 path 只能与目标一致。
                 if proposed_path and str(proposed_path).replace("\\", "/") != target_path.replace("\\", "/"):
+                    _turn_outcome(turn_row, "path_redirect", {"proposed": str(proposed_path)})
+                    _finish_session("failed", turns_used, error=f"模型试图写入非授权路径: {proposed_path}")
                     facts.append({"key": "coding_agent_turns_used", "value": turns_used})
                     return CapabilityResult(
                         status="failed",
@@ -265,6 +353,7 @@ class CodingAgentTool(BaseAgentTool):
             # ---- 空内容防护：向已有文件写入空内容是破坏性操作 ----
             if isinstance(new_content, str) and not new_content.strip():
                 if turn < max_turns:
+                    _turn_outcome(turn_row, "empty_rejected")
                     if output_mode == "patch":
                         feedback = (
                             f"第 {turn} 轮的补丁会把目标文件清空，已被拒绝。"
@@ -277,6 +366,8 @@ class CodingAgentTool(BaseAgentTool):
                         )
                     # 消息回填统一交给循环顶部（此处重复追加会让 assistant 消息出现两次）
                     continue
+                _turn_outcome(turn_row, "empty_rejected_final")
+                _finish_session("failed", turns_used, error=f"第 {turn} 轮输出为空内容，已拒绝写入（文件保持原状）")
                 facts.append({"key": "coding_agent_turns_used", "value": turns_used})
                 return CapabilityResult(
                     status="failed",
@@ -290,12 +381,15 @@ class CodingAgentTool(BaseAgentTool):
                 {"path": target_path, "content": new_content},
             )
             if write_status != "ok":
+                _turn_outcome(turn_row, "write_denied", {"error": str(write_error)[:500]})
+                _finish_session("failed", turns_used, error=f"coding_agent 写入被拒绝: {write_error}")
                 facts.append({"key": "coding_agent_turns_used", "value": turns_used})
                 return CapabilityResult(
                     status="failed",
                     error=f"coding_agent 写入被拒绝: {write_error}",
                     facts=facts,
                 )
+            _turn_outcome(turn_row, "applied")
             turns_used = turn
             facts.append({"key": f"coding_agent_turn{turn}_bytes", "value": len(new_content.encode("utf-8"))})
 
@@ -319,8 +413,10 @@ class CodingAgentTool(BaseAgentTool):
                 break
             last_test_exit = tr_result.get("exit_code")
             if last_test_exit == 0:
+                _turn_outcome(turn_row, "selftest_passed", {"exit_code": 0})
                 facts.append({"key": "coding_agent_selftest", "value": "passed"})
                 break
+            _turn_outcome(turn_row, "selftest_failed", {"exit_code": last_test_exit})
             retry_line = (
                 "请修复问题后重新输出补丁块（基于文件当前内容）。"
                 if output_mode == "patch"
@@ -337,6 +433,7 @@ class CodingAgentTool(BaseAgentTool):
         facts.append({"key": "coding_agent_turns_used", "value": turns_used})
         if last_test_exit is not None:
             facts.append({"key": "coding_agent_last_test_exit", "value": last_test_exit})
+        _finish_session("completed", turns_used)
         return CapabilityResult(
             status="completed",
             output={"path": target_path, "turns": turns_used},
