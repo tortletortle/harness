@@ -1099,6 +1099,11 @@ class Database:
 
             blocked: List[str] = []
             failed_deps: List[str] = []
+            # 依赖字段缺失时表示旧版线性计划：按 order 隐式依赖前一个步骤。
+            for index, row in enumerate(pending):
+                if row.get("depends_on") in (None, "", "[]") and index > 0:
+                    previous = active[index - 1]
+                    row["depends_on"] = json.dumps([str(previous["step_id"])])
             for row in pending:
                 ready, failed, blocking = dependency_statuses(row, statuses)
                 if ready:
