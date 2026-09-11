@@ -44,7 +44,7 @@ AI 任务编排与执行系统：用户需求 → Designer（LLM）生成技术�
 | `api/auth.py` | — | Bearer / X-API-Token 鉴权（`require_token`）；GET `/` 公开健康检查，WS 走 query token |
 | `api/main.py` / `api/approval.py` | — | 辅助入口 / 审批模块 |
 | `database.py` | ~1470 | SQLite 持久化：tables `designs, plans, steps, execution_runs, execution_attempts, step_events, logs, audit_logs`；迁移与索引 |
-| `application/plan_service.py`、`domain/plan_state.py`、`repositories/plan_repository.py` | 30/38/31 | 渐进式拆分边界（不改 schema）：应用服务、纯状态机规则、Repository facade |
+| `application/plan_service.py`、`domain/plan_state.py`、`domain/work_graph.py`、`repositories/plan_repository.py` | 30/38/约 130/31 | 渐进式拆分边界：应用服务、纯状态机规则、DAG 校验与依赖就绪判定、Repository facade |
 
 ### 生成与执行
 | 文件 | 行数 | 职责 |
@@ -136,7 +136,7 @@ Windows 根目录一键批处理：`启动完整系统.bat`、`一键启动.bat`
 
 | 位置 | 内容 |
 |---|---|
-| `data/eas.db` | 主 SQLite 库；`data/knowledge/` 知识笔记；`data/usage/` 用量；`data/notifications.jsonl` 通知审计；`data/reports/` 报告 |
+| `data/eas.db` | 主 SQLite 库；`data/knowledge/` 知识笔记；`data/usage/` 用量；`data/notifications.jsonl` 通知审计；`data/reports/` 报告；SQLite `artifacts` 表登记产物 URI/哈希/元数据 |
 | `out/` | 真实验收/每日任务的产物与服务器日志 |
 | `logs/eas.log`、`htmlcov/`、`.coverage` | 运行日志、覆盖率报告 |
 | `PROJECT_MEMORY.md` | project_memory 工具的落地记忆（当前被执行摘要大量追加，早期内容已截断） |
@@ -166,6 +166,6 @@ Windows 根目录一键批处理：`启动完整系统.bat`、`一键启动.bat`
 1. pytest 必须从**仓库根目录**运行（conftest 导入约定）。
 2. 凭据只从环境变量/密钥服务或 gitignore 的 `models.local.yaml` 读取，不提交。
 3. HTTP 出站仅 http/https，拒绝 localhost/环回/私有/保留地址；SQL 一律参数绑定。
-4. 工具必须返回**结构化失败**，不得把业务失败冒充成功。
-5. 第一阶段不改数据库 schema、不引入 outbox；拆分走 application/domain/repositories 边界。
+4. **WorkGraph 第一阶段**：`Step.depends_on`、DAG fail-closed 校验、依赖感知串行取步和 Artifact 元数据表已经落地；真正并行、资源锁、worktree、完整 Artifact Store 仍未完成。
+5. 工具必须返回**结构化失败**，不得把业务失败冒充成功。
 6. CI 三个 job：Python 离线回归、前端 test+build、Rust workspace test（本机无 cargo 时不声称已验证）。

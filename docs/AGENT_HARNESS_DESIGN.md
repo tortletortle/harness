@@ -1157,3 +1157,12 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
 - 阶段 1（骨架/计划列表/详情/实时状态/日志流/四项控制）同日实现，
   阶段 2（审批卡片/审计/回滚）与阶段 3（设计链路）待做。
 - 版本号修正：文首长期停留的 0.1-draft 更新为当前实际版本。
+
+### 1.15-draft — 2026-09-11：最小 WorkGraph / Artifact 元数据基础（已实施）
+
+- `python/domain/work_graph.py` 新增无副作用的图校验与依赖状态判定：step ID 唯一、依赖存在、自依赖和环依赖均 fail-closed；兼容 `dependencies` 别名。
+- `Step.depends_on` 与 `steps.depends_on`（JSON）落地，计划生成、缓存重建和 `Database.save_plan` 均校验图结构；旧计划无显式依赖时继续按全局 `order` 顺序执行。
+- 执行循环改用依赖感知取步：只选择依赖已 Success/Skipped 的 Pending 步；依赖失败或死锁时计划 Failed，禁止误报 Completed。本阶段仍为串行执行，尚未实现资源锁/并行。
+- 新增 `artifacts` SQLite 元数据表及 `create_artifact` / `get_artifact` / `list_artifacts`，只保存 URI/哈希/元数据，不承载文件内容。
+- 新增 `test_work_graph.py`、`test_dependency_scheduler.py`、`test_artifacts_persistence.py`；离线回归 641 passed / 9 skipped / 2 deselected。
+- 未完成项保持不变：真正 DAG 并行、资源锁、worktree、完整 Artifact Store 内容层、AgentSession/Turn 分层和动态重规划。

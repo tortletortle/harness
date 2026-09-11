@@ -1099,11 +1099,16 @@ class Database:
 
             blocked: List[str] = []
             failed_deps: List[str] = []
-            # 依赖字段缺失时表示旧版线性计划：按 order 隐式依赖前一个步骤。
-            for index, row in enumerate(pending):
-                if row.get("depends_on") in (None, "", "[]") and index > 0:
-                    previous = active[index - 1]
-                    row["depends_on"] = json.dumps([str(previous["step_id"])])
+            # 全计划无人声明依赖 = 旧版线性计划，按 order 隐式串联；
+            # 只要有一个步骤声明了依赖，就按显式 DAG 语义执行，空依赖即就绪。
+            has_explicit_graph = any(
+                str(row.get("depends_on") or "").strip() not in ("", "[]", "null")
+                for row in active
+            )
+            if not has_explicit_graph:
+                for index, row in enumerate(pending):
+                    if index > 0:
+                        row["depends_on"] = json.dumps([str(active[index - 1]["step_id"])])
             for row in pending:
                 ready, failed, blocking = dependency_statuses(row, statuses)
                 if ready:
