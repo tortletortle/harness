@@ -1082,10 +1082,11 @@ class Database:
 
             statuses: Dict[str, str] = {}
             for row in rows:
+                # 同一逻辑步骤可能同时存在原分支和活动克隆；先登记原行，
+                # 活动分支行在后面覆盖其 parent_step_id 状态。
                 statuses[str(row["step_id"])] = str(row["status"])
-                # 回滚克隆沿用原步骤血缘：依赖原 id 的步骤要能看到克隆行的最新状态。
                 parent = row.get("parent_step_id")
-                if parent:
+                if parent and not row.get("is_obsolete"):
                     statuses[str(parent)] = str(row["status"])
 
             active = [

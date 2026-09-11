@@ -26,7 +26,15 @@ def normalize_dependencies(value: Any) -> list[str]:
     if value is None:
         return []
     if isinstance(value, str):
-        value = [value]
+        text = value.strip()
+        if text.startswith("["):
+            import json
+            try:
+                value = json.loads(text)
+            except json.JSONDecodeError:
+                value = [value]
+        else:
+            value = [value]
     if not isinstance(value, (list, tuple, set)):
         raise ValueError("depends_on must be an array of step IDs")
     result: list[str] = []
