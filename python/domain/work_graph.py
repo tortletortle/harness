@@ -7,6 +7,7 @@ side effects so it can also be reused by future runtimes.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -128,6 +129,47 @@ def is_step_ready(step: Mapping[str, Any], statuses: Mapping[str, str]) -> bool:
     return dependency_statuses(step, statuses)[0]
 
 
+def _resource_paths(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return list(dict.fromkeys(str(item).strip().replace("\\", "/") for item in value if str(item).strip()))
+
+
+def normalize_resource_spec(step: Mapping[str, Any]) -> dict[str, list[str]]:
+    """Normalize declared read/write resources without touching the filesystem."""
+    resources = step.get("resources")
+    if resources is None and isinstance(step.get("inputs"), Mapping):
+        resources = step["inputs"].get("resources")
+    if not isinstance(resources, Mapping):
+        return {"read": [], "write": []}
+    return {"read": _resource_paths(resources.get("read")), "write": _resource_paths(resources.get("write"))}
+
+
+def _paths_overlap(left: str, right: str) -> bool:
+    a = left.rstrip("/") + "/"
+    b = right.rstrip("/") + "/"
+    return a.startswith(b) or b.startswith(a)
+
+
+def resources_conflict(first: Mapping[str, Any], second: Mapping[str, Any]) -> bool:
+    """Return whether two resource specs have an incompatible read/write overlap."""
+    a = normalize_resource_spec(first)
+    b = normalize_resource_spec(second)
+    for left in a["write"]:
+        for right in b["write"] + b["read"]:
+            if _paths_overlap(left, right):
+                return True
+    for left in a["read"]:
+        for right in b["write"]:
+            if _paths_overlap(left, right):
+                return True
+    return False
+
+
 def has_unresolvable_dependencies(
     steps: Iterable[Mapping[str, Any]], statuses: Mapping[str, str]
 ) -> bool:
@@ -136,3 +178,26 @@ def has_unresolvable_dependencies(
     if not pending:
         return False
     return not any(is_step_ready(step, statuses) for step in pending)
+
+
+def select_parallel_batch(
+    candidates: Sequence[Mapping[str, Any]],
+    max_concurrency: int,
+    conflict_detector=resources_conflict,
+) -> list[Mapping[str, Any]]:
+    """Greedily pick a non-conflicting ready batch from candidates, by order.
+
+    Legacy linear plans have no resource declarations and no dependencies, so
+    their candidates all conflict with each other via the fallback below: a
+    caller that passes the explicit-dependency flag keeps them serial.
+    """
+    if max_concurrency <= 1:
+        return [candidates[0]] if candidates else []
+    chosen: list[Mapping[str, Any]] = []
+    for candidate in candidates:
+        if len(chosen) >= max_concurrency:
+            break
+        if any(conflict_detector(candidate, other) for other in chosen):
+            continue
+        chosen.append(candidate)
+    return chosen

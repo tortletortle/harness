@@ -7,7 +7,7 @@ import sqlite3
 import json
 import uuid
 from contextlib import closing
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -463,6 +463,15 @@ class Database:
                         step_status = step.status.value if hasattr(step.status, "value") else str(step.status)
                         logger.debug(f"Saving step {step_idx}: {step.step_id} - {step.description[:30]}...")
 
+                        # 资源声明随 inputs 持久化（不动 schema）：
+                        # 执行期 select_next_batch 从 steps 表读回即可做冲突检测。
+                        _inputs = dict(step.inputs or {})
+                        _resources = getattr(step, "resources", None)
+                        if isinstance(_resources, Mapping) and (_resources.get("read") or _resources.get("write")):
+                            _inputs = {**_inputs, "resources": dict(_resources)}
+                        else:
+                            _inputs.pop("resources", None)
+
                         cursor.execute("""
                             INSERT INTO steps (
                                 step_id, plan_id, segment_id, step_order,
@@ -480,7 +489,7 @@ class Database:
                             step.order,
                             step.description,
                             step.tool,
-                            json.dumps(step.inputs, ensure_ascii=False),
+                            json.dumps(_inputs, ensure_ascii=False),
                             step.check_criteria,
                             json.dumps(getattr(step, 'acceptance', []), ensure_ascii=False),
                             json.dumps(step.outputs, ensure_ascii=False) if step.outputs else None,
@@ -1051,22 +1060,26 @@ class Database:
             logger.exception("查询 step_events 失败: {}", e)
             raise DatabaseError(f"查询 step_events 失败: {e}") from e
 
-    def get_next_runnable_step(self, plan_id: str, branch_version: int = 1, resume_from_step_id: str = None):
-        """兼容旧接口：仅返回依赖感知选择出的步骤行。"""
-        return self.select_next_step(plan_id, branch_version, resume_from_step_id)["step"]
+    def select_next_batch(
+        self, plan_id: str, branch_version: int = 1,
+        resume_from_step_id: str = None, max_concurrency: int = 1,
+        parallel_graphs: bool = False,
+    ) -> Dict[str, Any]:
+        """依赖感知 + 资源冲突过滤的批取步。
 
-    def select_next_step(self, plan_id: str, branch_version: int = 1, resume_from_step_id: str = None):
-        """依赖感知的取步：返回 {step, blocked_reason, blocked_step_ids}。
-
-        - step: 可执行步骤行（dict）或 None
+        返回 {steps, blocked_reason, blocked_step_ids}：
+        - steps: 本批可执行步骤行（至多 max_concurrency 个，两两资源不冲突）
         - blocked_step_ids: 因依赖未满足而无法执行的 pending 步骤 id
         - blocked_reason: 存在依赖失败导致永久阻塞时的结构化原因
+
+        兼容规则：
+        - 无显式依赖图的旧计划始终每批一个步骤（与旧串行行为一致）；
+        - parallel_graphs=False 时强制每批一个步骤；
+        - max_concurrency <= 1 时每批一个步骤。
         """
         try:
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
-                # 一次取全计划行：状态解析需要跨 branch（回滚克隆以 parent_step_id
-                # 指回原步骤），排序保证「活动分支、未废弃」的有效状态最后生效。
                 cursor.execute("""
                     SELECT * FROM steps
                     WHERE plan_id = ?
@@ -1077,13 +1090,22 @@ class Database:
             if resume_from_step_id:
                 for row in rows:
                     if str(row["step_id"]) == str(resume_from_step_id) and not row.get("is_obsolete"):
-                        return {"step": row, "blocked_reason": None, "blocked_step_ids": []}
-                return {"step": None, "blocked_reason": None, "blocked_step_ids": []}
+                        return {"steps": [row], "blocked_reason": None, "blocked_step_ids": []}
+                return {"steps": [], "blocked_reason": None, "blocked_step_ids": []}
+
+            def _with_parsed_inputs(row: Dict[str, Any]) -> Dict[str, Any]:
+                enriched = dict(row)
+                try:
+                    parsed = json.loads(enriched["inputs"]) if isinstance(enriched.get("inputs"), str) else (enriched.get("inputs") or {})
+                except (ValueError, TypeError):
+                    parsed = {}
+                enriched["inputs"] = parsed
+                if isinstance(parsed, Mapping) and isinstance(parsed.get("resources"), Mapping):
+                    enriched["resources"] = parsed["resources"]
+                return enriched
 
             statuses: Dict[str, str] = {}
             for row in rows:
-                # 同一逻辑步骤可能同时存在原分支和活动克隆；先登记原行，
-                # 活动分支行在后面覆盖其 parent_step_id 状态。
                 statuses[str(row["step_id"])] = str(row["status"])
                 parent = row.get("parent_step_id")
                 if parent and not row.get("is_obsolete"):
@@ -1095,35 +1117,65 @@ class Database:
             ]
             pending = [row for row in active if str(row["status"]) == StepStatus.PENDING.value]
             if not pending:
-                return {"step": None, "blocked_reason": None, "blocked_step_ids": []}
+                return {"steps": [], "blocked_reason": None, "blocked_step_ids": []}
 
-            blocked: List[str] = []
-            failed_deps: List[str] = []
-            # 全计划无人声明依赖 = 旧版线性计划，按 order 隐式串联；
-            # 只要有一个步骤声明了依赖，就按显式 DAG 语义执行，空依赖即就绪。
             has_explicit_graph = any(
                 str(row.get("depends_on") or "").strip() not in ("", "[]", "null")
                 for row in active
             )
-            if not has_explicit_graph:
-                for index, row in enumerate(pending):
-                    if index > 0:
-                        row["depends_on"] = json.dumps([str(active[index - 1]["step_id"])])
+
+            blocked: List[str] = []
+            failed_deps: List[str] = []
+            if not has_explicit_graph or not parallel_graphs or max_concurrency <= 1:
+                # 串行兼容路径：取第一个就绪步骤。
+                for row in pending:
+                    ready, failed, blocking = dependency_statuses(row, statuses)
+                    if ready:
+                        return {"steps": [row], "blocked_reason": None, "blocked_step_ids": blocked}
+                    blocked.append(str(row["step_id"]))
+                    if failed:
+                        failed_deps.extend(blocking)
+                reason = f"依赖步骤失败，无法继续: {sorted(set(failed_deps))}" if failed_deps else None
+                return {"steps": [], "blocked_reason": reason, "blocked_step_ids": blocked}
+
+            # 并行路径：收集全部就绪候选，贪心挑选非冲突批次。
+            from domain.work_graph import select_parallel_batch
+            candidates: List[Dict[str, Any]] = []
             for row in pending:
                 ready, failed, blocking = dependency_statuses(row, statuses)
                 if ready:
-                    return {"step": row, "blocked_reason": None, "blocked_step_ids": blocked}
-                blocked.append(str(row["step_id"]))
-                if failed:
-                    failed_deps.extend(blocking)
-
-            reason = None
-            if failed_deps:
-                reason = f"依赖步骤失败，无法继续: {sorted(set(failed_deps))}"
-            return {"step": None, "blocked_reason": reason, "blocked_step_ids": blocked}
+                    candidates.append(_with_parsed_inputs(row))
+                else:
+                    blocked.append(str(row["step_id"]))
+                    if failed:
+                        failed_deps.extend(blocking)
+            batch = select_parallel_batch(candidates, max_concurrency)
+            reason = f"依赖步骤失败，无法继续: {sorted(set(failed_deps))}" if failed_deps and not batch else None
+            return {"steps": batch, "blocked_reason": reason, "blocked_step_ids": blocked}
         except Exception as e:
-            logger.exception("获取下一个可运行步骤失败: {}", e)
-            raise DatabaseError(f"获取下一个可运行步骤失败: {e}") from e
+            logger.exception("获取下一个可执行批次失败: {}", e)
+            raise DatabaseError(f"获取下一个可执行批次失败: {e}") from e
+
+    def get_next_runnable_step(self, plan_id: str, branch_version: int = 1, resume_from_step_id: str = None):
+        """兼容旧接口：仅返回依赖感知选择出的步骤行。"""
+        return self.select_next_step(plan_id, branch_version, resume_from_step_id)["step"]
+
+    def select_next_step(self, plan_id: str, branch_version: int = 1, resume_from_step_id: str = None):
+        """依赖感知的取步：返回 {step, blocked_reason, blocked_step_ids}。
+
+        - step: 可执行步骤行（dict）或 None
+        - blocked_step_ids: 因依赖未满足而无法执行的 pending 步骤 id
+        - blocked_reason: 存在依赖失败导致永久阻塞时的结构化原因
+        """
+        selection = self.select_next_batch(
+            plan_id, branch_version=branch_version,
+            resume_from_step_id=resume_from_step_id, max_concurrency=1,
+        )
+        return {
+            "step": selection["steps"][0] if selection["steps"] else None,
+            "blocked_reason": selection.get("blocked_reason"),
+            "blocked_step_ids": selection.get("blocked_step_ids") or [],
+        }
 
     def mark_steps_obsolete(self, plan_id: str, after_step_id: str, branch_version: int) -> int:
         """

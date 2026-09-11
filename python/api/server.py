@@ -337,6 +337,12 @@ async def lifespan(app: FastAPI):
         # 该摘要目前只作为观测字段保存，不阻塞主执行链路。
         state.context_compression = state.config.get("context_compression", {}) or {}
 
+        # 受控并行：默认严格串行（max_concurrency=1），只有显式开启
+        # parallel_graphs 且步骤声明依赖图时才启用计划内批级并行。
+        executor_cfg = state.config.get("models", {}).get("executor", {}) or {}
+        state.executor_max_concurrency = max(1, int(executor_cfg.get("max_concurrency", 1) or 1))
+        state.parallel_graphs = bool(state.config.get("parallel_graphs", False))
+
         # 默认空列表 = 全部自动执行（向后兼容，现有测试/流程不变）。
         approval_cfg = state.config.get("approval", {})
         state.approval_manager = ApprovalManager(
@@ -1583,6 +1589,305 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
     return result
 
 
+async def _execute_step_to_completion(
+    plan,
+    step,
+    run_id,
+    owner_token,
+    branch_version,
+    resume: bool,
+    skipped_ids: set,
+    debug_log,
+):
+    """执行单个步骤直到终态（含重试/反馈/attempt/事件/状态写入）。
+
+    返回 (outcome, step_id)，outcome ∈ {"stop", "continue"}：
+    - "stop":    外层执行循环必须终止（步骤失败/拦截/校验失败/重试耗尽/中止）
+    - "continue": 步骤完成（或跳过/已在恢复中完成），外层继续取下一批
+    """
+    step_id = str(step.get("step_id"))
+    attempt_id = None
+    # 本轮一旦取出断点，后续步骤按普通 pending 语义继续；失败时会重新保存
+    # 当前 step_id 作为下一次 /execute 的恢复目标。
+    step_status_value = step.get("status")
+
+    if resume and step_status_value in ("Success", "Skipped"):
+        debug_log(f"Step {step_id} already {step_status_value}, skip on resume")
+        return "continue", step_id
+
+    if step_id in skipped_ids:
+        debug_log(f"Step {step_id} marked Skipped, skipping execution")
+        await broadcast_log(f"[SKIP] 步骤 {step_id} 已被跳过", "info")
+        if step_status_value != "Skipped":
+            state.database.update_step_state_machine(
+                step_id=step_id,
+                status="Skipped",
+                executed_at=datetime.now(),
+                outputs=step.get("outputs") or {},
+            )
+            await broadcast_plan_update(str(plan.plan_id))
+        return "continue", step_id
+
+    debug_log(f"Step {step_id}: {step.get('description', '')[:30]}...")
+    await broadcast_log(f"执行步骤 {step_id}: {step.get('description', '')[:50]}...", "info")
+
+    if not state.database.update_step(step_id=step_id, status="Running", executed_at=datetime.now()):
+        msg = f"步骤 {step_id} 状态写入失败（DB 中无此步骤），中止执行"
+        debug_log(f"ABORT: {msg}")
+        await broadcast_log(f"[ERROR] {msg}", "error")
+        _require_write(
+            state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
+            f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 未命中）",
+        )
+        await broadcast_plan_update(str(plan.plan_id))
+        return "stop", step_id
+
+    await broadcast_plan_update(str(plan.plan_id))
+
+    configured_retries = step.get("max_retries")
+    if configured_retries is None:
+        max_attempts = getattr(state, "retry_max_attempts", 3)
+    else:
+        max_attempts = max(1, int(configured_retries) + 1)
+    backoff_factor = getattr(state, "retry_backoff_factor", 2)
+    attempt = 0
+    feedback_used = False
+    result = None
+    logger.info(f"STEP_LOOP_START step_id={step_id} max_attempts={max_attempts}")
+    while True:
+        logger.info(f"STEP_LOOP_CALL step_id={step_id} attempt={attempt}")
+        # 每次工具调用落一条 Attempt 记录；重试/反馈轮生成新一轮 Attempt。
+        try:
+            _attempt = state.database.create_execution_attempt(
+                run_id, str(plan.plan_id), step_id, attempt + 1,
+            )
+            attempt_id = str(_attempt["attempt_id"])
+        except Exception as attempt_exc:
+            # Attempt 记录写入失败不阻断执行主体（观察性分层），仅记日志。
+            attempt_id = None
+            logger.warning(f"create_execution_attempt 失败（忽略）: {attempt_exc}")
+        try:
+            result = await _execute_step_with_state_machine(plan, step)
+        except Exception as e:
+            logger.info(f"STEP_LOOP_EXCEPTION step_id={step_id} attempt={attempt} exc={e}")
+            if attempt_id:
+                try:
+                    state.database.finish_execution_attempt(
+                        attempt_id, AttemptStatus.FAILED.value,
+                        failure_reason=str(e)[:2000],
+                        run_id=run_id, owner_token=owner_token,
+                    )
+                except Exception as attempt_close_exc:
+                    logger.warning(f"finish_execution_attempt 失败（忽略）: {attempt_close_exc}")
+                attempt_id = None
+            raise
+        if attempt_id:
+            try:
+                state.database.finish_execution_attempt(
+                    attempt_id,
+                    AttemptStatus.SUCCEEDED.value if result.get("success") else AttemptStatus.FAILED.value,
+                    retryable=result.get("retryable"),
+                    failure_reason=result.get("error") if not result.get("success") else None,
+                    outputs=result,
+                    duration_ms=result.get("duration_ms"),
+                    run_id=run_id, owner_token=owner_token,
+                )
+            except Exception as attempt_close_exc:
+                logger.warning(f"finish_execution_attempt 失败（忽略）: {attempt_close_exc}")
+            attempt_id = None
+        logger.info(f"STEP_LOOP_RESULT step_id={step_id} attempt={attempt} success={result.get('success')} check={result.get('check_status')} blocked={result.get('blocked')}")
+        debug_log(
+            f"Step {step_id} attempt {attempt} result: success={result.get('success')} "
+            f"check={result.get('check_status')} blocked={result.get('blocked')}"
+        )
+        if result.get("blocked"):
+            error = result.get("error", "blocked")
+            failure_reason = error
+            debug_log(f"Step {step_id} blocked: {error}")
+            failure_outputs = {"error": error, "check_status": result.get("check_status")}
+            if result.get("acceptance_result") is not None:
+                failure_outputs.update({
+                    "acceptance": result.get("acceptance_result"),
+                    "acceptance_status": result.get("acceptance_status"),
+                    "acceptance_evidence": result.get("acceptance_evidence", []),
+                    "reward": result.get("reward"),
+                })
+            state.database.update_step_state_machine(
+                step_id=step_id,
+                status=StepStatus.FAILED.value,
+                outputs=failure_outputs,
+                duration_ms=result.get("duration_ms"),
+                failure_reason=failure_reason,
+                state_snapshot=result,
+            )
+            if not state.database.add_step_event(
+                step_id, str(plan.plan_id), "failed",
+                {"reason": failure_reason, "blocked": True, "duration_ms": result.get("duration_ms")},
+                branch_version=branch_version,
+            ):
+                logger.warning("step_event failed 写入失败: {}", step_id)
+            _require_write(
+                state.database.update_plan_state_machine(
+                    str(plan.plan_id), "Failed",
+                    resume_from_step_id=step_id,
+                    current_branch=branch_version,
+                ),
+                f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 被拦截）",
+            )
+            await broadcast_plan_update(str(plan.plan_id))
+            return "stop", step_id
+
+        if result.get("check_status") == "failed" and _is_retryable_exit_code_acceptance(step, result):
+            result["retryable"] = True
+        if result.get("check_status") == "failed" and not _is_retryable_exit_code_acceptance(step, result):
+            # P2 反馈回路：验收缺口作为 feedback 喂回 coding_agent 再修一轮
+            # （每步最多一次；重试仍失败则走下方原判死路径）。
+            feedback_text = _build_acceptance_feedback(result.get("acceptance_result"))
+            if (
+                feedback_text
+                and step.get("tool") == "coding_agent"
+                and not feedback_used
+            ):
+                feedback_used = True
+                step_inputs = dict(step.get("inputs") or {})
+                step_inputs["feedback"] = feedback_text
+                step = {**step, "inputs": step_inputs}
+                await broadcast_log(
+                    f"[FEEDBACK] 步骤 {step_id} 验收未通过，缺口已反馈给 coding_agent 重试一轮",
+                    "warning",
+                )
+                attempt += 1
+                continue
+            error = result.get("error", "check failed")
+            failure_reason = error
+            debug_log(f"Step {step_id} check failed: {error}")
+            failure_outputs = {"error": error, "check_status": "failed"}
+            if result.get("acceptance_result") is not None:
+                failure_outputs.update({
+                    "acceptance": result.get("acceptance_result"),
+                    "acceptance_status": result.get("acceptance_status"),
+                    "acceptance_evidence": result.get("acceptance_evidence", []),
+                    "reward": result.get("reward"),
+                })
+            state.database.update_step_state_machine(
+                step_id=step_id,
+                status=StepStatus.FAILED.value,
+                outputs=failure_outputs,
+                duration_ms=result.get("duration_ms"),
+                failure_reason=failure_reason,
+                state_snapshot=result,
+            )
+            if not state.database.add_step_event(
+                step_id, str(plan.plan_id), "failed",
+                {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms")},
+                branch_version=branch_version,
+            ):
+                logger.warning("step_event failed 写入失败: {}", step_id)
+            _require_write(
+                state.database.update_plan_state_machine(
+                    str(plan.plan_id), "Failed",
+                    resume_from_step_id=step_id,
+                    current_branch=branch_version,
+                ),
+                f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 校验失败）",
+            )
+            await broadcast_plan_update(str(plan.plan_id))
+            return "stop", step_id
+
+        if result.get("success"):
+            break
+
+        # P2 错误分类：executor 判定不可重试的失败（拦截/永久性错误）
+        # 直接进入失败路径，不等重试耗尽——重试只会重复同样的错误。
+        if attempt >= max_attempts - 1 or result.get("retryable") is False:
+            error = result.get("error", "retry exhausted")
+            failure_reason = error
+            check_status = result.get("check_status")
+            debug_log(f"Step {step_id} retry exhausted")
+            if check_status == "failed" or not result.get("success"):
+                failure_outputs = {"error": error, "check_status": check_status}
+                if result.get("acceptance_result") is not None:
+                    failure_outputs.update({
+                        "acceptance": result.get("acceptance_result"),
+                        "acceptance_status": result.get("acceptance_status"),
+                        "acceptance_evidence": result.get("acceptance_evidence", []),
+                        "reward": result.get("reward"),
+                    })
+                state.database.update_step_state_machine(
+                    step_id=step_id,
+                    status=StepStatus.FAILED.value,
+                    outputs=failure_outputs,
+                    duration_ms=result.get("duration_ms"),
+                    failure_reason=failure_reason,
+                    retry_count=attempt,
+                    state_snapshot=result,
+                )
+                if not state.database.add_step_event(
+                    step_id, str(plan.plan_id), "failed",
+                    {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms"), "attempt": attempt},
+                    branch_version=branch_version,
+                ):
+                    logger.warning("step_event failed 写入失败: {}", step_id)
+                _require_write(
+                    state.database.update_plan_state_machine(
+                        str(plan.plan_id), "Failed",
+                        resume_from_step_id=step_id,
+                        current_branch=branch_version,
+                    ),
+                    f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 重试耗尽）",
+                )
+                await broadcast_plan_update(str(plan.plan_id))
+                return "stop", step_id
+            # success=False 且 check_status=unverified: 仍视为完成，继续后续步骤
+            result["terminal_success"] = True
+            state.database.update_step_state_machine(
+                step_id=step_id,
+                status="Success",
+                outputs={"check_status": check_status, "message": error},
+                duration_ms=result.get("duration_ms"),
+                state_snapshot=result,
+            )
+            if not state.database.add_step_event(
+                step_id, str(plan.plan_id), "success",
+                {"duration_ms": result.get("duration_ms"), "note": "unverified treated as success"},
+                branch_version=branch_version,
+            ):
+                logger.warning("step_event success 写入失败: {}", step_id)
+            await broadcast_plan_update(str(plan.plan_id))
+            return "continue", step_id
+
+        attempt += 1
+        delay = backoff_factor ** attempt
+        await broadcast_log(
+            f"[RETRY] 步骤 {step_id} 失败，第 {attempt}/{max_attempts - 1} 次重试（{delay:.1f}秒后）",
+            "warning",
+        )
+        debug_log(f"Step {step_id} retrying, attempt {attempt}/{max_attempts - 1}, delay={delay}")
+        print(f"[RETRY] step={step_id} attempt={attempt} delay={delay}", flush=True)
+        state.database.update_step_state_machine(step_id=step_id, status="Retry", retry_count=attempt)
+        _require_write(
+            state.database.add_step_event(
+                step_id, str(plan.plan_id), "retry",
+                {"attempt": attempt, "delay": delay}, branch_version=branch_version,
+            ),
+            f"步骤 {step_id} retry 事件写入",
+        )
+        await broadcast_plan_update(str(plan.plan_id))
+        await asyncio.sleep(delay)
+
+    print(f"[AFTER_LOOP] step={step_id} success={result.get('success')} check={result.get('check_status')} attempt={attempt}", flush=True)
+    # 明确失败才终止循环继续执行。
+    # success=False 是执行失败；check_status="failed" 是校验明确不通过。
+    # "unverified" 只表示无法自动校验，不应阻断计划继续。
+    if (not result.get("success") and not result.get("terminal_success")) or result.get("check_status") == "failed":
+        await broadcast_log(f"[ERROR] 步骤 {step_id} 失败（已重试 {attempt} 次）: {result.get('error')}", "error")
+        return "stop", step_id
+
+    # 成功但未校验：视为完成，继续执行后续步骤
+    await broadcast_log(f"[OK] 步骤 {step_id} 完成（未校验）", "success")
+    return "continue", step_id
+
+
 async def execute_plan_background(plan, resume: bool = False, run_id: str = None, owner_token: str = None):
     """后台执行计划
 
@@ -1715,15 +2020,17 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
                     await broadcast_plan_update(str(plan.plan_id))
                     break
 
-            # 依赖感知取步：返回可执行步骤，或说明为何没有可执行步骤
-            # （依赖失败 / 存在无法就绪的 pending 步骤）。
-            selection = state.database.select_next_step(
+            # 依赖感知取批：返回本批可执行步骤（依赖就绪 + 两两资源不冲突），
+            # 或说明为何没有可执行步骤（依赖失败 / 存在无法就绪的 pending 步骤）。
+            selection = state.database.select_next_batch(
                 str(plan.plan_id),
                 branch_version=branch_version,
                 resume_from_step_id=resume_from_step_id,
+                max_concurrency=getattr(state, "executor_max_concurrency", 1),
+                parallel_graphs=getattr(state, "parallel_graphs", False),
             )
-            step = selection["step"]
-            if not step:
+            batch = selection["steps"]
+            if not batch:
                 blocked_reason = selection.get("blocked_reason")
                 blocked_step_ids = selection.get("blocked_step_ids") or []
                 if blocked_reason or blocked_step_ids:
@@ -1770,290 +2077,48 @@ async def execute_plan_background(plan, resume: bool = False, run_id: str = None
                 debug_log(f"Plan {plan.plan_id} execution COMPLETED")
                 break
 
-            step_id = str(step.get("step_id"))
-            current_step_id = step_id
             # 本轮一旦取出断点，后续步骤按普通 pending 语义继续；失败时会重新保存
             # 当前 step_id 作为下一次 /execute 的恢复目标。
             resume_from_step_id = None
-            step_status_value = step.get("status")
-
-            if resume and step_status_value in ("Success", "Skipped"):
-                debug_log(f"Step {step_id} already {step_status_value}, skip on resume")
-                continue
-
             skipped_ids = {s["step_id"] for s in state.database.get_steps(str(plan.plan_id)) if s.get("status") == "Skipped"}
-            if step_id in skipped_ids:
-                debug_log(f"Step {step_id} marked Skipped, skipping execution")
-                await broadcast_log(f"[SKIP] 步骤 {step_id} 已被跳过", "info")
-                if step_status_value != "Skipped":
-                    state.database.update_step_state_machine(
-                        step_id=step_id,
-                        status="Skipped",
-                        executed_at=datetime.now(),
-                        outputs=step.get("outputs") or {},
-                    )
-                    await broadcast_plan_update(str(plan.plan_id))
-                continue
 
-            debug_log(f"Step {step_id}: {step.get('description', '')[:30]}...")
-            await broadcast_log(f"执行步骤 {step_id}: {step.get('description', '')[:50]}...", "info")
-
-            if not state.database.update_step(step_id=step_id, status="Running", executed_at=datetime.now()):
-                msg = f"步骤 {step_id} 状态写入失败（DB 中无此步骤），中止执行"
-                debug_log(f"ABORT: {msg}")
-                await broadcast_log(f"[ERROR] {msg}", "error")
-                _require_write(
-                    state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
-                    f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 未命中）",
+            # 批内并发执行（有界并发）：每个步骤独立走完整状态机 + 重试 + 事件。
+            # 任何一步返回 "stop"（拦截/校验失败/重试耗尽/中止）即终止执行，
+            # 不启动下一批，保持「失败即停」与 checkpoint/回滚语义。
+            async def _dispatch_one(step_row):
+                return await _execute_step_to_completion(
+                    plan, step_row, run_id, owner_token, branch_version,
+                    resume=bool(resume), skipped_ids=skipped_ids, debug_log=debug_log,
                 )
-                await broadcast_plan_update(str(plan.plan_id))
-                break
 
-            await broadcast_plan_update(str(plan.plan_id))
-
-            configured_retries = step.get("max_retries")
-            if configured_retries is None:
-                max_attempts = getattr(state, "retry_max_attempts", 3)
+            stop_step_id = None
+            if len(batch) == 1:
+                outcome, step_id = await _dispatch_one(batch[0])
+                current_step_id = step_id
+                if outcome == "stop":
+                    stop_step_id = step_id
             else:
-                max_attempts = max(1, int(configured_retries) + 1)
-            backoff_factor = getattr(state, "retry_backoff_factor", 2)
-            attempt = 0
-            feedback_used = False
-            result = None
-            logger.info(f"STEP_LOOP_START step_id={step_id} max_attempts={max_attempts}")
-            while True:
-                logger.info(f"STEP_LOOP_CALL step_id={step_id} attempt={attempt}")
-                # 每次工具调用落一条 Attempt 记录；重试/反馈轮生成新一轮 Attempt。
-                try:
-                    _attempt = state.database.create_execution_attempt(
-                        run_id, str(plan.plan_id), step_id, attempt + 1,
-                    )
-                    attempt_id = str(_attempt["attempt_id"])
-                except Exception as attempt_exc:
-                    # Attempt 记录写入失败不阻断执行主体（观察性分层），仅记日志。
-                    attempt_id = None
-                    logger.warning(f"create_execution_attempt 失败（忽略）: {attempt_exc}")
-                try:
-                    result = await _execute_step_with_state_machine(plan, step)
-                except Exception as e:
-                    logger.info(f"STEP_LOOP_EXCEPTION step_id={step_id} attempt={attempt} exc={e}")
-                    if attempt_id:
-                        try:
-                            state.database.finish_execution_attempt(
-                                attempt_id, AttemptStatus.FAILED.value,
-                                failure_reason=str(e)[:2000],
-                                run_id=run_id, owner_token=owner_token,
-                            )
-                        except Exception as attempt_close_exc:
-                            logger.warning(f"finish_execution_attempt 失败（忽略）: {attempt_close_exc}")
-                        attempt_id = None
-                    raise
-                if attempt_id:
-                    try:
-                        state.database.finish_execution_attempt(
-                            attempt_id,
-                            AttemptStatus.SUCCEEDED.value if result.get("success") else AttemptStatus.FAILED.value,
-                            retryable=result.get("retryable"),
-                            failure_reason=result.get("error") if not result.get("success") else None,
-                            outputs=result,
-                            duration_ms=result.get("duration_ms"),
-                            run_id=run_id, owner_token=owner_token,
-                        )
-                    except Exception as attempt_close_exc:
-                        logger.warning(f"finish_execution_attempt 失败（忽略）: {attempt_close_exc}")
-                    attempt_id = None
-                logger.info(f"STEP_LOOP_RESULT step_id={step_id} attempt={attempt} success={result.get('success')} check={result.get('check_status')} blocked={result.get('blocked')}")
-                debug_log(
-                    f"Step {step_id} attempt {attempt} result: success={result.get('success')} "
-                    f"check={result.get('check_status')} blocked={result.get('blocked')}"
-                )
-                if result.get("blocked"):
-                    error = result.get("error", "blocked")
-                    failure_reason = error
-                    debug_log(f"Step {step_id} blocked: {error}")
-                    failure_outputs = {"error": error, "check_status": result.get("check_status")}
-                    if result.get("acceptance_result") is not None:
-                        failure_outputs.update({
-                            "acceptance": result.get("acceptance_result"),
-                            "acceptance_status": result.get("acceptance_status"),
-                            "acceptance_evidence": result.get("acceptance_evidence", []),
-                            "reward": result.get("reward"),
-                        })
-                    state.database.update_step_state_machine(
-                        step_id=step_id,
-                        status=StepStatus.FAILED.value,
-                        outputs=failure_outputs,
-                        duration_ms=result.get("duration_ms"),
-                        failure_reason=failure_reason,
-                        state_snapshot=result,
-                    )
-                    if not state.database.add_step_event(
-                        step_id, str(plan.plan_id), "failed",
-                        {"reason": failure_reason, "blocked": True, "duration_ms": result.get("duration_ms")},
-                        branch_version=branch_version,
-                    ):
-                        logger.warning("step_event failed 写入失败: {}", step_id)
-                    _require_write(
-                        state.database.update_plan_state_machine(
-                            str(plan.plan_id), "Failed",
-                            resume_from_step_id=step_id,
-                            current_branch=branch_version,
-                        ),
-                        f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 被拦截）",
-                    )
-                    await broadcast_plan_update(str(plan.plan_id))
-                    break
+                max_conc = max(1, int(getattr(state, "executor_max_concurrency", 1)))
+                sem = asyncio.Semaphore(max_conc)
 
-                if result.get("check_status") == "failed" and _is_retryable_exit_code_acceptance(step, result):
-                    result["retryable"] = True
-                if result.get("check_status") == "failed" and not _is_retryable_exit_code_acceptance(step, result):
-                    # P2 反馈回路：验收缺口作为 feedback 喂回 coding_agent 再修一轮
-                    # （每步最多一次；重试仍失败则走下方原判死路径）。
-                    # 真实首跑 step20/22 的失败模式（指令与验收命名脱节）可在此自愈。
-                    feedback_text = _build_acceptance_feedback(result.get("acceptance_result"))
-                    if (
-                        feedback_text
-                        and step.get("tool") == "coding_agent"
-                        and not feedback_used
-                    ):
-                        feedback_used = True
-                        step_inputs = dict(step.get("inputs") or {})
-                        step_inputs["feedback"] = feedback_text
-                        step = {**step, "inputs": step_inputs}
-                        await broadcast_log(
-                            f"[FEEDBACK] 步骤 {step_id} 验收未通过，缺口已反馈给 coding_agent 重试一轮",
-                            "warning",
-                        )
-                        attempt += 1
-                        continue
-                    error = result.get("error", "check failed")
-                    failure_reason = error
-                    debug_log(f"Step {step_id} check failed: {error}")
-                    failure_outputs = {"error": error, "check_status": "failed"}
-                    if result.get("acceptance_result") is not None:
-                        failure_outputs.update({
-                            "acceptance": result.get("acceptance_result"),
-                            "acceptance_status": result.get("acceptance_status"),
-                            "acceptance_evidence": result.get("acceptance_evidence", []),
-                            "reward": result.get("reward"),
-                        })
-                    state.database.update_step_state_machine(
-                        step_id=step_id,
-                        status=StepStatus.FAILED.value,
-                        outputs=failure_outputs,
-                        duration_ms=result.get("duration_ms"),
-                        failure_reason=failure_reason,
-                        state_snapshot=result,
-                    )
-                    if not state.database.add_step_event(
-                        step_id, str(plan.plan_id), "failed",
-                        {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms")},
-                        branch_version=branch_version,
-                    ):
-                        logger.warning("step_event failed 写入失败: {}", step_id)
-                    _require_write(
-                        state.database.update_plan_state_machine(
-                            str(plan.plan_id), "Failed",
-                            resume_from_step_id=step_id,
-                            current_branch=branch_version,
-                        ),
-                        f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 校验失败）",
-                    )
-                    await broadcast_plan_update(str(plan.plan_id))
-                    break
+                async def _bounded(step_row):
+                    async with sem:
+                        return await _dispatch_one(step_row)
 
-                if result.get("success"):
-                    break
-
-                # P2 错误分类：executor 判定不可重试的失败（拦截/永久性错误）
-                # 直接进入失败路径，不等重试耗尽——重试只会重复同样的错误。
-                if attempt >= max_attempts - 1 or result.get("retryable") is False:
-                    error = result.get("error", "retry exhausted")
-                    failure_reason = error
-                    check_status = result.get("check_status")
-                    debug_log(f"Step {step_id} retry exhausted")
-                    if check_status == "failed" or not result.get("success"):
-                        failure_outputs = {"error": error, "check_status": check_status}
-                        if result.get("acceptance_result") is not None:
-                            failure_outputs.update({
-                                "acceptance": result.get("acceptance_result"),
-                                "acceptance_status": result.get("acceptance_status"),
-                                "acceptance_evidence": result.get("acceptance_evidence", []),
-                                "reward": result.get("reward"),
-                            })
-                        state.database.update_step_state_machine(
-                            step_id=step_id,
-                            status=StepStatus.FAILED.value,
-                            outputs=failure_outputs,
-                            duration_ms=result.get("duration_ms"),
-                            failure_reason=failure_reason,
-                            retry_count=attempt,
-                            state_snapshot=result,
-                        )
-                        if not state.database.add_step_event(
-                            step_id, str(plan.plan_id), "failed",
-                            {"reason": failure_reason, "blocked": False, "duration_ms": result.get("duration_ms"), "attempt": attempt},
-                            branch_version=branch_version,
-                        ):
-                            logger.warning("step_event failed 写入失败: {}", step_id)
-                        _require_write(
-                            state.database.update_plan_state_machine(
-                                str(plan.plan_id), "Failed",
-                                resume_from_step_id=step_id,
-                                current_branch=branch_version,
-                            ),
-                            f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 重试耗尽）",
-                        )
-                        await broadcast_plan_update(str(plan.plan_id))
+                outcomes = await asyncio.gather(*(_bounded(s) for s in batch), return_exceptions=True)
+                for idx, outcome in enumerate(outcomes):
+                    if isinstance(outcome, Exception):
+                        logger.exception("批内步骤异常: {}", outcome)
+                        stop_step_id = str(batch[idx].get("step_id"))
                         break
-                    # success=False 且 check_status=unverified: 仍视为完成，继续后续步骤
-                    result["terminal_success"] = True
-                    state.database.update_step_state_machine(
-                        step_id=step_id,
-                        status="Success",
-                        outputs={"check_status": check_status, "message": error},
-                        duration_ms=result.get("duration_ms"),
-                        state_snapshot=result,
-                    )
-                    if not state.database.add_step_event(
-                        step_id, str(plan.plan_id), "success",
-                        {"duration_ms": result.get("duration_ms"), "note": "unverified treated as success"},
-                        branch_version=branch_version,
-                    ):
-                        logger.warning("step_event success 写入失败: {}", step_id)
-                    await broadcast_plan_update(str(plan.plan_id))
-                    break
-
-                attempt += 1
-                delay = backoff_factor ** attempt
-                await broadcast_log(
-                    f"[RETRY] 步骤 {step_id} 失败，第 {attempt}/{max_attempts - 1} 次重试（{delay:.1f}秒后）",
-                    "warning",
-                )
-                debug_log(f"Step {step_id} retrying, attempt {attempt}/{max_attempts - 1}, delay={delay}")
-                print(f"[RETRY] step={step_id} attempt={attempt} delay={delay}", flush=True)
-                state.database.update_step_state_machine(step_id=step_id, status="Retry", retry_count=attempt)
-                _require_write(
-                    state.database.add_step_event(
-                        step_id, str(plan.plan_id), "retry",
-                        {"attempt": attempt, "delay": delay}, branch_version=branch_version,
-                    ),
-                    f"步骤 {step_id} retry 事件写入",
-                )
-                await broadcast_plan_update(str(plan.plan_id))
-                await asyncio.sleep(delay)
-
-            print(f"[AFTER_LOOP] step={step_id} success={result.get('success')} check={result.get('check_status')} attempt={attempt}", flush=True)
-            # 明确失败才终止循环继续执行。
-            # success=False 是执行失败；check_status="failed" 是校验明确不通过。
-            # "unverified" 只表示无法自动校验，不应阻断计划继续。
-            if (not result.get("success") and not result.get("terminal_success")) or result.get("check_status") == "failed":
-                await broadcast_log(f"[ERROR] 步骤 {step_id} 失败（已重试 {attempt} 次）: {result.get('error')}", "error")
+                    code, step_id = outcome
+                    current_step_id = step_id
+                    if code == "stop":
+                        stop_step_id = step_id
+                        break
+            if stop_step_id:
+                await broadcast_log(f"[ERROR] 批内步骤 {stop_step_id} 失败，终止执行", "error")
                 break
-
-            # 成功但未校验：视为完成，继续执行后续步骤
-            await broadcast_log(f"[OK] 步骤 {step_id} 完成（未校验）", "success")
-            # 不要在这里 break；外循环需要继续取下一个 step
 
         # 最后一个步骤可能在本轮循环末尾完成，下一轮通常会完成状态收敛；
         # 这里再做一次幂等收敛，避免收尾阶段把成功运行误判为 Failed。

@@ -131,6 +131,8 @@ class Step(BaseModel):
     check_criteria: str
     # 显式 WorkGraph 依赖；旧计划缺失时保持空列表并继续按 order 执行。
     depends_on: List[str] = Field(default_factory=list)
+    # 资源声明：{"read": [...], "write": [...]}，用于受控并行的冲突检测。
+    resources: Optional[Dict[str, Any]] = None
     # 结构化确定性验收规则；为空时兼容旧版 LLM check_result 路径。
     acceptance: List[Dict[str, Any]] = Field(default_factory=list)
     outputs: Optional[Dict[str, Any]] = None

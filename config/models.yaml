@@ -37,6 +37,9 @@ models:
       model: step-3.5-flash-2603
       provider: stepfun
       temperature: 0.1
+    # 受控并行：max_concurrency=1 为严格串行（默认，行为与旧版一致）。
+    # 计划内批级并行需同时满足：parallel_graphs=true 且计划声明 depends_on。
+    max_concurrency: 1
   knowledge:
     fallback:
       max_tokens: 4000
@@ -135,8 +138,7 @@ retry:
   timeout: 60
 # Runtime 临时授权：每个 API 步骤单独签发，执行后撤销。
 # allowed_hosts 留空表示网络工具必须显式配置目标主机，不会被 Grant 默认放行。
-authorization:
-  enforce: true
+authorization:  enforce: true
   require_grant: true
   allow_absolute_paths: true
   default_ttl_seconds: 600
