@@ -132,13 +132,18 @@ models:
 rate_limit:
   requests_per_minute: 50
   tokens_per_minute: 100000
+
+# 计划内批级并行总开关（默认关闭 = 旧串行行为）。开启后仅对声明了
+# depends_on 的显式依赖图生效；旧线性计划仍逐步骤串行。
+parallel_graphs: false
 retry:
   backoff_factor: 2
   max_attempts: 3
   timeout: 60
 # Runtime 临时授权：每个 API 步骤单独签发，执行后撤销。
 # allowed_hosts 留空表示网络工具必须显式配置目标主机，不会被 Grant 默认放行。
-authorization:  enforce: true
+authorization:
+  enforce: true
   require_grant: true
   allow_absolute_paths: true
   default_ttl_seconds: 600
