@@ -1,28 +1,5 @@
 ...[早期记忆已截断]
-（最终状态: Completed）
-- 步骤1 [file_creator] Success —— 步骤1
-- 步骤2 [file_creator] Success —— 步骤2
-- 步骤3 [file_creator] Success —— 步骤3
-
-## [2026-09-09 20:34:15] 执行摘要
-计划 f242069a 执行结束（最终状态: Paused）
-- 步骤1 [file_creator] Pending —— 步骤1
-- 步骤2 [file_creator] Pending —— 步骤2
-- 步骤3 [file_creator] Pending —— 步骤3
-
-## [2026-09-09 20:34:15] 执行摘要
-计划 4763a906 执行结束（最终状态: Pending）
-- 步骤1 [file_creator] Pending —— 步骤1
-- 步骤2 [file_creator] Pending —— 步骤2
-- 步骤3 [file_creator] Pending —— 步骤3
-
-## [2026-09-09 20:34:15] 执行摘要
-计划 3fa2e3fe 执行结束（最终状态: Failed）
-- 步骤1 [file_creator] Failed（原因: temporary test failure） —— 步骤1
-- 步骤2 [file_creator] Pending —— 步骤2
-- 步骤3 [file_creator] Pending —— 步骤3
-
-## [2026-09-09 20:34:15] 执行摘要
+2026-09-09 20:34:15] 执行摘要
 计划 3fa2e3fe 执行结束（最终状态: Completed）
 - 步骤1 [file_creator] Success —— 步骤1
 - 步骤2 [file_creator] Success —— 步骤2
@@ -661,3 +638,27 @@
 - 步骤1 [file_creator] Success —— 步骤1
 - 步骤2 [file_creator] Success —— 步骤2
 - 步骤3 [file_creator] Success —— 步骤3
+
+## [2026-09-11 22:32:51] 执行摘要
+计划 275920d3 执行结束（最终状态: Failed）
+- 步骤1 [file_creator] Running —— root
+- 步骤2 [file_creator] Pending —— leaf-b
+- 步骤3 [file_creator] Pending —— leaf-c
+
+## [2026-09-11 22:33:36] 执行摘要
+计划 ad0ca887 执行结束（最终状态: Completed）
+- 步骤1 [manual_tool] Success —— a
+- 步骤2 [manual_tool] Success —— b
+- 步骤3 [manual_tool] Success —— c
+
+## [2026-09-11 22:43:51] 执行摘要
+计划 cfdefd55 执行结束（最终状态: Completed）
+- 步骤1 [manual_tool] Success —— a
+- 步骤2 [manual_tool] Success —— b
+- 步骤3 [manual_tool] Success —— c
+
+## [2026-09-11 22:43:52] 执行摘要
+计划 ed50d10a 执行结束（最终状态: Completed）
+- 步骤1 [manual_tool] Success —— a
+- 步骤2 [manual_tool] Success —— b
+- 步骤3 [manual_tool] Success —— c

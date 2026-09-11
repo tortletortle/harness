@@ -228,3 +228,69 @@ def test_select_next_batch_respects_parallel_disabled(tmp_path):
     batch = db.select_next_batch(str(plan.plan_id), max_concurrency=2, parallel_graphs=False)
     assert len(batch["steps"]) == 1, "parallel_graphs=False 时不允许批并行"
 
+
+@pytest.mark.asyncio
+async def test_execute_plan_background_runs_ready_batch_in_parallel(tmp_path, monkeypatch):
+    """端到端：显式 DAG a→b、a→c 且启用并行时，b/c 在同一批并发执行，计划 Completed。"""
+    import asyncio
+    from types import SimpleNamespace
+
+    from api import server as server_mod
+
+    db = Database(str(tmp_path / "parallel_e2e.db"))
+    server_mod.state.database = db
+    server_mod.state.executor_max_concurrency = 2
+    server_mod.state.parallel_graphs = True
+
+    plan, steps = _seed_graph(db, [("a", [], None), ("b", ["a"], None), ("c", ["a"], None)])
+    overlapping: dict[str, bool] = {}
+
+    async def _fake_step_state_machine(plan, row):
+        step_id = str(row["step_id"])
+        # 记录是否与其它步骤同时处于 Running。
+        running = {sid for sid, flag in overlapping.items() if flag}
+        if running:
+            overlapping["concurrent"] = True
+        overlapping[step_id] = True
+        await asyncio.sleep(0.05)
+        overlapping[step_id] = False
+        db.update_step_state_machine(step_id=step_id, status="Success", outputs={})
+        return {"success": True, "check_status": "unverified", "output": {}, "error": None, "blocked": False, "retryable": False}
+
+    monkeypatch.setattr(server_mod, "_execute_step_with_state_machine", _fake_step_state_machine)
+    await server_mod.execute_plan_background(db.get_plan(str(plan.plan_id)))
+
+    assert db.get_plan_status(str(plan.plan_id)) == "Completed"
+    assert overlapping.get("concurrent"), "b/c 应并发执行（至少两个步骤同时 Running）"
+    assert all(r["status"] == "Success" for r in db.get_steps(str(plan.plan_id)))
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_background_serial_when_parallel_disabled(tmp_path, monkeypatch):
+    """显式 DAG 但 parallel_graphs=False：仍逐批单步执行，行为与旧版一致。"""
+    import asyncio
+
+    from api import server as server_mod
+
+    db = Database(str(tmp_path / "serial_e2e.db"))
+    server_mod.state.database = db
+    server_mod.state.executor_max_concurrency = 2
+    server_mod.state.parallel_graphs = False
+
+    plan, steps = _seed_graph(db, [("a", [], None), ("b", ["a"], None), ("c", ["a"], None)])
+    seen: list[str] = []
+
+    async def _fake_step_state_machine(plan, row):
+        step_id = str(row["step_id"])
+        seen.append(step_id)
+        await asyncio.sleep(0.02)
+        db.update_step_state_machine(step_id=step_id, status="Success", outputs={})
+        return {"success": True, "check_status": "unverified", "output": {}, "error": None, "blocked": False, "retryable": False}
+
+    monkeypatch.setattr(server_mod, "_execute_step_with_state_machine", _fake_step_state_machine)
+    await server_mod.execute_plan_background(db.get_plan(str(plan.plan_id)))
+
+    assert db.get_plan_status(str(plan.plan_id)) == "Completed"
+    assert seen == [str(s.step_id) for s in steps], "未启用并行时必须按顺序逐步骤执行"
+
+

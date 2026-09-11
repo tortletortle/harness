@@ -5,9 +5,9 @@
 
 ## 版本
 
-- 当前版本：`1.14-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；test_passes 测试即验收类型（削接缝动作 B 第一级，§27）已实施；失败 checkpoint 续跑与 Retry 孤儿恢复已实施；worktree 路线已定
-- 最后更新：2026-09-06
+- 当前版本：`1.16-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；test_passes 测试即验收类型（削接缝动作 B 第一级，§27）已实施；失败 checkpoint 续跑与 Retry 孤儿恢复已实施；worktree 路线已定；最小 WorkGraph（依赖声明 + DAG 校验 + 依赖感知取步，1.15）与资源声明 + 受控并行（1.16）已实施
+- 最后更新：2026-09-11
 
 ## 1. 目标
 
@@ -1166,3 +1166,12 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
 - 新增 `artifacts` SQLite 元数据表及 `create_artifact` / `get_artifact` / `list_artifacts`，只保存 URI/哈希/元数据，不承载文件内容。
 - 新增 `test_work_graph.py`、`test_dependency_scheduler.py`、`test_artifacts_persistence.py`；离线回归 641 passed / 9 skipped / 2 deselected。
 - 未完成项保持不变：真正 DAG 并行、资源锁、worktree、完整 Artifact Store 内容层、AgentSession/Turn 分层和动态重规划。
+
+### 1.16-draft — 2026-09-11：资源声明与受控并行（已实施）
+
+- `Step.resources`（`{read, write}`）随 inputs 持久化，不动 schema；`normalize_resource_spec` 规范化路径，`resources_conflict` 实现 write×write / write×read 冲突、read×read 兼容的路径包含判定。
+- `select_next_batch`：依赖就绪 + 资源冲突过滤的批取步；无显式依赖的旧计划、`parallel_graphs=false` 或 `max_concurrency=1` 均严格退化为逐步骤串行。
+- `execute_plan_background` 单步执行体提取为 `_execute_step_to_completion`（attempt/事件/重试/反馈/状态写入逐步骤独立），批内用 `asyncio.Semaphore` 有界并发；任一步骤失败即终止整批，保持「失败即停」与 checkpoint/回滚语义。
+- 配置：`models.executor.max_concurrency`（默认 1）与顶层 `parallel_graphs`（默认 false）；默认关闭 = 与旧版行为完全一致。
+- 验证：`test_dependency_scheduler.py` 覆盖独立节点同批、写写/写读冲突、旧计划串行、开关关闭；端到端确认 a→b、a→c 在并行开启时 b/c 并发完成。离线回归 652 passed / 9 skipped / 2 deselected。
+- 仍待后续：跨任务并发（current_execution 单执行权保持不变）、worktree 隔离、动态重规划。
