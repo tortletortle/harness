@@ -40,7 +40,8 @@ AI 任务编排与执行系统：用户需求 → Designer（LLM）生成技术�
 ### 入口与服务层（2026-09-12 已拆分）
 | 位置 | 行数 | 职责 |
 |---|---|---|
-| `api/server.py` | ~1640 | **组装点**：lifespan 装配、执行运行时（execute_plan_background / 单步状态机 / 报告与产物登记）、异常处理、`include_router` 装配、兼容 re-export |
+| `api/server.py` | ~545 | **组装点**：lifespan 装配、异常处理、`include_router` 装配、兼容 re-export（routes 与 runtime） |
+| `api/runtime/` | ~1157 | **执行运行时**（自 server.py 拆分）：`step_execution.py`（单步状态机 / 重试 / attempt / 事件 / 状态写入 / 上下文压缩）、`artifacts.py`（步骤产物登记 + 最终交付报告）、`background.py`（execute_plan_background 后台总循环）；runtime 符号同时从 `api.server` 命名空间可访问，测试 monkeypatch 面兼容 |
 | `api/shared.py` | ~360 | AppState 全局状态、WebSocket 广播、格式化、配置加载、暂停检查点计算 |
 | `api/routes/`（9 个模块） | ~1770 | 按领域拆分的 HTTP 路由：design（207）、plan（590）、approval（70）、artifact（72）、agent_session（29）、worktree（162）、quick_task（98）、replan（209）、misc（321，含状态/工具/chat/skills/notify/capabilities/config/审计/用量/重启/WebSocket） |
 | `api/auth.py` | — | Bearer / X-API-Token 鉴权（`require_token`）；GET `/` 公开健康检查，WS 走 query token |

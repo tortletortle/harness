@@ -41,7 +41,11 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 
 ## 已知短板
 
-1. ~~`python/api/server.py` 仍然是大型协调入口~~ **已拆分（2026-09-12）**：状态/广播/格式化进 `api/shared.py`，HTTP 路由按领域进 `api/routes/`（design/plan/approval/artifact/agent_session/worktree/quick_task/replan/misc 九个模块，`app.include_router` 装配），server.py 保留 lifespan、执行运行时与兼容 re-export（3242 → 1643 行）。执行运行时（execute_plan_background/单步状态机）仍在 server.py，后续可再拆 runtime 模块（需同步调整测试的 monkeypatch 面）。
+1. ~~`python/api/server.py` 仍然是大型协调入口~~ **已拆分（两轮，2026-09-12）**：
+   - 第一轮：状态/广播/格式化进 `api/shared.py`，HTTP 路由按领域进 `api/routes/`（design/plan/approval/artifact/agent_session/worktree/quick_task/replan/misc 九个模块，`app.include_router` 装配）；server.py 3242 → 1643 行。
+   - 第二轮：执行运行时拆到 `python/api/runtime/`（step_execution.py / artifacts.py / background.py），server.py 1643 → 545 行（净减 1098 行）。
+   - 兼容 re-export：所有 runtime 符号仍可从 `api.server` 导入（`from api.server import execute_plan_background` 等），单步状态机调用通过 `api.server` 间接解析，测试 `monkeypatch.setattr(server_mod, "_execute_step_with_state_machine", ...)` 路径保持兼容，零测试改动。
+   - 顺手清理：删除 `_is_retryable_exit_code_acceptance` 函数尾部的孤儿 docstring + if/raise（永不执行的死代码）；删除与 `api/shared.py` 重复的 `format_plan_for_frontend` 定义，统一以 shared.py 为准。
 2. ~~AgentSession/Run/Turn/Attempt 的完整持久化分层尚未完成~~ Session/Turn 已落地（2026-09-12，含前端视图）；Turn 级上下文压缩与跨会话恢复仍为后续。
 3. 覆盖率分布不均，Designer、LLM client 和部分入口代码较薄。
 4. Rust 与 Python 的运行时、错误码和事件契约仍需通过兼容测试逐步对齐；Rust 代码从未编译验证（本机无 cargo）。
