@@ -26,16 +26,16 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 
 ## 当前验证基线（2026-09-12）
 
-- **B 标准真实验收：通过（4/4 场景）**。真实 LLM 全链路：S1 任务模式识别（direct 直达工具 + Grant/审计）✓；S2 设计→计划→执行 + 产物自动登记 + 最终交付报告 ✓；S3 worktree 隔离端到端（绑定→worktree 内执行+验收→自动快照合并回主仓库→direct 读取内容验证）✓；S4 动态重规划自愈（test_runner 真实失败→Designer 生成修复步骤→新分支重跑 Completed）✓。证据 `out/real-llm-acceptance-b.json`。**验收过程发现并修复三个真实缺陷**：generate_plan 的 UUID NameError（LLM 带 step_id 时计划生成必现失败）、AcceptanceRunner 工作区在构造时固化不跟随 worktree 覆盖（验收把相对路径解析到主工作区）、quick-task 直达路径绕过 authorize 闸门（安全）。
-- A 标准五任务真实验收：**通过**（2026-09-10）。证据 `out/real-llm-acceptance-a.json`。
-- 任务模式识别（2026-09-12）：`application/task_router.py` 确定性规则路由（创建/修改/多步动作 → graph；搜索/读取/测试/检查单动作 → direct 附工具与参数）；`POST /api/quick-task` 直达工具调用（签发一次性 Grant + 强制 authorize + 审计，blocked 语义与计划内一致），graph 模式引导走设计书流程。
-- 前端 Vitest：45 passed（新增 ArtifactsView / AgentSessionsView 组件测试）；生产构建成功。
-- 前端三个视图（2026-09-12）：执行计划页新增 WorkGraph 依赖分层视图（拓扑层级分组，同层即受控并行批次）与步骤依赖徽标、Failed 计划的"重规划"按钮；新增"产物库"视图（列表/plan 过滤/内容预览/交付报告分区）与"Agent 记录"视图（Session 列表 + 逐轮 Turn 钻取，token 与耗时展示），并接入侧栏导航。
-- 隔离 checkpoint 验收脚本：退出码 0。
-- 默认离线 Python 回归：694 passed / 9 skipped / 2 deselected（含任务路由、依赖调度、批并行、worktree、Session/Turn、重规划、报告专项）。
+- **C 标准真实验收：通过（4/4 场景）**。真实 LLM 补齐此前缺的证据：C1 受控并行（显式依赖图 + parallel_graphs=true，running 事件时间戳重叠证实 sibling 并发执行）✓；C2 多 worktree 并行（两计划各绑独立 worktree 并发执行，产物隔离在主仓库之外）✓；C3 AgentSession/Turn 记录（真实 coding_agent 步骤产生 session + 逐轮 turn，token/终态可查）✓；C4 交付报告内容（报告真实生成且为可读 markdown）✓。证据 `out/real-llm-acceptance-c.json`。
+- **B 标准真实验收：通过（4/4 场景）**（拆分后重跑确认链路完好）。证据 `out/real-llm-acceptance-b.json`。
+- A 标准五任务真实验收：**通过**。证据 `out/real-llm-acceptance-a.json`。
+- **拆分修复（2026-09-12）**：server.py 按领域拆分后，真实链路验收暴露并修复了 7 处 `api/routes/*` 的符号缺失——5 个文件缺 `logger` import（异常分支 NameError）、design_routes 缺 `GrantLimits`、plan/worktree 缺 `GitOperator`、replan 缺 `List` 等。用 AST 扫描 + 逐文件补全，路由注册全部验证通过。
+- 任务模式识别（2026-09-12）：`application/task_router.py` + `POST /api/quick-task`（direct 直达工具 + Grant + 审计）。
+- 前端 Vitest：49 passed（新增 InputView 快速执行组件测试）；生产构建成功；WorkGraph 依赖视图 / 产物库 / Agent 记录三视图已接入。
+- 前端任务模式入口（2026-09-12）：新建任务页新增"快速执行"按钮，调用 `/api/quick-task`——识别为 direct（读取/搜索/测试/检查）时内联展示工具结果（内容/失败原因/安全拦截），识别为 graph 时引导进入设计书流程。目标任务模式识别的前端闭环完整。
+- 默认离线 Python 回归：694 passed / 9 skipped / 2 deselected。
 - 真实浏览器（Playwright Chromium）检查：11 passed。
-- 计划/生命周期/checkpoint 回归：42 passed。
-- Mimosa 深度扫描：6 个静态 finding（path-traversal 5、SSRF 1）；super_search SSRF 已修复，其余待复核。
+- Mimosa 深度扫描：super_search SSRF 已修复，其余待复核。
 - Rust 测试：当前开发机未安装 cargo，尚未执行。
 
 
