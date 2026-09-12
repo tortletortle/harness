@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from tools.web_fetcher import _validate_url
+from tools.web_fetcher import _safe_opener, _validate_url
 from tools.workspace import resolve_workspace_root
 
 _DEFAULT_TIMEOUT = 15  # 秒，搜索引擎请求
@@ -82,7 +82,7 @@ def _http_fetch(
         raise EngineError(_url_error)
     req = urllib.request.Request(url, data=data, headers=merged)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _safe_opener().open(req, timeout=timeout) as resp:
             raw = _read_limited(resp, max_bytes)
             if (resp.headers.get("Content-Encoding") or "").lower() == "gzip":
                 raw = gzip.decompress(raw)

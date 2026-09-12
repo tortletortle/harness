@@ -5,10 +5,11 @@ Web资源获取工具
 
 import ipaddress
 import socket
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from tools.workspace import resolve_workspace_path
 
@@ -59,6 +60,28 @@ def _validate_url(url: str):
             return f"拒绝访问内网/本机地址: {hostname} -> {ip_str}"
 
     return None
+
+
+class _RedirectBlockedError(urllib.error.HTTPError):
+    """重定向目标未通过 SSRF 校验（fail-closed 标记异常）。"""
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """重定向守卫：每个跳转目标都重新过 _validate_url，失败则拒绝跳转。"""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        absolute = urljoin(req.get_full_url(), newurl)
+        error = _validate_url(absolute)
+        if error:
+            raise _RedirectBlockedError(
+                absolute, code, f"重定向目标被拒绝: {error}", headers, fp
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _safe_opener():
+    """携带重定向守卫的 opener（显式使用，不污染全局 urlopen）。"""
+    return urllib.request.build_opener(_SafeRedirectHandler)
 
 
 class WebFetcher:
@@ -114,7 +137,7 @@ class WebFetcher:
 
             # 下载文件（带超时与大小限制，避免无限制下载导致磁盘被打满或请求挂死）
             req = urllib.request.Request(url, headers={"User-Agent": "EAS-WebFetcher/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with _safe_opener().open(req, timeout=timeout) as response:
                 content_length = response.headers.get("Content-Length")
                 if content_length and int(content_length) > _MAX_DOWNLOAD_SIZE:
                     return {
@@ -149,6 +172,13 @@ class WebFetcher:
                 "path": str(file_path.absolute()),
                 "size": size
             }
+        except _RedirectBlockedError as e:
+            return {
+                "success": False,
+                "message": f"下载失败: {e}",
+                "error": str(e),
+                "blocked": True,
+            }
         except Exception as e:
             return {
                 "success": False,
@@ -170,7 +200,7 @@ class WebFetcher:
                 }
 
             req = urllib.request.Request(url, headers={"User-Agent": "EAS-WebFetcher/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with _safe_opener().open(req, timeout=timeout) as response:
                 content_length = response.headers.get("Content-Length")
                 if content_length and int(content_length) > _MAX_CONTENT_SIZE:
                     return {
@@ -201,6 +231,13 @@ class WebFetcher:
                 "message": "内容获取成功",
                 "content": content,
                 "size": len(content)
+            }
+        except _RedirectBlockedError as e:
+            return {
+                "success": False,
+                "message": f"获取内容失败: {e}",
+                "error": str(e),
+                "blocked": True,
             }
         except Exception as e:
             return {
