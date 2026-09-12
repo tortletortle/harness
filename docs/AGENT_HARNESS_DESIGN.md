@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`1.17-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；test_passes 测试即验收类型（削接缝动作 B 第一级，§27）已实施；失败 checkpoint 续跑与 Retry 孤儿恢复已实施；worktree 路线已定；最小 WorkGraph（依赖声明 + DAG 校验 + 依赖感知取步，1.15）、资源声明 + 受控并行（1.16）与 Worktree 隔离第一阶段（1.17）已实施
+- 当前版本：`1.18-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；test_passes 测试即验收类型（削接缝动作 B 第一级，§27）已实施；失败 checkpoint 续跑与 Retry 孤儿恢复已实施；worktree 路线已定；最小 WorkGraph（依赖声明 + DAG 校验 + 依赖感知取步，1.15）、资源声明 + 受控并行（1.16）、Worktree 隔离第一阶段（1.17）、多计划并行 + AgentSession/Turn 分层 + Artifact 内容层 + 动态重规划 + review/diagnosis Agent + 最终交付报告（1.18）已实施
 - 最后更新：2026-09-12
 
 ## 1. 目标
@@ -1184,3 +1184,13 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
 - 执行绑定：计划存在 active worktree 时，执行循环把 `EAS_WORKSPACE_ROOT` 重定向到 worktree（全局单计划执行权保证安全，finally 恢复），Grant workspace 同步指向 worktree——文件类工具相对路径与命令类工具隐式 cwd 一致落在 worktree。
 - 验证：`test_worktree_isolation.py` 6 项（真实 git：roundtrip、路径逃逸拒绝、冲突结构化失败、DB 生命周期、端到端 workspace 重定向 + 合并带回产物）。离线回归 660 passed / 9 skipped / 2 deselected。
 - 待后续：多计划各占 worktree 并行执行（替换 current_execution 单执行权）、worktree 冲突的 review 流程接入。
+
+### 1.18-draft — 2026-09-12：多计划并行 + 运行记录分层 + Artifact 内容层 + 动态重规划（已实施）
+
+- **多计划并行执行**：工作区覆盖从进程级 env 升级为 contextvar（`tools/workspace.py`，`set_workspace_override`；file_creator/text_editor/manual_tool 的 ThreadPoolExecutor 边界显式 `copy_context().run` 传播）。绑定 worktree 的计划不占用 `current_execution` 主工作区执行权（execute/resume 端点 + finally 清理同步调整），可与任何计划并行；同计划重复执行仍由 DB 状态机原子认领拒绝。
+- **AgentSession/Turn 分层**：`agent_sessions`/`agent_turns` 表 + Database CRUD；coding_agent 每次 run 记录 session（Grant usage 聚合 turns/model_calls/tool_calls/tokens/终态），每轮模型调用记录 turn（outcome: model_ok/patch_error/json_error/invalid_output/path_redirect/empty_rejected/applied/selftest_passed/selftest_failed/model_error/model_denied）；记录失败只降级。API：`GET /api/agent-sessions`、`GET /api/agent-sessions/{id}/turns`。
+- **Artifact 内容层**：`store_artifact_content`（data/artifacts/ 落盘 + SHA-256）、`read_artifact_content`、`verify_artifact_hash`；API `GET/POST /api/artifacts`、`GET /api/artifacts/{id}[/content]`；步骤成功后 output.path 与 agent file:// 引用自动登记（仅元数据，fail-open）。
+- **动态重规划**：`POST /api/plan/{plan_id}/replan`（仅 Failed 计划）。锚点 = resume 断点或首个活动失败步骤 F；有前驱 P 时回滚克隆 F 链到新分支并插入 Designer 生成的修复步骤链 R1..Rn（复用计划契约校验，fail-closed 抛 GenerationError），F 克隆依赖追加 Rn；无前驱时 F 原地重跑、R 链挂前。旧线性计划在追加依赖后显式化克隆链顺序（内存构造依赖计划统一写库）。`Designer.generate_repair_steps` 复用 agent/工具轻契约 + 验收白名单。
+- **Agent 扩展与交付报告**：review_agent / diagnosis_agent（SingleTurnAgentTool 实例，Grant 受限单轮）注册进 Capability 清单，Designer 目录可见；计划 Completed 后 `Designer.generate_summary` 自动生成最终交付报告（kind=delivery_report 落 artifacts 表，fail-open 不影响收尾）。
+- 验证：`test_multi_plan_parallel.py`（2 worktree 计划并行 + 与主工作区计划并行、产物隔离）、`test_agent_session_recording.py`（4）、`test_artifact_content.py`（3）、`test_replan.py`（5）、`test_agents_and_report.py`（4）。离线回归 **678 passed / 9 skipped / 2 deselected**。
+- 总目标能力域收尾状态：任务模式识别（直接工具模式）与前端 WorkGraph 可视化仍未实现；多计划并行已具备（worktree 绑定计划间），主工作区计划仍单执行权。

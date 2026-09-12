@@ -996,7 +996,7 @@ class DefaultDesigner(Designer):
                     continue  # 重试
                 
                 # 成功解析，构建 ExecutionPlan
-                from uuid import uuid4
+                from uuid import UUID, uuid4
                 from datetime import datetime
                 
                 segments = []

@@ -74,6 +74,10 @@ class AcceptanceRunner:
         max_read_bytes: int = _DEFAULT_MAX_READ_BYTES,
         command_timeout: float = 10.0,
     ) -> None:
+        # 显式传参 = 测试隔离语义（固定该根）；未传参 = 跟随执行级工作区
+        # 解析链（contextvar 覆盖 > env > 仓库根），worktree 绑定等运行时
+        # 覆盖因此对验收器同样生效。
+        self._explicit_root = workspace_root is not None
         self.workspace_root = Path(workspace_root).resolve() if workspace_root else resolve_workspace_root()
         self.max_read_bytes = max(1, int(max_read_bytes))
         self.command_timeout = max(0.1, float(command_timeout))
@@ -378,15 +382,18 @@ class AcceptanceRunner:
         if raw.is_absolute():
             # Keep existing EAS semantics for explicit absolute paths.
             return raw.resolve()
-        root = self.workspace_root
-        # AcceptanceRunner may be pointed at an isolated test workspace; do not
-        # consult the process-wide EAS_WORKSPACE_ROOT in that case.
-        candidate = (root / raw).resolve()
-        try:
-            candidate.relative_to(root)
-        except ValueError as exc:
-            raise ValueError(f"相对路径越界: {value}") from exc
-        return candidate
+        if self._explicit_root:
+            root = self.workspace_root
+            # AcceptanceRunner may be pointed at an isolated test workspace; do not
+            # consult the process-wide EAS_WORKSPACE_ROOT in that case.
+            candidate = (root / raw).resolve()
+            try:
+                candidate.relative_to(root)
+            except ValueError as exc:
+                raise ValueError(f"相对路径越界: {value}") from exc
+            return candidate
+        # 执行级：跟随当前上下文的工作区解析链（worktree 绑定等覆盖生效）。
+        return resolve_workspace_path(raw).resolve()
 
     @staticmethod
     def _normalise_git_path(value: Any) -> str:
