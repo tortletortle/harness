@@ -106,3 +106,8 @@ config/models.local.yaml
 # Local trial artifacts
 out/
 data/notifications.jsonl
+
+# 运行产物：Artifact 内容层（SHA-256 落盘，文件名无意义）与每日报告生成物
+# 只存本地运行状态，不入库；如需保留请另存到 docs/
+data/artifacts/
+data/reports/
