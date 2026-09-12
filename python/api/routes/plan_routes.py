@@ -8,6 +8,8 @@ from typing import Any, Dict, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
+from tools.git_operator import GitOperator
 
 from api.auth import require_token
 from api.shared import (
@@ -15,6 +17,11 @@ from api.shared import (
     _require_write, _compute_pause_checkpoint,
 )
 from models import PlanStatus, StepStatus, RunStatus, AttemptStatus
+
+
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 

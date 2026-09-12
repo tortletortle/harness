@@ -12,9 +12,15 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Body, WebSocket, WebSocketDisconnect
 
 from api.auth import require_token
+from api.auth import verify_token
+
 from api.shared import state, broadcast_log, _load_models_config, _deep_merge_dict
 from database import DatabaseError
 from designer import GenerationError
+
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 

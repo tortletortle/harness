@@ -7,7 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from api.auth import require_token
+
 from api.shared import state, broadcast_approval_resolved, broadcast_log
+from designer import GenerationError
+
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 

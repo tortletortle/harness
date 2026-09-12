@@ -7,8 +7,13 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
+
 from api.auth import require_token
 from api.shared import state, broadcast_log, _require_write
+
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 

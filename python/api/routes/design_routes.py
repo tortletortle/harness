@@ -6,11 +6,17 @@ from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
+import asyncio
 from pydantic import BaseModel
 
 from api.auth import require_token
 from api.shared import state, broadcast_plan_update, broadcast_log, format_design_for_frontend, _require_write
+from api.shared import format_plan_for_frontend
 from designer import GenerationError
+from authorization import GrantLimits
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict, Optional
+from typing import List
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,6 +13,11 @@ from api.auth import require_token
 from api.shared import state, broadcast_plan_update, broadcast_log, _require_write
 from designer import GenerationError
 from models import PlanStatus, StepStatus
+
+
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
