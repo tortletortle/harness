@@ -50,7 +50,12 @@ def test_executor_infers_new_tool_instructions():
 
 
 def test_budget_gate_and_usage_hook_in_place():
-    server = _read("python/api/server.py")
+    # server.py 已拆分（api/shared.py + api/routes/*）：接线断言必须覆盖整个 api 层，
+    # 否则"端点搬进 routes 文件"会被误判为接线被移除。
+    api_dir = ROOT / "python" / "api"
+    server = "\n".join(
+        p.read_text(encoding="utf-8") for p in sorted(api_dir.rglob("*.py"))
+    )
     assert "budget_max_tokens_per_plan" in server, "预算闸门被移除"
     assert "/api/usage" in server, "用量端点被移除"
     llm = _read("python/llm_client/__init__.py")
