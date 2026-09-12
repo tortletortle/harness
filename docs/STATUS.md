@@ -21,15 +21,17 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 - WorkGraph 第一阶段（2026-09-11）：步骤支持显式 `depends_on`；计划生成、缓存复用与 `save_plan` 三处都做 DAG 校验（重复 id / 悬空依赖 / 自依赖 / 环依赖 fail-closed）；执行循环按依赖就绪取步，依赖失败或无法就绪时计划转 Failed 而非误报 Completed；旧线性计划无依赖字段时按 order 保持原顺序。新增 `artifacts` 产物元数据表（仅存引用与哈希）与配套 CRUD。
 - WorkGraph 第二阶段（2026-09-11）：资源声明（`resources: {read, write}`）与路径冲突检测（write×write / write×read 冲突，read×read 兼容）；`select_next_batch` 依赖感知 + 冲突过滤的批取步；执行循环提取统一单步执行器，支持有界并发（`asyncio.Semaphore`）批级并行；配置 `models.executor.max_concurrency`（默认 1 = 严格串行）与顶层 `parallel_graphs`（默认 false）。并行默认关闭，旧计划与现有串行行为完全不变。
 - Worktree 隔离第一阶段（2026-09-12）：`git_operator` 新增 worktree 指令组（add/list/diff/merge/remove，worktrunk 三命令语义，worktree 位于仓库同级 `<repo>-wt-<name>`）；新增 `worktrees` 表与绑定生命周期（active/merged/discarded）；API 端点 `POST/GET /api/plan/{id}/worktree`、`.../merge`、`.../discard`（合并/丢弃为用户显式动作，Running 状态拒绝）；计划绑定 worktree 执行时 workspace 根重定向（env + Grant workspace），执行结束恢复；合并前自动快照未提交产物，冲突返回结构化失败不自动重试。
-- WorkGraph 第三阶段（2026-09-12）：工作区隔离升级为 contextvar（工具线程池显式传播），多计划并行执行落地——绑定 worktree 的计划不占主工作区执行权，可与其它计划并行；AgentSession/Turn 运行记录分层（`agent_sessions`/`agent_turns` 表，coding_agent 逐轮记录模型调用/token/outcome，API `GET /api/agent-sessions[/{id}/turns]`）；Artifact 内容层（`store_artifact_content` SHA-256 落盘 + 读取/校验 + API `GET/POST /api/artifacts`，步骤产物自动登记）；动态重规划（`POST /api/plan/{id}/replan`：Designer 契约化生成修复步骤链，挂入新分支依赖图，F 重跑点挂在 Rn 之后，旧线性计划显式化）；review_agent/diagnosis_agent 注册进 Capability 清单；计划 Completed 自动生成最终交付报告（kind=delivery_report，fail-open）。默认离线回归 678 passed。
+- WorkGraph 第三阶段（2026-09-12）：工作区隔离升级为 contextvar（工具线程池显式传播），多计划并行执行落地——绑定 worktree 的计划不占主工作区执行权，可与其它计划并行；AgentSession/Turn 运行记录分层（`agent_sessions`/`agent_turns` 表，coding_agent 逐轮记录模型调用/token/outcome，API `GET /api/agent-sessions[/{id}/turns]`）；Artifact 内容层（`store_artifact_content` SHA-256 落盘 + 读取/校验 + API `GET/POST /api/artifacts`，步骤产物自动登记）；动态重规划（`POST /api/plan/{id}/replan`：Designer 契约化生成修复步骤链，挂入新分支依赖图，F 重跑点挂在 Rn 之后，旧线性计划显式化）；review_agent/diagnosis_agent 注册进 Capability 清单；计划 Completed 自动生成最终交付报告（kind=delivery_report，fail-open）。
+- 任务模式识别（2026-09-12）：`application/task_router.py` + `POST /api/quick-task`，实现设计稿 §4 的直接工具模式路由（graph 模式沿用设计书流程）。
 
-## 当前验证基线（2026-09-10）
+## 当前验证基线（2026-09-12）
 
-- A 标准五任务真实验收：**通过**。5 个真实 LLM 任务全部 Completed，产物 `harness_real_task_*.md` 落盘。证据 `out/real-llm-acceptance-a.json`。
-- 计划缓存外键 bug 修复：`generate_plan` 缓存命中时复用计划结构但重新生成 plan_id/step_id，避免重建已执行计划触发 `execution_attempts` 外键违约。
+- **B 标准真实验收：通过（4/4 场景）**。真实 LLM 全链路：S1 任务模式识别（direct 直达工具 + Grant/审计）✓；S2 设计→计划→执行 + 产物自动登记 + 最终交付报告 ✓；S3 worktree 隔离端到端（绑定→worktree 内执行+验收→自动快照合并回主仓库→direct 读取内容验证）✓；S4 动态重规划自愈（test_runner 真实失败→Designer 生成修复步骤→新分支重跑 Completed）✓。证据 `out/real-llm-acceptance-b.json`。**验收过程发现并修复三个真实缺陷**：generate_plan 的 UUID NameError（LLM 带 step_id 时计划生成必现失败）、AcceptanceRunner 工作区在构造时固化不跟随 worktree 覆盖（验收把相对路径解析到主工作区）、quick-task 直达路径绕过 authorize 闸门（安全）。
+- A 标准五任务真实验收：**通过**（2026-09-10）。证据 `out/real-llm-acceptance-a.json`。
+- 任务模式识别（2026-09-12）：`application/task_router.py` 确定性规则路由（创建/修改/多步动作 → graph；搜索/读取/测试/检查单动作 → direct 附工具与参数）；`POST /api/quick-task` 直达工具调用（签发一次性 Grant + 强制 authorize + 审计，blocked 语义与计划内一致），graph 模式引导走设计书流程。
 - 前端 Vitest：36 passed；生产构建成功。
 - 隔离 checkpoint 验收脚本：退出码 0。
-- 默认离线 Python 回归：678 passed / 9 skipped / 2 deselected（含依赖调度、批并行、worktree、Session/Turn、重规划、报告专项）。
+- 默认离线 Python 回归：694 passed / 9 skipped / 2 deselected（含任务路由、依赖调度、批并行、worktree、Session/Turn、重规划、报告专项）。
 - 真实浏览器（Playwright Chromium）检查：11 passed。
 - 计划/生命周期/checkpoint 回归：42 passed。
 - Mimosa 深度扫描：6 个静态 finding（path-traversal 5、SSRF 1）；super_search SSRF 已修复，其余待复核。

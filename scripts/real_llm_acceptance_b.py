@@ -155,7 +155,9 @@ def run_acceptance(timeout: int) -> dict:
         return evidence
     s3["plan_id"] = plan_id
 
-    code, binding = request("POST", f"/api/plan/{plan_id}/worktree", {"name": "b-accept"})
+    # 唯一名：避免跨次运行的 worktree/分支残留导致重名拒绝
+    code, binding = request("POST", f"/api/plan/{plan_id}/worktree",
+                            {"name": f"b-accept-{int(time.time())}"})
     s3["bind_status"] = code
     if code != 200 or not binding.get("worktree_path"):
         s3.update({"passed": False, "stage": "bind", "response": binding})
@@ -165,27 +167,34 @@ def run_acceptance(timeout: int) -> dict:
     code, _ = request("POST", f"/api/plan/{plan_id}/execute")
     final_plan = wait_plan(_CLIENT, plan_id, timeout)
     s3["plan_status"] = final_plan.get("status")
+    # 计划 Completed 意味着步骤内确定性验收（file_exists，解析到 worktree）已通过，
+    # 即产物确实落在 worktree 而非主工作区。
 
-    # 服务器端 diff：worktree 分支相对主仓库 HEAD 应包含 wt-proof.txt
-    code, diff = request("GET", f"/api/plan/{plan_id}/worktree", timeout=60)
-    diff_stat = (diff.get("diff") or {}).get("stat") or ""
-    s3["diff_contains_proof"] = "wt-proof.txt" in diff_stat
-
+    # merge（内含自动快照未提交产物）后，用 direct 工具模式读取主仓库文件，
+    # 验证 worktree 产物真实合并回主仓库——纯 HTTP 闭环，不依赖本地 FS。
     code, merged = request("POST", f"/api/plan/{plan_id}/worktree/merge",
                            {"message": "B-standard merge"})
     s3["merge_status"] = code
+
+    code, read_back = request("POST", "/api/quick-task",
+                              {"message": "读取 wt-proof.txt"}, timeout=60)
+    merged_content = ((read_back.get("result") or {}).get("content") or "")
+    s3["merged_content_ok"] = "WORKTREE-OK" in str(merged_content)
     s3["passed"] = (
         final_plan.get("status") == "Completed"
-        and s3["diff_contains_proof"]
         and code == 200
+        and s3["merged_content_ok"]
     )
     evidence["scenarios"].append(s3)
 
     # ===== S4 动态重规划自愈 =====
     s4 = {"name": "replan_self_healing"}
+    # 确定性失败制造：test_runner 对不存在的测试文件跑 pytest → exit 非 0
+    # → test_passes 验收失败 → 计划 Failed（lint 对缺失文件是放行语义，不可用）。
     user_request = (
-        "在工作区创建 output/required.txt（内容 hello-b），"
-        "随后用 lint_gate 对 output/does-not-exist.py 做语法检查。"
+        "在工作区用 test_runner 运行 pytest 测试 output/does-not-exist_test.py"
+        "（该文件尚不存在，本任务用于验证失败处理流程），"
+        "acceptance 使用 test_passes。"
     )
     plan_id, failure = _create_approved_plan(user_request)
     if failure:

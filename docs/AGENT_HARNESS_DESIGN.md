@@ -5,8 +5,8 @@
 
 ## 版本
 
-- 当前版本：`1.18-draft`
-- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；test_passes 测试即验收类型（削接缝动作 B 第一级，§27）已实施；失败 checkpoint 续跑与 Retry 孤儿恢复已实施；worktree 路线已定；最小 WorkGraph（依赖声明 + DAG 校验 + 依赖感知取步，1.15）、资源声明 + 受控并行（1.16）、Worktree 隔离第一阶段（1.17）、多计划并行 + AgentSession/Turn 分层 + Artifact 内容层 + 动态重规划 + review/diagnosis Agent + 最终交付报告（1.18）已实施
+- 当前版本：`1.19-draft`
+- 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；test_passes 测试即验收类型（削接缝动作 B 第一级，§27）已实施；失败 checkpoint 续跑与 Retry 孤儿恢复已实施；最小 WorkGraph（1.15）、资源声明 + 受控并行（1.16）、Worktree 隔离（1.17）、多计划并行 + AgentSession/Turn 分层 + Artifact 内容层 + 动态重规划 + review/diagnosis Agent + 最终交付报告（1.18）、任务模式识别 + B 标准真实验收 4/4（1.19）已实施
 - 最后更新：2026-09-12
 
 ## 1. 目标
@@ -1194,3 +1194,13 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
 - **Agent 扩展与交付报告**：review_agent / diagnosis_agent（SingleTurnAgentTool 实例，Grant 受限单轮）注册进 Capability 清单，Designer 目录可见；计划 Completed 后 `Designer.generate_summary` 自动生成最终交付报告（kind=delivery_report 落 artifacts 表，fail-open 不影响收尾）。
 - 验证：`test_multi_plan_parallel.py`（2 worktree 计划并行 + 与主工作区计划并行、产物隔离）、`test_agent_session_recording.py`（4）、`test_artifact_content.py`（3）、`test_replan.py`（5）、`test_agents_and_report.py`（4）。离线回归 **678 passed / 9 skipped / 2 deselected**。
 - 总目标能力域收尾状态：任务模式识别（直接工具模式）与前端 WorkGraph 可视化仍未实现；多计划并行已具备（worktree 绑定计划间），主工作区计划仍单执行权。
+
+### 1.19-draft — 2026-09-12：任务模式识别 + B 标准真实验收（已实施）
+
+- **任务模式识别（§4 第一阶段）**：`application/task_router.py` 确定性规则路由——创建/修改/删除/多步信号 → graph（保守优先）；搜索/读取/运行测试/仓库地图/语法检查单动作 → direct（附 tool_id/instruction/inputs）。`POST /api/quick-task`：direct 时签发一次性 Grant（max_tool_calls=3/TTL 600s）→ **强制 authorize**（与计划内同一闸门；实现时发现并修复了初版绕过 authorize 的安全缺口）→ to_thread 执行 → 审计 actor=direct_mode；graph 时返回引导。工具未注册回退 graph。
+- **B 标准真实验收**（`scripts/real_llm_acceptance_b.py`，TestClient 触发真实 lifespan，无密钥打印，目标钉死本机控制面）：S1 direct 直达 ✓；S2 真实 LLM 设计→计划→执行 + artifacts 自动登记 + delivery_report ✓；S3 worktree 绑定→worktree 内执行+验收→自动快照合并→direct 读取主仓库内容验证 ✓；S4 真实失败（test_runner 对不存在测试）→ replan（修复步骤）→ 重跑 Completed ✓。证据 `out/real-llm-acceptance-b.json`。
+- **验收暴露并修复的真实缺陷**（离线测试未覆盖的缝隙）：
+  1. `generate_plan` UUID 未导入——LLM 输出带 step_id 时计划生成 100% NameError（1.15 引入；补 test_designer_step_ids.py 防回归）。
+  2. AcceptanceRunner 工作区在构造时固化——worktree 绑定后验收把相对路径解析到主工作区（改为：未显式传参时跟随执行级解析链，显式传参保持测试隔离语义）。
+  3. quick-task 直达路径绕过 authorize（补同一 Grant 闸门 + blocked 语义）。
+- 验证：`test_task_router.py` 14 项、`test_designer_step_ids.py` 2 项；离线回归 **694 passed / 9 skipped / 2 deselected**；B 标准 4/4 真实验收通过。
