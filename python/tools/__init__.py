@@ -5,7 +5,11 @@
 
 from typing import Dict, Any, List, Optional
 import asyncio
+import importlib.util
+import inspect
 import json
+import os
+from pathlib import Path
 from .file_creator import FileCreator
 from .command_runner import CommandRunner
 from .package_installer import PackageInstaller
@@ -385,7 +389,89 @@ class ToolRegistry:
         self.register_tool("browser_check", BrowserCheck)
         # 项目工作记忆：执行状态持久化到工作区，让后续任务"接着干"（用户定位：只服务完成项目）
         self.register_tool("project_memory", ProjectMemory)
-    
+        # 外部工具接入：扫描 EAS_TOOLS_DIR（或默认兄弟目录 ../tools/harness_tools/tools），
+        # 让外部工具仓库（get_metadata/execute 契约）能被实例化；目录缺失时为空操作。
+        self.load_tools_from_dir(self._external_tools_dir())
+
+    @staticmethod
+    def _external_tools_dir() -> str:
+        """解析外部工具目录。
+
+        优先级：环境变量 EAS_TOOLS_DIR → 默认兄弟仓库 <harness根>/../tools/harness_tools/tools。
+        环境变量显式指定则无条件采用；未设置时，默认目录仅在确实存在时返回，否则返回空串
+        （load_tools_from_dir 对空串/不存在路径视为 0 个工具，harness 行为不变）。
+        """
+        explicit = os.environ.get("EAS_TOOLS_DIR")
+        if explicit:
+            return explicit
+        default = (
+            Path(__file__).resolve()                         # harness/python/tools/__init__.py
+            .parent.parent.parent                            # → harness
+            .parent / "tools" / "harness_tools" / "tools"    # → 兄弟仓库的外部工具目录
+        )
+        return str(default) if default.is_dir() else ""
+
+    def load_tools_from_dir(self, directory: str) -> int:
+        """从外部目录加载工具类（静态 get_metadata + execute 契约）。
+
+        目录内每个非 `_` 开头的 .py 模块视为一个工具模块；模块中"本模块定义的、
+        具备 get_metadata 与 execute 静态可调用的类"即工具类，按其 metadata 的
+        tool_id 注册。返回实际加载数量；单个模块失败不影响其余。
+        """
+        directory = Path(directory) if directory else None
+        if directory is None or not directory.is_dir():
+            logger.warning("外部工具目录不存在或未配置（{}），跳过外部工具", directory)
+            return 0
+
+        count = 0
+        for py_path in sorted(directory.glob("*.py")):
+            if py_path.name.startswith("_"):
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location(py_path.stem, py_path)
+                if spec is None or spec.loader is None:
+                    logger.warning("外部工具模块无法创建 spec: {}", py_path.name)
+                    continue
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("外部工具模块加载失败 {}: {}", py_path.name, exc)
+                continue
+
+            tool_class = next(
+                (obj for _, obj in inspect.getmembers(module, inspect.isclass)
+                 if self._is_external_tool_class(obj, module.__name__)),
+                None,
+            )
+            if tool_class is None:
+                logger.warning("外部工具模块内未找到工具类: {}", py_path.name)
+                continue
+
+            try:
+                metadata = tool_class.get_metadata()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("外部工具 get_metadata 异常 {}: {}", py_path.name, exc)
+                continue
+            tool_id = metadata.get("tool_id")
+            if not tool_id:
+                logger.warning("外部工具 metadata 缺少 tool_id: {}", py_path.name)
+                continue
+
+            self.register_tool(tool_id, tool_class)
+            count += 1
+            logger.info("外部工具注册成功: {}", tool_id)
+        return count
+
+    @staticmethod
+    def _is_external_tool_class(obj, module_name: str) -> bool:
+        """是否为本模块内定义的、具备 get_metadata 与 execute 静态方法的工具类。"""
+        return (
+            inspect.isclass(obj)
+            and getattr(obj, "__module__", None) == module_name
+            and callable(getattr(obj, "get_metadata", None))
+            and callable(getattr(obj, "execute", None))
+        )
+
     def register_tool(self, tool_id: str, tool_class, aliases: List[str] = None):
         """注册工具。aliases 中的旧名可继续被 get_tool/execute_tool 解析。"""
         self.tools[tool_id] = tool_class

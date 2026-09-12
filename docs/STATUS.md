@@ -33,7 +33,7 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 - 任务模式识别（2026-09-12）：`application/task_router.py` + `POST /api/quick-task`（direct 直达工具 + Grant + 审计）。
 - 前端 Vitest：49 passed（新增 InputView 快速执行组件测试）；生产构建成功；WorkGraph 依赖视图 / 产物库 / Agent 记录三视图已接入。
 - 前端任务模式入口（2026-09-12）：新建任务页新增"快速执行"按钮，调用 `/api/quick-task`——识别为 direct（读取/搜索/测试/检查）时内联展示工具结果（内容/失败原因/安全拦截），识别为 graph 时引导进入设计书流程。目标任务模式识别的前端闭环完整。
-- 默认离线 Python 回归：694 passed / 9 skipped / 2 deselected。
+- 默认离线 Python 回归：728 passed / 9 skipped / 2 deselected（2026-09-12，含新增工具契约 34 用例）。
 - 真实浏览器（Playwright Chromium）检查：11 passed。
 - Mimosa 深度扫描：super_search SSRF 已修复，其余待复核。
 - Rust 测试：当前开发机未安装 cargo，尚未执行。
@@ -50,7 +50,7 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 3. 覆盖率分布不均，Designer、LLM client 和部分入口代码较薄。
 4. Rust 与 Python 的运行时、错误码和事件契约仍需通过兼容测试逐步对齐；Rust 代码从未编译验证（本机无 cargo）。
 5. 根目录存在历史脚本、实验目录和运行残留，需先分类再决定归档，不直接删除未知文件。
-6. 工具契约“工具返回结构化失败而非把业务失败冒充成功”有文档和测试约束，但仍需逐工具验证异常路径。
+6. ~~工具契约“工具返回结构化失败而非把业务失败冒充成功”有文档和测试约束，但仍需逐工具验证异常路径~~ **已验证（2026-09-12）**：新增 `tests/python/test_tool_contract.py`（34 用例：未知指令/缺参数/错误类型/None 输入逐工具覆盖）；修复 5 类问题——project_memory 非法 limit 抛 ValueError、git worktree 组 `_run_git` 未捕获（Windows NotADirectoryError 穿透）、file_creator 空 path 谎报成功、`resolve_workspace_path` 非字符串 TypeError、7 个工具缺 None-guard。
 7. 前端已覆盖 WorkGraph 依赖视图、产物库与 Agent 记录、quick-task 直达入口（2026-09-12：新建任务页「快速执行」按钮 + 内联结果展示，见 InputView.tsx）。
 
 ## 后续原则
