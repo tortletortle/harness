@@ -236,6 +236,7 @@ class CommandRunner:
     @staticmethod
     def execute(instruction: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """执行工具指令"""
+        inputs = inputs or {}
         if instruction == "run_command" or instruction == "run":
             return CommandRunner.run_command(
                 command=inputs.get("command", ""),

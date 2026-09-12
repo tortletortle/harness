@@ -110,5 +110,9 @@ class ProjectMemory:
             # （有 content → 保存；否则 → 读取）。
             if "content" in inputs:
                 return save_entry(inputs.get("title"), inputs.get("content"))
-            return recall(int(inputs.get("limit_chars", 4000) or 4000))
+            try:
+                limit = int(inputs.get("limit_chars", 4000) or 4000)
+            except (TypeError, ValueError):
+                limit = 4000
+            return recall(limit)
         return {"success": False, "message": f"未知指令: {instruction}", "error": "Unknown instruction"}

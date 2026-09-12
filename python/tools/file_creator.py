@@ -77,6 +77,13 @@ class FileCreator:
     def _create_file_impl(path: str, content: str = "", encoding: str = "utf-8", force_write: bool = False) -> Dict[str, Any]:
         """创建文件"""
         try:
+            if path is None or (isinstance(path, str) and not path.strip()):
+                return {
+                    "success": False,
+                    "blocked": True,
+                    "message": "缺少 path（文件路径）",
+                    "error": "Missing path",
+                }
             file_path = resolve_workspace_path(path)
 
             # SWE-agent 式语法门禁：不让语法错误的 .py 新文件落盘
@@ -120,6 +127,13 @@ class FileCreator:
     def _create_directory_impl(path: str, parents: bool = True) -> Dict[str, Any]:
         """创建目录"""
         try:
+            if path is None or (isinstance(path, str) and not path.strip()):
+                return {
+                    "success": False,
+                    "blocked": True,
+                    "message": "缺少 path（目录路径）",
+                    "error": "Missing path",
+                }
             dir_path = resolve_workspace_path(path)
             dir_path.mkdir(parents=parents, exist_ok=True)
 
@@ -143,6 +157,7 @@ class FileCreator:
     @staticmethod
     def execute(instruction: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """执行工具指令"""
+        inputs = inputs or {}
         timeout = inputs.get("timeout", DEFAULT_TIMEOUT)
         # 兼容 Designer 可能输出的两种键名，优先用标准键名
         path = inputs.get("path") or inputs.get("file_path", "")

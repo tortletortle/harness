@@ -212,6 +212,7 @@ class WebFetcher:
     @staticmethod
     def execute(instruction: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """执行工具指令"""
+        inputs = inputs or {}
         if instruction == "download_file":
             return WebFetcher.download_file(
                 url=inputs.get("url", ""),

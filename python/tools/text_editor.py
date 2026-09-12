@@ -364,6 +364,7 @@ class TextEditor:
         路径语义：相对路径基于工作区根目录解析（tools/workspace.py）。
         在入口统一解析一次，所有指令实现收到的都是实际路径。
         """
+        inputs = inputs or {}
         timeout = inputs.get("timeout", DEFAULT_TIMEOUT)
         force_write = bool(inputs.get("force_write", False))
         if "path" in inputs:

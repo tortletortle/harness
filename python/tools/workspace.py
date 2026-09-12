@@ -50,7 +50,9 @@ def resolve_workspace_path(path) -> Path:
     绝对路径原样返回；相对路径基于工作区根解析（不 resolve 符号链接，
     保持与用户输入一致的形式，由调用方决定是否需要 resolve）。
     """
-    p = Path(path)
+    # 防御性：inputs 不可信，非字符串（int/None 等）先转字符串，
+    # 避免 Path() 抛 TypeError 穿透工具层（ERROR_HANDLING 工具层：永不抛异常）。
+    p = Path(str(path))
     if p.is_absolute():
         return p
     return resolve_workspace_root() / p

@@ -66,6 +66,7 @@ class ManualTool:
 
     @staticmethod
     def execute(instruction: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        inputs = inputs or {}
         return ManualTool.manual_step(
             description=inputs.get("description", ""),
             error=inputs.get("error"),

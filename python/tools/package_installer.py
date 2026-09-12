@@ -165,6 +165,7 @@ class PackageInstaller:
     @staticmethod
     def execute(instruction: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """执行工具指令"""
+        inputs = inputs or {}
         if instruction == "install_pip":
             return PackageInstaller.install_pip(
                 packages=inputs.get("packages"),

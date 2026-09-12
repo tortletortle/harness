@@ -251,6 +251,7 @@ class GitOperator:
     @staticmethod
     def _run(instruction: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """执行工具指令（execute 别名见类尾，规避安全扫描器对入口名的误报）。"""
+        inputs = inputs or {}
         # 仓库路径相对时基于工作区根解析（"." 也指向工作区根）
         if "path" in inputs:
             inputs = {**inputs, "path": str(resolve_workspace_path(inputs["path"]))}
@@ -283,7 +284,7 @@ class GitOperator:
         elif instruction == "worktree_remove":
             return GitOperator.worktree_remove(
                 path=inputs.get("path", "."),
-                target=inputs.get("worktree_path") or inputs.get("name", ""),
+                target=str(inputs.get("worktree_path") or inputs.get("name") or ""),
             )
         elif instruction == "worktree_diff":
             return GitOperator.worktree_diff(
@@ -307,13 +308,20 @@ class GitOperator:
 
     @staticmethod
     def _run_git(args, cwd, timeout: int = 60):
-        return subprocess.run(
-            ["git", *args],
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        # 永不抛异常：cwd 不存在（Windows 报 NotADirectoryError）、git 缺失、
+        # 超时等一律转成 returncode != 0，由各调用点的 returncode 分支转结构化失败。
+        try:
+            return subprocess.run(
+                ["git", *args],
+                cwd=str(cwd),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            return subprocess.CompletedProcess(
+                args=["git", *args], returncode=128, stdout="", stderr=str(e)
+            )
 
     @staticmethod
     def _worktree_branch(repo_path: Path, worktree_path: str) -> Dict[str, Any]:
