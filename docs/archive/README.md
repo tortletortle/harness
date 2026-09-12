@@ -11,5 +11,10 @@
 | CURRENT_STATUS.md / MISSING_FEATURES.md | 2026-08-21 完成度与缺失分析 | 结论严重过时（称"GUI 0%、错误恢复 0%"），由 [../STATUS.md](../STATUS.md) 取代 |
 | QUICKSTART.md | 面向 9000/8090 双层旧架构的快速开始 | 架构已改为单后端 8000 + 前端 3000 |
 | QUICKSTART_5MIN.md / 使用说明.md / 开箱即用.md | CLI 时代的入门文档 | 称"无图形界面、执行器未实现"，与现实不符；Web 入门见根目录《开始使用_WEB界面.md》 |
+| approve2.json / approve3.json / approve_body.json / approve_resp.json / exec_body.json / reject_body.json | 手工调试 API 时的请求体/响应快照 | 一次性调试残留（2026-09-12 由根目录归档，STATUS 短板#5） |
+| a.txt / test.py / out.html | `hello` 涂鸦、`print('hello')`、单页 HTML | 实验残留，同上 |
+| eas_2_0_ui_platform.tsx | 早期单文件 UI 原型 | 已被 frontend/ 取代，仅作参考 |
+| check_db_schema.py / check_plan.py / check_plans.py | python/ 临检脚本 | 全仓 0 引用，由 python/ 归档 |
+| server.py.bak | server.py 拆分前备份 | 拆分已完成（3242→545 行），仅留历史 |
 
 当前有效的文档索引见根目录 [README.md](../../README.md)。

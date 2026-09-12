@@ -33,10 +33,10 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 - 任务模式识别（2026-09-12）：`application/task_router.py` + `POST /api/quick-task`（direct 直达工具 + Grant + 审计）。
 - 前端 Vitest：49 passed（新增 InputView 快速执行组件测试）；生产构建成功；WorkGraph 依赖视图 / 产物库 / Agent 记录三视图已接入。
 - 前端任务模式入口（2026-09-12）：新建任务页新增"快速执行"按钮，调用 `/api/quick-task`——识别为 direct（读取/搜索/测试/检查）时内联展示工具结果（内容/失败原因/安全拦截），识别为 graph 时引导进入设计书流程。目标任务模式识别的前端闭环完整。
-- 默认离线 Python 回归：795 passed / 8 skipped（2026-09-12，含新增工具契约 34 + llm_provider 24 + designer 覆盖 31 用例；证据 `out/pytest-after-coverage.log`）。
+- 默认离线 Python 回归：802 passed / 8 skipped（2026-09-12，含新增工具契约 34 + llm_provider 24 + designer 覆盖 31 + ssrf 重定向 7 用例；证据 `out/pytest-after-mimosa.log`）。
 - 覆盖率补齐（2026-09-12）：`python/designer/__init__.py` 60%→100%（401/401）、`python/llm_client/__init__.py` 47%→100%（162/162），全仓 TOTAL 66%→70%；0% 纯脚本与 browser_check 判定为有意不测/不管。证据 `out/pytest-full-after-cov.log`（该次全量+覆盖跑法下 2 个 e2e 因建服超时 error，单跑复核 2 passed，属环境抖动与本次改动无关；证据 `out/pytest-e2e-rerun.log`）。
 - 真实浏览器（Playwright Chromium）检查：11 passed。
-- Mimosa 深度扫描：super_search SSRF 已修复，其余待复核。
+- Mimosa 深度扫描复核完成（2026-09-12）：台账 8 findings——6 项 static_fix_verified（git_operator：list-form 无 shell=True；acceptance_b×5：_validate_base 本机 allowlist；机器复扫+人工抽核）；2 项 HIGH 路径穿越（misc_routes:233/shared.py:157）判误报：路径全由服务端固定拼接（_config_dir()/__file__+固定文件名），零请求输入，routes 开槽审计仅 3 处 open 全安全。另补真实残留：urllib 重定向链不复检（302 可跳内网），新增 _SafeRedirectHandler（web_fetcher+super_search 共用）+7 用例；证据 `out/pytest-ssrf.log`；browser_check 页内跳转与 DNS-rebinding 列为接受残留。
 - Rust 测试：当前开发机未安装 cargo，尚未执行。
 
 
@@ -50,7 +50,7 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 2. ~~AgentSession/Run/Turn/Attempt 的完整持久化分层尚未完成~~ Session/Turn 已落地（2026-09-12，含前端视图）；Turn 级上下文压缩与跨会话恢复仍为后续。
 3. 覆盖率分布不均，Designer、LLM client 和部分入口代码较薄。
 4. Rust 与 Python 的运行时、错误码和事件契约仍需通过兼容测试逐步对齐；Rust 代码从未编译验证（本机无 cargo）。
-5. 根目录存在历史脚本、实验目录和运行残留，需先分类再决定归档，不直接删除未知文件。
+5. ~~根目录存在历史脚本、实验目录和运行残留，需先分类再决定归档，不直接删除未知文件~~ **已归档（2026-09-12）**：14 个跟踪文件 `git mv` 至 `docs/archive/`（根目录 9 个调试残留 + `eas_2_0_ui_platform.tsx` 早期原型 + `python/check_*.py` 3 个 0 引用临检脚本 + `server.py.bak` 拆分备份），`.coverage` 删除，`scripts/check_env.py` 有引用保留；归档清单见 `docs/archive/README.md`。
 6. ~~工具契约“工具返回结构化失败而非把业务失败冒充成功”有文档和测试约束，但仍需逐工具验证异常路径~~ **已验证（2026-09-12）**：新增 `tests/python/test_tool_contract.py`（34 用例：未知指令/缺参数/错误类型/None 输入逐工具覆盖）；修复 5 类问题——project_memory 非法 limit 抛 ValueError、git worktree 组 `_run_git` 未捕获（Windows NotADirectoryError 穿透）、file_creator 空 path 谎报成功、`resolve_workspace_path` 非字符串 TypeError、7 个工具缺 None-guard。
 7. 前端已覆盖 WorkGraph 依赖视图、产物库与 Agent 记录、quick-task 直达入口（2026-09-12：新建任务页「快速执行」按钮 + 内联结果展示，见 InputView.tsx）。
 

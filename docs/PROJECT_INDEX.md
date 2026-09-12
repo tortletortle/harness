@@ -146,9 +146,9 @@ Windows 根目录一键批处理：`启动完整系统.bat`、`一键启动.bat`
 ## 历史/独立子项目（不在主链路内）
 
 - `ai_design_system/`、`ai_free_trial_search/`：早期独立原型（各自 main.py + 模块），仅作参考
-- `eas_2_0_ui_platform.tsx`：早期单文件 UI 原型
-- `docs/archive/`：历史测试报告与旧指南，**不代表现状**
-- 根目录杂项（`approve*.json`、`*.json` 请求体、`a.txt`、`test.py`、`out.html`、`python/*.bak`、`check_*.py` 等）：调试/实验残留，STATUS 已知短板 #5——分类后再归档，勿直接删除
+- `docs/archive/eas_2_0_ui_platform.tsx`：早期单文件 UI 原型（2026-09-12 由根目录归档）
+- `docs/archive/`：历史测试报告、旧指南与调试残留，**不代表现状**
+- 根目录杂项归档完成（2026-09-12，STATUS 短板#5 关闭）：`approve*.json`/`exec_body.json`/`reject_body.json`（API 调试快照）、`a.txt`/`test.py`/`out.html`（实验残留）、`python/check_*.py`（0 引用的临检脚本）、`python/api/server.py.bak`（拆分前备份）已 `git mv` 至 `docs/archive/`；`.coverage`（可再生）直接删除；`scripts/check_env.py` 有引用予以保留
 
 ## 文档索引（docs/）
 
