@@ -15,6 +15,11 @@ import type {
   ExecutionRun,
   ExecutionAttempt,
   ServiceConnectionState,
+  AgentSession,
+  AgentTurn,
+  Artifact,
+  QuickTaskResponse,
+  ReplanResponse,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
@@ -506,6 +511,76 @@ export class ApiClient {
     }
     const data = await response.json();
     return (data.approvals || []) as ApprovalRequestEvent[];
+  }
+
+  // ===== WorkGraph 运行记录 / 产物 / 重规划 / 任务模式（1.18-1.19）=====
+
+  async getAgentSessions(planId?: string, limit = 100): Promise<AgentSession[]> {
+    const params = new URLSearchParams();
+    if (planId) params.set('plan_id', planId);
+    params.set('limit', String(limit));
+    const response = await authFetch(`${API_BASE}/api/agent-sessions?${params}`);
+    if (!response.ok) {
+      await throwResponseError(response, '获取 Agent 运行记录失败');
+    }
+    const data = await response.json();
+    return (data.sessions || []) as AgentSession[];
+  }
+
+  async getAgentTurns(sessionId: string): Promise<AgentTurn[]> {
+    const response = await authFetch(
+      `${API_BASE}/api/agent-sessions/${encodeURIComponent(sessionId)}/turns`,
+    );
+    if (!response.ok) {
+      await throwResponseError(response, '获取 Agent 轮次记录失败');
+    }
+    const data = await response.json();
+    return (data.turns || []) as AgentTurn[];
+  }
+
+  async getArtifacts(planId?: string): Promise<Artifact[]> {
+    const query = planId ? `?plan_id=${encodeURIComponent(planId)}` : '';
+    const response = await authFetch(`${API_BASE}/api/artifacts${query}`);
+    if (!response.ok) {
+      await throwResponseError(response, '获取产物列表失败');
+    }
+    const data = await response.json();
+    return (data.artifacts || []) as Artifact[];
+  }
+
+  async getArtifactContent(artifactId: string): Promise<string> {
+    const response = await authFetch(
+      `${API_BASE}/api/artifacts/${encodeURIComponent(artifactId)}/content`,
+    );
+    if (!response.ok) {
+      await throwResponseError(response, '读取产物内容失败');
+    }
+    return response.text();
+  }
+
+  /** 对 Failed 计划做动态重规划（1.18）：生成修复步骤并挂入新分支 */
+  async replanPlan(planId: string): Promise<ReplanResponse> {
+    const response = await authFetch(
+      `${API_BASE}/api/plan/${encodeURIComponent(planId)}/replan`,
+      { method: 'POST' },
+    );
+    if (!response.ok) {
+      await throwResponseError(response, '重规划失败');
+    }
+    return (await response.json()) as ReplanResponse;
+  }
+
+  /** 任务模式识别入口（1.19）：direct 直接执行工具并返回，graph 引导走设计书 */
+  async quickTask(message: string): Promise<QuickTaskResponse> {
+    const response = await authFetch(`${API_BASE}/api/quick-task`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    });
+    if (!response.ok) {
+      await throwResponseError(response, '快速任务执行失败');
+    }
+    return (await response.json()) as QuickTaskResponse;
   }
 
   /**

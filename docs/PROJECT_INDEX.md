@@ -37,13 +37,14 @@ AI 任务编排与执行系统：用户需求 → Designer（LLM）生成技术�
 
 ## Python 后端（`python/`，运行时所在）
 
-### 入口与服务层
-| 文件 | 行数 | 职责 |
+### 入口与服务层（2026-09-12 已拆分）
+| 位置 | 行数 | 职责 |
 |---|---|---|
-| `api/server.py` | ~2520 | **主入口**：FastAPI 路由、执行协调状态机、WS 广播、lifespan 装配（已知短板：过大，待按 routes/services 拆分） |
+| `api/server.py` | ~1640 | **组装点**：lifespan 装配、执行运行时（execute_plan_background / 单步状态机 / 报告与产物登记）、异常处理、`include_router` 装配、兼容 re-export |
+| `api/shared.py` | ~360 | AppState 全局状态、WebSocket 广播、格式化、配置加载、暂停检查点计算 |
+| `api/routes/`（9 个模块） | ~1770 | 按领域拆分的 HTTP 路由：design（207）、plan（590）、approval（70）、artifact（72）、agent_session（29）、worktree（162）、quick_task（98）、replan（209）、misc（321，含状态/工具/chat/skills/notify/capabilities/config/审计/用量/重启/WebSocket） |
 | `api/auth.py` | — | Bearer / X-API-Token 鉴权（`require_token`）；GET `/` 公开健康检查，WS 走 query token |
-| `api/main.py` / `api/approval.py` | — | 辅助入口 / 审批模块 |
-| `database.py` | ~1470 | SQLite 持久化：tables `designs, plans, steps, execution_runs, execution_attempts, step_events, logs, audit_logs`；迁移与索引 |
+| `database.py` | ~1900 | SQLite 持久化：tables `designs, plans, steps(depends_on), execution_runs, execution_attempts, step_events, logs, audit_logs, artifacts, worktrees, agent_sessions, agent_turns`；迁移与索引 |
 | `application/plan_service.py`、`domain/plan_state.py`、`domain/work_graph.py`、`repositories/plan_repository.py` | 30/38/约 200/31 | 渐进式拆分边界：应用服务、纯状态机规则、DAG 校验 + 依赖就绪判定 + 资源冲突检测 + 批选择、Repository facade |
 
 ### 生成与执行

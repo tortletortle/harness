@@ -84,6 +84,10 @@ export interface Step {
   status?: StepStatus;
   outputs?: Record<string, any> | null;
   executed_at?: string | null;
+  /** WorkGraph 显式依赖（1.15）：指向同计划内其他步骤的 step_id */
+  depends_on?: string[];
+  /** 回滚分支版本（1.17 起随步骤行返回） */
+  branch_version?: number;
 }
 
 export interface Tool {
@@ -193,4 +197,69 @@ export interface Toast {
   level: ToastLevel;
   message: string;
   timestamp: string;
+}
+
+/** Agent 运行记录（Session 层，1.18）：一次 agent_tool 步骤执行一条 */
+export interface AgentSession {
+  session_id: string;
+  plan_id: string | null;
+  run_id: string | null;
+  step_id: string | null;
+  agent_tool: string;
+  status: 'running' | 'completed' | 'failed';
+  turns_used: number;
+  model_calls: number;
+  tool_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  started_at: string;
+  finished_at?: string | null;
+  error?: string | null;
+}
+
+/** Agent 运行记录（Turn 层）：session 内每轮模型调用一条 */
+export interface AgentTurn {
+  turn_row_id: number;
+  session_id: string;
+  turn_no: number;
+  outcome: string;
+  input_tokens: number;
+  output_tokens: number;
+  duration_ms?: number | null;
+  detail?: Record<string, any>;
+  created_at: string;
+}
+
+/** 产物元数据（1.18 Artifact Store） */
+export interface Artifact {
+  artifact_id: string;
+  plan_id: string | null;
+  run_id: string | null;
+  step_id: string | null;
+  kind: string;
+  uri: string;
+  content_hash?: string | null;
+  size_bytes?: number | null;
+  metadata?: Record<string, any>;
+  created_at: string;
+}
+
+/** 任务模式识别结果（1.19 /api/quick-task） */
+export interface QuickTaskResponse {
+  success: boolean;
+  mode: 'direct' | 'graph';
+  tool_id?: string;
+  instruction?: string;
+  result?: Record<string, any> & { success?: boolean; content?: string; error?: string };
+  reason?: string;
+  next?: string;
+  grant_usage?: Record<string, any>;
+}
+
+/** 动态重规划结果（1.18 /api/plan/{id}/replan） */
+export interface ReplanResponse {
+  success: boolean;
+  new_branch: number;
+  repair_steps: number;
+  anchor: string;
 }

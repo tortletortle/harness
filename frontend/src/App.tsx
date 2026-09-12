@@ -15,6 +15,8 @@ import { InputView } from './components/InputView';
 import { DesignView } from './components/DesignView';
 import { PlanView } from './components/PlanView';
 import { ExecutionView } from './components/ExecutionView';
+import { ArtifactsView } from './components/ArtifactsView';
+import { AgentSessionsView } from './components/AgentSessionsView';
 import { ToolsView } from './components/ToolsView';
 import { HistoryView } from './components/HistoryView';
 import { AuditView } from './components/AuditView';
@@ -35,8 +37,10 @@ const connectionMeta: Record<ServiceConnectionState, { label: string; className:
 const viewMeta = {
   input: { label: '新建任务', hint: '把目标交给 EAS，先从清晰的需求开始' },
   design: { label: '设计书审阅', hint: '检查架构、工具和风险，再批准执行' },
-  plan: { label: '执行计划', hint: '管理步骤、验收和恢复点' },
+  plan: { label: '执行计划', hint: '管理步骤、依赖、验收和恢复点' },
   execution: { label: '实时执行', hint: '观察当前任务的运行状态' },
+  artifacts: { label: '产物库', hint: '浏览步骤与 Agent 产生的文件和交付报告' },
+  agents: { label: 'Agent 记录', hint: '查看 Agent 会话与逐轮模型调用' },
   tools: { label: '工具库', hint: '查看可用能力和执行边界' },
   history: { label: '历史记录', hint: '浏览过往设计书和执行计划' },
   audit: { label: '审计日志', hint: '追踪工具调用和安全决定' },
@@ -82,6 +86,8 @@ function App() {
       case 'design': return <DesignView />;
       case 'plan': return <PlanView />;
       case 'execution': return <ExecutionView />;
+      case 'artifacts': return <ArtifactsView />;
+      case 'agents': return <AgentSessionsView />;
       case 'tools': return <ToolsView />;
       case 'history': return <HistoryView />;
       case 'audit': return <AuditView />;

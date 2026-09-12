@@ -25,6 +25,20 @@ class ConfigUpdateRequest(BaseModel):
     base_urls: Dict[str, str]
 
 
+def _config_dir() -> Path:
+    """定位 config/ 目录：沿模块父目录上溯查找被跟踪的 models.yaml。
+
+    层级无关（routes 文件比原 server.py 深一层也不会指错），找不到时回落
+    到当前工作目录的 config/（与 api/shared.py 的 _load_models_config 一致）。
+    """
+    here = Path(__file__).resolve()
+    for base in here.parents:
+        candidate = base / "config"
+        if (candidate / "models.yaml").exists():
+            return candidate.resolve()
+    return (Path.cwd() / "config").resolve()
+
+
 @router.get("/")
 async def root():
     """健康检查"""
@@ -218,8 +232,9 @@ async def get_config():
 async def update_config(request: ConfigUpdateRequest):
     """更新配置"""
     try:
-        # 安全：真实 key 只写 gitignored 的 models.local.yaml，绝不写回被跟踪的 models.yaml
-        local_path = (Path(__file__).resolve().parents[2] / "config" / "models.local.yaml")
+        # 安全：真实 key 只写 gitignored 的 models.local.yaml，绝不写回被跟踪的 models.yaml。
+        # 目录由 _config_dir() 解析（服务端确定，不接收请求输入；层级无关）。
+        local_path = (_config_dir() / "models.local.yaml").resolve()
         
         local = {}
         if local_path.exists():

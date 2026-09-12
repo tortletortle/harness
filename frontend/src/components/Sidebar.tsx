@@ -3,7 +3,7 @@
  */
 
 import {
-  Activity, Bot, ChevronRight, HelpCircle, FileText, History,
+  Activity, Bot, Boxes, ChevronRight, ClipboardList, HelpCircle, FileText, History,
   LayoutDashboard, PanelLeftClose, PanelLeftOpen, PenSquare, ScrollText,
   Settings, Terminal, Wrench,
 } from 'lucide-react';
@@ -16,6 +16,8 @@ const primaryItems = [
   { id: 'execution' as const, label: '实时执行', icon: Activity },
 ];
 const libraryItems = [
+  { id: 'artifacts' as const, label: '产物库', icon: Boxes },
+  { id: 'agents' as const, label: 'Agent 记录', icon: ClipboardList },
   { id: 'tools' as const, label: '工具库', icon: Wrench },
   { id: 'history' as const, label: '历史记录', icon: History },
   { id: 'audit' as const, label: '审计日志', icon: ScrollText },
