@@ -33,7 +33,10 @@ def _call(tool_class, instruction, inputs):
 
 
 def _registry_tools():
-    return sorted(get_registry().tools.items())
+    # 只测 harness 内置工具：外部工具（EAS_TOOLS_DIR/兄弟仓库）来去不定，
+    # 不能决定本仓库回归的红绿；外部工具的契约合规由其所属仓库负责。
+    tools = get_registry().tools
+    return sorted((tid, tools[tid]) for tid in EXPECTED_TOOL_IDS if tid in tools)
 
 
 def _assert_failure_dict(result):

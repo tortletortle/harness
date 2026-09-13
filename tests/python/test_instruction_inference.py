@@ -53,7 +53,7 @@ def test_infer_instruction_matches_actual_behavior(executor, tool_id, inputs, ex
 
 
 @pytest.mark.parametrize("tool_id,inputs,expected", INFERENCE_CASES)
-def test_inferred_instruction_is_actually_supported(tool_id, inputs, expected):
+def test_inferred_instruction_is_actually_supported(monkeypatch, tmp_path, tool_id, inputs, expected):
     """
     推断出的指令名必须被对应工具的 execute() 接受，
     即不应该命中 execute() 里的 "未知指令" / "Invalid instruction" 分支。
@@ -61,6 +61,8 @@ def test_inferred_instruction_is_actually_supported(tool_id, inputs, expected):
     这是被删除的旧 test_tool_support.py 真正想验证但断言写错了的内容：
     "推断出的指令" 与 "工具实际支持的指令" 必须是同一套名字。
     """
+    # 真实执行工具：隔离工作区，产物落 tmp，不污染仓库根目录。
+    monkeypatch.setenv("EAS_WORKSPACE_ROOT", str(tmp_path))
     registry = get_registry()
     tool = registry.get_tool(tool_id)
     assert tool is not None, f"工具不存在: {tool_id}"
