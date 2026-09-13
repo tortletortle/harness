@@ -18,12 +18,17 @@ fail-closed 边界（与 1.3 一致）：
 - 无 Grant / 过期 / 撤销 / 超预算 → 失败；模型输出 path 不一致 → 不写入判失败；
 - 内部工具未授权 → 拒绝执行；非法 JSON → 安全失败。
 - max_turns 缺省 = 1：行为与单轮版完全一致（向后兼容）。
+ Turn 级压缩（v0.3）：每轮 chat 前估算输入 tokens，超预算（inputs.max_input_tokens /
+ EAS_CODING_AGENT_MAX_INPUT_TOKENS / 缺省 48000）即折叠中间轮为确定性摘要行并写会话
+ 笔记（data/knowledge/notes/coding-agent-*.md，fail-open）；首轮超预算则动态收紧文件
+ 快照（指令本身过大才失败）。max_turns=1 且不超预算时消息与旧版逐字一致。
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -38,6 +43,90 @@ from llm_client import Message
 _MAX_FILE_CONTEXT_CHARS = 12000
 # 反馈里测试输出保留的字符数。
 _MAX_FEEDBACK_CHARS = 1500
+# Turn 级压缩：输入 token 预算缺省值（inputs.max_input_tokens / 环境变量可覆盖）。
+_DEFAULT_MAX_INPUT_TOKENS = 48000
+_MAX_INPUT_TOKENS_ENV = "EAS_CODING_AGENT_MAX_INPUT_TOKENS"
+# 压缩后保留的最近完整轮数（assistant+user 对）。
+_COMPRESS_KEEP_LAST_TURNS = 1
+# 首轮降级：预算余量比例（估算保守侧冗余）。
+_FIRST_TURN_RESERVE_RATIO = 0.10
+# 会话笔记：单文件上限（字符），超限停写。
+_SESSION_NOTE_MAX_CHARS = 6000
+# 折叠行标记前缀（压缩幂等：重建时替换旧折叠行而非嵌套）。
+_FOLD_MARKER = "[历史压缩"
+
+
+def _estimate_tokens(text: str) -> int:
+    """启发式 token 估算（离线、确定性）：CJK 按 1 token/字，其余按 4 字符/token。"""
+    if not text:
+        return 0
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    return cjk + (len(text) - cjk + 3) // 4
+
+
+def _messages_tokens(messages: List[Message]) -> int:
+    """消息序列的估算输入 tokens。"""
+    return sum(_estimate_tokens(m.content or "") for m in messages)
+
+
+def _summarize_turn_facts(facts: List[Dict[str, Any]], turn: int) -> str:
+    """从 facts 还原第 turn 轮的执行摘要（压缩折叠行用；纯函数）。"""
+    frags = []
+    prefix = f"coding_agent_turn{turn}_"
+    for fact in facts:
+        key = fact.get("key") or ""
+        if not key.startswith(prefix):
+            continue
+        kind = key[len(prefix):]
+        value = fact.get("value")
+        if kind == "bytes":
+            frags.append(f"applied({value}B)")
+        elif kind == "patch_error":
+            frags.append(f"patch_error({value})")
+        elif kind == "test_exit":
+            frags.append(f"selftest_exit={value}")
+        elif kind == "blocks_applied":
+            frags.append(f"blocks={value}")
+    return "; ".join(frags) or "done"
+
+
+def _compress_messages(messages: List[Message], fold_text: str) -> List[Message]:
+    """折叠中间轮：保留 system + 首轮 user + 折叠行 + 最近轮。
+
+    旧折叠行（如有）位于 index 2，重建时自然丢弃，保证幂等不嵌套。
+    """
+    if len(messages) <= 2:
+        return list(messages)
+    keep = _COMPRESS_KEEP_LAST_TURNS
+    head = messages[:2]
+    tail = messages[-2 * keep:] if keep else []
+    return head + [Message(role="user", content=fold_text)] + tail
+
+
+def _session_note_filename(session_id: str, target_path: str) -> str:
+    """会话笔记文件名（目标路径做 slug，防穿越）。"""
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", target_path).strip("._")[:40]
+    return f"coding-agent-{session_id[:8]}-{slug or 'note'}.md"
+
+
+def _append_session_note(filename: str, header: str, entry: str) -> str:
+    """向会话笔记追加一条压缩记录；超限返回 "capped"，否则返回落盘路径。
+
+    IO 异常由调用方 fail-open 吞掉（观察性分层，不阻断主链路）。
+    """
+    from tools.workspace import resolve_workspace_root  # 延迟导入，避免循环依赖
+
+    notes_dir = resolve_workspace_root() / "data" / "knowledge" / "notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    path = notes_dir / filename
+    if path.exists():
+        current = path.read_text(encoding="utf-8", errors="replace")
+        if len(current) + len(entry) + 1 > _SESSION_NOTE_MAX_CHARS:
+            return "capped"
+        path.write_text(current + entry + "\n", encoding="utf-8")
+    else:
+        path.write_text(header + "\n" + entry + "\n", encoding="utf-8")
+    return str(path)
 
 
 class CodingAgentTool(BaseAgentTool):
@@ -70,7 +159,7 @@ class CodingAgentTool(BaseAgentTool):
     def spec(self) -> CapabilitySpec:
         return CapabilitySpec(
             id=self.agent_id,
-            version="0.2.0",
+            version="0.3.0",
             kind="agent_tool",
             required_permissions=(f"agent:{self.agent_id}",),
             side_effect="reversible",
@@ -99,6 +188,17 @@ class CodingAgentTool(BaseAgentTool):
             max_turns = max(1, int(inputs.get("max_turns", 1)))
         except (TypeError, ValueError):
             max_turns = 1
+
+        # Turn 级压缩预算：步骤级 inputs 优先，其次环境变量，缺省 48000。
+        try:
+            max_input_tokens = int(
+                inputs.get("max_input_tokens")
+                or os.environ.get(_MAX_INPUT_TOKENS_ENV)
+                or _DEFAULT_MAX_INPUT_TOKENS
+            )
+        except (TypeError, ValueError):
+            max_input_tokens = _DEFAULT_MAX_INPUT_TOKENS
+        max_input_tokens = max(1000, max_input_tokens)
 
         # 输出模式（动作 A）：步骤级 inputs.output_mode 优先，其次环境变量，缺省 full（向后兼容）。
         output_mode = str(
@@ -158,6 +258,15 @@ class CodingAgentTool(BaseAgentTool):
         feedback = str(inputs.get("feedback") or "")
         last_test_exit: Optional[int] = None
         turns_used = 0
+        folded_through_turn = 0
+        note_filename = _session_note_filename(session_id, target_path)
+        note_header = (
+            "# coding_agent 会话笔记\n"
+            f"- session: {session_id}\n"
+            f"- target: {target_path}\n"
+            f"- goal: {str(request.goal or '')[:200]}\n"
+            f"- date: {time.strftime('%Y-%m-%d %H:%M')}\n"
+        )
 
         # P2 上下文编排：附仓库地图（Aider 模式，fail-open；静默降级不写日志）
         repo_map_block = ""
@@ -214,6 +323,65 @@ class CodingAgentTool(BaseAgentTool):
                     messages.append(Message(role="user", content=self._build_followup_patch(feedback, current_content)))
                 else:
                     messages.append(Message(role="user", content=self._build_followup(feedback, current_content)))
+            # ---- Turn 级压缩：chat 前预算检查（超预算即折叠中间轮） ----
+            tokens = _messages_tokens(messages)
+            if turn == 1 and tokens > max_input_tokens:
+                # 首轮降级：按预算反推快照上限重建首轮消息（指令本身过大则失败）。
+                system_content = context.system_prompt or self.description
+                if output_mode == "patch":
+                    bare_prompt = self._build_prompt_patch(request, target_path, "", feedback, repo_map_block)
+                else:
+                    bare_prompt = self._build_prompt(request, target_path, "", feedback, repo_map_block)
+                overhead = _estimate_tokens(system_content) + _estimate_tokens(bare_prompt)
+                file_allow = int((max_input_tokens - overhead) * (1 - _FIRST_TURN_RESERVE_RATIO))
+                if file_allow <= 0:
+                    _finish_session("failed", turns_used, error="首轮提示词超预算且指令本身过大")
+                    facts.append({"key": "coding_agent_first_turn_over_budget", "value": tokens})
+                    return CapabilityResult(
+                        status="failed",
+                        error=f"首轮提示词超预算（估算 {tokens} > {max_input_tokens}）且指令本身过大，已拒绝",
+                        facts=facts,
+                    )
+                if output_mode == "patch":
+                    degraded_prompt = self._build_prompt_patch(
+                        request, target_path, current_content, feedback, repo_map_block, file_allow
+                    )
+                else:
+                    degraded_prompt = self._build_prompt(
+                        request, target_path, current_content, feedback, repo_map_block, file_allow
+                    )
+                messages[1] = Message(role="user", content=degraded_prompt)
+                tokens = _messages_tokens(messages)
+                facts.append({"key": "coding_agent_first_turn_degraded", "value": file_allow})
+            fold_to = turn - 1 - _COMPRESS_KEEP_LAST_TURNS
+            if tokens > max_input_tokens and fold_to > folded_through_turn:
+                entries = "; ".join(
+                    f"turn{n}: {_summarize_turn_facts(facts, n)}"
+                    for n in range(1, fold_to + 1)
+                )
+                fold_text = f"{_FOLD_MARKER}：第1–{fold_to}轮已折叠] {entries}"
+                messages = _compress_messages(messages, fold_text)
+                folded_through_turn = fold_to
+                after = _messages_tokens(messages)
+                facts.append({
+                    "key": "coding_agent_compressed",
+                    "value": f"turns=1-{fold_to} before={tokens} after={after}",
+                })
+                note_entry = (
+                    f"## 压缩事件（第 {turn} 轮前，{time.strftime('%Y-%m-%d %H:%M')}）\n"
+                    f"折叠 turn 1–{fold_to}：{entries}\n"
+                    f"估算 tokens：{tokens} → {after}（预算 {max_input_tokens}）\n"
+                )
+                try:
+                    note_status = await asyncio.to_thread(
+                        _append_session_note, note_filename, note_header, note_entry
+                    )
+                    facts.append({
+                        "key": "coding_agent_note_capped" if note_status == "capped" else "coding_agent_note",
+                        "value": note_filename,
+                    })
+                except Exception:
+                    pass
             client = GrantLLMClient(
                 context.llm_client,
                 context.authorization_manager,
@@ -505,12 +673,13 @@ class CodingAgentTool(BaseAgentTool):
         current_content: str,
         feedback: str = "",
         repo_map_block: str = "",
+        max_file_chars: int = _MAX_FILE_CONTEXT_CHARS,
     ) -> str:
         inputs = request.inputs or {}
         instruction = str(inputs.get("instruction") or request.goal)
         if current_content:
-            if len(current_content) > _MAX_FILE_CONTEXT_CHARS:
-                current_content = current_content[:_MAX_FILE_CONTEXT_CHARS] + "\n...[内容已截断]"
+            if len(current_content) > max_file_chars:
+                current_content = current_content[:max_file_chars] + "\n...[内容已截断]"
             current_block = f"文件当前内容：\n```\n{current_content}\n```"
         else:
             current_block = "文件当前不存在，需要新建。"
@@ -540,13 +709,14 @@ class CodingAgentTool(BaseAgentTool):
         current_content: str,
         feedback: str = "",
         repo_map_block: str = "",
+        max_file_chars: int = _MAX_FILE_CONTEXT_CHARS,
     ) -> str:
         """patch 模式首轮提示词：search/replace 补丁块契约（代码内容不进 JSON）。"""
         inputs = request.inputs or {}
         instruction = str(inputs.get("instruction") or request.goal)
         if current_content:
-            if len(current_content) > _MAX_FILE_CONTEXT_CHARS:
-                current_content = current_content[:_MAX_FILE_CONTEXT_CHARS] + "\n...[内容已截断]"
+            if len(current_content) > max_file_chars:
+                current_content = current_content[:max_file_chars] + "\n...[内容已截断]"
             current_block = f"文件当前内容：\n```\n{current_content}\n```"
         else:
             current_block = "文件当前不存在，需要新建（用空 SEARCH 段）。"
