@@ -61,3 +61,5 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 - 服务端 HTTP 请求仅允许 http/https，并在请求前拒绝 localhost、环回、私有及保留地址。
 - 所有 SQL 外部输入必须使用参数绑定，禁止字符串拼接。
 - 所有凭据只从环境变量或密钥服务读取；本地覆盖文件不得提交到 Git。
+
+7. Full-suite phantom failures (unknown_instruction/render) + root artifact regeneration **resolved (2026-09-13)**: external sibling-repo tool progress_view.py violates TOOL_INTERFACE_DESIGN 3.3/3.5 (failure branch lacks message key), auto-loaded via load_tools_from_dir; harness-side hermeticity fixes in test_tool_contract.py (scope to EXPECTED_TOOL_IDS) and test_instruction_inference.py (EAS_WORKSPACE_ROOT=tmp); suite now 824 passed, 8 skipped.

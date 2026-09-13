@@ -181,7 +181,7 @@ class DefaultExecutor(ExecutorAI):
                 elif tool_id == "git_operator" and not effective_inputs.get("path"):
                     # Git 工具的默认 path="." 由工具进程解释，必须显式绑定到 Grant workspace。
                     effective_inputs["path"] = grant.workspace_root
-            if self.authorization_manager is not None and (
+            if tool_id != "browser_observe" and self.authorization_manager is not None and (
                 grant_id is not None or self.authorization_manager.require_grant
             ):
                 decision = self.authorization_manager.authorize(
@@ -226,6 +226,15 @@ class DefaultExecutor(ExecutorAI):
                             agent_capability, step, tool_id, effective_inputs, grant_id, plan_id
                         ),
                         timeout=max(self.step_timeout, self.agent_step_timeout),
+                    )
+                elif tool_id == "browser_observe":
+                    # 浏览器桥拥有一次完整授权；不在此提前消费同一个 Grant 的调用额度。
+                    result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.tool_registry.execute_tool_with_grant, tool_id, instruction, effective_inputs,
+                            authorization_manager=self.authorization_manager, grant_id=grant_id,
+                        ),
+                        timeout=self.step_timeout,
                     )
                 else:
                     result = await asyncio.wait_for(

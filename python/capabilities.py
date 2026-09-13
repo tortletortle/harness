@@ -101,8 +101,8 @@ class ToolCapabilityAdapter:
     # reversible：文件写入/git 本地操作，可回退；external：对外发送（PR/HTTP），
     # 不可回退，目录层展示给 Designer 前应审慎；其余视为 none。
     _REVERSIBLE_TOOLS = {"file_creator", "text_editor", "git_operator"}
-    _EXTERNAL_TOOLS = {"github_operator", "http_api"}
-    _NON_IDEMPOTENT_TOOLS = {"git_operator", "package_installer", "github_operator", "http_api"}
+    _EXTERNAL_TOOLS = {"github_operator", "http_api", "browser_observe", "review_agent"}
+    _NON_IDEMPOTENT_TOOLS = {"git_operator", "package_installer", "github_operator", "http_api", "browser_observe", "review_agent"}
 
     def __init__(self, tool_registry: Any, tool_id: str, version: str = "1.0.0") -> None:
         self.tool_registry = tool_registry
@@ -127,6 +127,7 @@ class ToolCapabilityAdapter:
             required_permissions=(f"tool:{self.tool_id}",),
             side_effect=side_effect,
             idempotent=self.tool_id not in self._NON_IDEMPOTENT_TOOLS,
+            description=str(metadata.get("description", "")),
         )
 
     async def run(self, request: CapabilityRequest, runtime_context: Any) -> CapabilityResult:
@@ -134,15 +135,22 @@ class ToolCapabilityAdapter:
         grant_id = request.grant_id or _context_value(runtime_context, "grant_id")
         inputs = dict(request.inputs or {})
         instruction = str(inputs.pop("instruction", inputs.pop("action", "execute")))
-        if manager is not None:
-            decision = manager.authorize(grant_id, self.tool_id, instruction, inputs)
-            if not decision.allowed:
-                return CapabilityResult(
-                    status="failed",
-                    error=decision.message,
-                    usage=decision.usage,
-                )
-        result = await asyncio.to_thread(self.tool_registry.execute_tool, self.tool_id, instruction, inputs)
+        if self.tool_id == "browser_observe":
+            result = await asyncio.to_thread(
+                self.tool_registry.execute_tool_with_grant, self.tool_id, instruction, inputs,
+                authorization_manager=manager, grant_id=grant_id,
+                allow_loopback=_context_value(runtime_context, "browser_allow_loopback", False),
+            )
+        else:
+            if manager is not None:
+                decision = manager.authorize(grant_id, self.tool_id, instruction, inputs)
+                if not decision.allowed:
+                    return CapabilityResult(
+                        status="failed",
+                        error=decision.message,
+                        usage=decision.usage,
+                    )
+            result = await asyncio.to_thread(self.tool_registry.execute_tool, self.tool_id, instruction, inputs)
         return CapabilityResult(
             status="completed" if result.get("success") else "failed",
             output=result,

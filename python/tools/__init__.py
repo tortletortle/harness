@@ -423,6 +423,23 @@ class ToolRegistry:
             logger.warning("外部工具目录不存在或未配置（{}），跳过外部工具", directory)
             return 0
 
+        # 可信外部包目录：补齐包根，并复用工具仓库的严格发现逻辑。
+        # 否则从 harness 工作目录启动时，外部工具内部的 harness_tools 导入会失败。
+        if directory.parent.name == "harness_tools" and (directory.parent / "__init__.py").is_file():
+            import sys
+            package_root = str(directory.resolve().parent.parent)
+            if package_root not in sys.path:
+                sys.path.insert(0, package_root)
+            from harness_tools.loader import discover_tool_classes
+            loaded = 0
+            for tool_id, tool_class in discover_tool_classes(directory).items():
+                if tool_id in self.tools:
+                    logger.warning("外部工具 ID 冲突，保留已有工具: {}", tool_id)
+                    continue
+                self.register_tool(tool_id, tool_class)
+                loaded += 1
+            return loaded
+
         count = 0
         for py_path in sorted(directory.glob("*.py")):
             if py_path.name.startswith("_"):
@@ -513,6 +530,10 @@ class ToolRegistry:
             }
         
         try:
+            if tool_id == "toolbox":
+                from harness_tools.toolbox import bind_inventory
+                with bind_inventory(self.list_tools):
+                    return tool_class.execute(instruction, inputs)
             return tool_class.execute(instruction, inputs)
         except Exception as e:
             return {
@@ -521,6 +542,12 @@ class ToolRegistry:
                 "error": str(e)
             }
     
+    def execute_tool_with_grant(self, tool_id, instruction, inputs, *, authorization_manager, grant_id, allow_loopback=False):
+        """受保护外部网页观察入口；Grant 由 Runtime 传入，绝不从模型 inputs 读取。"""
+        from harness_tools.host_bridge import execute_with_grant
+        return execute_with_grant(self, tool_id, instruction, inputs, authorization_manager,
+                                  grant_id, allow_loopback=allow_loopback)
+
     async def get_tool_info(self) -> List[Dict[str, Any]]:
         """
         获取工具信息（通过dispatcher调用）
