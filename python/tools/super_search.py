@@ -14,6 +14,11 @@
 """
 
 import gzip
+import base64
+import io
+import time
+from contextvars import ContextVar, copy_context
+from datetime import datetime
 import json
 import os
 import re
@@ -23,9 +28,9 @@ from html import unescape
 from html.parser import HTMLParser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urljoin
 
-from tools.web_fetcher import _safe_opener, _validate_url
+from tools.web_fetcher import _safe_opener, _validate_url, _SafeRedirectHandler
 from tools.workspace import resolve_workspace_root
 
 _DEFAULT_TIMEOUT = 15  # 秒，搜索引擎请求
@@ -41,6 +46,113 @@ _UA = "Mozilla/5.0 (compatible; EAS-SuperSearch/1.0)"
 
 class EngineError(Exception):
     """单个搜索引擎失败（HTTP 错误/解析为空/未配置密钥等）"""
+
+# 运行时授权作用域：线程池必须显式复制上下文，结果链接不能自行扩权。
+_SEARCH_POLICY = ContextVar('super_search_policy', default=None)
+_ENGINE_URLS = {
+    'duckduckgo':'https://html.duckduckgo.com/html/', 'bing':'https://www.bing.com/search',
+    'stepfun':'https://api.stepfun.com/step_plan/v1/search', 'tavily':'https://api.tavily.com/search',
+    'brave':'https://api.search.brave.com/res/v1/web/search', 'serper':'https://google.serper.dev/search',
+}
+
+
+class SearchDenied(EngineError):
+    pass
+
+
+def _require_search_url(url):
+    policy = _SEARCH_POLICY.get()
+    if policy is not None and policy(url) is not True:
+        raise SearchDenied('search_host_not_granted')
+
+
+class _GrantRedirectHandler(_SafeRedirectHandler):
+    def __init__(self, policy):
+        super().__init__()
+        self.policy = policy
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        absolute = urljoin(req.get_full_url(), newurl)
+        if self.policy(absolute) is not True:
+            raise SearchDenied('redirect_host_not_granted')
+        before, after = urlparse(req.get_full_url()), urlparse(absolute)
+        credentials = {'authorization','cookie','proxy-authorization','x-api-key','x-subscription-token'}
+        if (before.scheme == 'https' and after.scheme != 'https') or (
+                (before.scheme,before.netloc) != (after.scheme,after.netloc)
+                and any(key.lower() in credentials for key,value in req.header_items())):
+            raise SearchDenied('unsafe_credential_redirect')
+        return super().redirect_request(req, fp, code, msg, headers, absolute)
+
+
+def execute_with_grant(instruction, inputs, manager, grant_id):
+    """Runtime/Designer 公共搜索入口；无 Grant 拒绝，不自动批准结果页面。"""
+    fail = lambda reason: {'success':False, 'blocked':True, 'error':'search_denied: '+reason,
+                           'message':'搜索授权或参数检查未通过', 'results':[]}
+    if manager is None or not getattr(manager, 'enforce', False) or not grant_id:
+        return fail('grant_required')
+    if type(inputs) is not dict:
+        return fail('invalid_inputs')
+    try:
+        decision = manager.authorize(grant_id, 'super_search', instruction, inputs)
+        if not decision.allowed:
+            return fail(decision.reason)
+        grant = manager.get(grant_id)
+        def permitted(url):
+            parts = urlparse(url)
+            return (parts.scheme in ('https','http') and parts.port in (None,80,443)
+                    and 'super_search' in grant.allowed_tools and parts.hostname and parts.username is None
+                    and parts.password is None and manager.get(grant_id) is grant and not grant.revoked
+                    and datetime.utcnow() < grant.expires_at
+                    and time.monotonic()-grant._issued_monotonic < grant.limits.max_elapsed_seconds
+                    and manager._check_resources(grant, {'url':url}) is None)
+        token = _SEARCH_POLICY.set(permitted)
+        try:
+            safe_inputs = dict(inputs)
+            if instruction in ('search','deep_search','execute'):
+                query = safe_inputs.get('query')
+                if type(query) is not str or not query.strip() or len(query)>512:
+                    return fail('invalid_query')
+                selected = _normalize_engines(safe_inputs.get('engines'))
+                if selected is None:
+                    selected = [name for name in _auto_select_engines() if permitted(_ENGINE_URLS[name])]
+                if not selected:
+                    return fail('search_hosts_not_granted')
+                for name in selected:
+                    _require_search_url(_ENGINE_URLS[name])
+                safe_inputs['engines'] = selected
+            remaining = grant.limits.max_elapsed_seconds - (time.monotonic()-grant._issued_monotonic)
+            if remaining < 1:
+                return fail('budget_exceeded')
+            safe_inputs['timeout'] = min(_clamp_int(inputs.get('timeout'),15,1,120),int(remaining))
+            result = SuperSearch.execute(instruction, safe_inputs)
+            if (manager.get(grant_id) is not grant or grant.revoked or datetime.utcnow() >= grant.expires_at
+                    or time.monotonic()-grant._issued_monotonic >= grant.limits.max_elapsed_seconds):
+                return fail('grant_no_longer_valid')
+            return result
+        finally:
+            _SEARCH_POLICY.reset(token)
+    except SearchDenied as exc:
+        return fail(str(exc))
+    except Exception:
+        return fail('search_runtime_failed')
+
+
+def _unwrap_bing_href(href):
+    href = unescape(href or '')
+    try:
+        parts = urlparse(href)
+        if parts.hostname in ('www.bing.com','bing.com') and parts.path.rstrip('/') == '/ck/a':
+            encoded = parse_qs(parts.query).get('u', [''])[0]
+            if not encoded.startswith('a1') or len(encoded)>8192:
+                return ''
+            payload = encoded[2:]
+            href = base64.b64decode(payload + '=' * (-len(payload) % 4), altchars=b'-_', validate=True).decode('utf-8')
+        parts = urlparse(href)
+        if parts.scheme not in ('http','https') or not parts.hostname or parts.username is not None or parts.password is not None:
+            return ''
+        return href
+    except Exception:
+        return ''
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +182,7 @@ def _http_fetch(
     max_bytes: int = _MAX_ENGINE_BYTES,
 ) -> str:
     """带 UA/超时/大小上限/gzip 解压的 HTTP GET/POST，返回解码后的文本。"""
+    _require_search_url(url)
     merged = {
         "User-Agent": _UA,
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
@@ -82,10 +195,13 @@ def _http_fetch(
         raise EngineError(_url_error)
     req = urllib.request.Request(url, data=data, headers=merged)
     try:
-        with _safe_opener().open(req, timeout=timeout) as resp:
+        policy = _SEARCH_POLICY.get()
+        opener = urllib.request.build_opener(_GrantRedirectHandler(policy)) if policy is not None else _safe_opener()
+        with opener.open(req, timeout=timeout) as resp:
             raw = _read_limited(resp, max_bytes)
             if (resp.headers.get("Content-Encoding") or "").lower() == "gzip":
-                raw = gzip.decompress(raw)
+                with gzip.GzipFile(fileobj=io.BytesIO(raw)) as uncompressed:
+                    raw = _read_limited(uncompressed, max_bytes)
             charset = resp.headers.get_content_charset() or "utf-8"
             return raw.decode(charset, errors="replace")
     except EngineError:
@@ -217,8 +333,8 @@ def _parse_bing_html(html_str: str) -> List[Dict[str, str]]:
         m = _BING_ANCHOR_RE.search(block)
         if not m:
             continue
-        url = unescape(m.group(1))
-        if not url.startswith("http"):
+        url = _unwrap_bing_href(m.group(1))
+        if not url:
             continue
         s = _BING_SNIPPET_RE.search(block)
         results.append({
@@ -463,7 +579,7 @@ def _norm_url(url: str) -> str:
         return ""
 
 
-def _merge_and_rank(items: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+def _merge_and_rank(items: List[Dict[str, Any]], limit: int, query: str = "") -> List[Dict[str, Any]]:
     """按归一化 URL 去重合并；得分 = Σ各引擎位置分 + 共识加分。"""
     buckets: Dict[str, Dict[str, Any]] = {}
     for it in items:
@@ -487,9 +603,13 @@ def _merge_and_rank(items: List[Dict[str, Any]], limit: int) -> List[Dict[str, A
         if len(it.get("snippet") or "") > len(b["snippet"]):
             b["snippet"] = it["snippet"]
         b["best_pos"] = min(b["best_pos"], position)
+    terms = set(re.findall(r"[a-z0-9]{3,}|[\u4e00-\u9fff]{2,}", query.casefold()))
+    def relevance(b):
+        text = (b["title"] + " " + b["snippet"] + " " + b["url"]).casefold()
+        return sum(term in text for term in terms)
     ranked = sorted(
         buckets.values(),
-        key=lambda b: (-(b["score"] + 3.0 * (len(b["engines"]) - 1)), b["best_pos"]),
+        key=lambda b: (-relevance(b), -(b["score"] + 3.0 * (len(b["engines"]) - 1)), b["best_pos"], b["url"]),
     )[: max(1, limit)]
     return [
         {
@@ -585,7 +705,7 @@ class SuperSearch:
             engine_stats: Dict[str, Dict[str, Any]] = {}
             max_workers = min(4, len(selected))
             pool = ThreadPoolExecutor(max_workers=max_workers)
-            futures = {pool.submit(_ENGINE_FUNCS[name], query, limit, timeout): name for name in selected}
+            futures = {pool.submit(copy_context().run, _ENGINE_FUNCS[name], query, limit, timeout): name for name in selected}
             try:
                 for future in as_completed(futures):
                     name = futures[future]
@@ -604,19 +724,22 @@ class SuperSearch:
                             })
                     except Exception as e:
                         engine_stats[name] = {"ok": False, "error": str(e)}
+                        if isinstance(e, SearchDenied):
+                            engine_stats[name]["blocked"] = True
             finally:
                 # 不等待已经超时的网络线程；urllib 请求由其自身 timeout 结束。
                 pool.shutdown(wait=False, cancel_futures=True)
 
-            results = _merge_and_rank(merged, limit)
+            results = _merge_and_rank(merged, limit, query)
             engines_failed = {k: v["error"] for k, v in engine_stats.items() if not v["ok"]}
-            engines_used = [k for k, v in engine_stats.items() if v["ok"]]
+            engines_used = [k for k in selected if engine_stats[k]["ok"]]
 
             if not results and not engines_used:
                 return {
                     "success": False,
                     "message": "所有搜索引擎均未返回结果（可能被网络环境或反爬拦截）",
                     "error": "All engines failed",
+                    "blocked": all(v.get("blocked", False) for v in engine_stats.values()),
                     "query": query,
                     "results": [],
                     "engine_stats": engine_stats,
@@ -657,10 +780,9 @@ class SuperSearch:
             top = base["results"][:fetch_top]
             timeout = _clamp_int(timeout, _DEFAULT_TIMEOUT, 1, 120)
             with ThreadPoolExecutor(max_workers=min(_DEEP_MAX_WORKERS, len(top))) as pool:
-                pages = list(pool.map(
-                    lambda r: SuperSearch._fetch_readable(r["url"], timeout, content_chars),
-                    top,
-                ))
+                futures = [pool.submit(copy_context().run, SuperSearch._fetch_readable,
+                                       r["url"], timeout, content_chars) for r in top]
+                pages = [future.result() for future in futures]
             for result, page in zip(top, pages):
                 result.update(page)
 
@@ -682,6 +804,7 @@ class SuperSearch:
             url = (url or "").strip()
             if not url:
                 return {"success": False, "message": "url 不能为空", "error": "Invalid input"}
+            _require_search_url(url)
             error = _validate_url(url)
             if error:
                 return {
@@ -709,6 +832,10 @@ class SuperSearch:
     @staticmethod
     def _fetch_readable(url: str, timeout: float, max_chars: int) -> Dict[str, Any]:
         """抓取单页并抽取正文；返回带 blocked/page_error/content 标记的页级结果。"""
+        try:
+            _require_search_url(url)
+        except SearchDenied:
+            return {"blocked": True, "page_error": "result_host_not_granted"}
         error = _validate_url(url)
         if error:
             return {"blocked": True, "page_error": error}

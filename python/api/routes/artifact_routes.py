@@ -36,9 +36,17 @@ async def get_artifact_content(artifact_id: str):
         if not artifact:
             raise HTTPException(status_code=404, detail="产物不存在")
         raise HTTPException(status_code=404, detail="产物内容未入库（仅登记了外部引用）")
-    from fastapi.responses import Response
-    return Response(content=content, media_type="application/octet-stream",
-                    headers={"X-Artifact-Id": artifact_id})
+    import hashlib
+    artifact = state.database.get_artifact(artifact_id)
+    expected = (artifact or {}).get("content_hash")
+    if expected and expected != "sha256:" + hashlib.sha256(content).hexdigest():
+        raise HTTPException(status_code=409, detail="产物内容校验失败")
+    from api.desktop_artifacts import is_bounded_png
+    is_image = is_bounded_png(content)
+    if (artifact or {}).get("kind") == "desktop_screenshot" and (not is_image or not expected):
+        raise HTTPException(status_code=415, detail="无效或超限的截图产物")
+    return Response(content=content, media_type="image/png" if is_image else "application/octet-stream",
+                    headers={"X-Artifact-Id": artifact_id, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @router.post("/api/artifacts", dependencies=[Depends(require_token)])

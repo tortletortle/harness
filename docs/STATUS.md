@@ -1,6 +1,6 @@
 # EAS 2.0 项目状态
 
-> 本文记录当前实现状态（2026-09-09）。历史测试报告以 archive/ 中的日期版本为准。
+> 本文记录当前实现状态（2026-09-13）。历史测试报告以 archive/ 中的日期版本为准。
 
 ## 一句话现状
 
@@ -40,6 +40,37 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 - Rust 测试：当前开发机未安装 cargo，尚未执行。
 
 
+## 检查点恢复加固（2026-09-13）
+
+- 检查点不再绕过当前分支、步骤状态与依赖校验：先调度已就绪的必要前置，再执行恢复目标；非法/缺失/循环/失败依赖明确阻塞，已完成目标不重跑。
+- 原恢复目标保留至真正被选中或已完成；修复前置批次、暂停接口、取消及预算暂停导致 Failed 恢复目标丢失的问题。清空检查点失败不启动工具，错误收尾不再伪装 Completed。
+- 新增 51 项临时 SQLite/工具桩回归；最终源码副本离线验证 **1004 passed / 9 skipped / 2 deselected**（188.91s）。初次全量收集因外部工具目录未配置报错，已在验证副本复制外部工具源码并设置独立 EAS_TOOLS_DIR 后重跑，不修改这些既有测试。
+- 原有业务行只读指纹复核通过；验证期间另一桌面预览验收计划新增的数据完整保留。两个旧计划未执行/归档；未重启既有后台，不把源码验证宣称为运行进程已加载新代码。
+- 详细语义、证据与边界：`out/checkpoint-fix-20260913/CHECKPOINT_FIX_COMPLETED.md`、`out/checkpoint-verification-full-20260913-181933/`。
+
+## 模型配置界面完善（2026-09-13）
+
+- 模型工作台新增角色/提供商概览、搜索、主/备用模型编辑、响应式卡片、未保存及冲突保护；模型 ID 不再受硬编码列表限制。
+- 修复旧页读取 agents 而运行时使用 models、模型分配未提交、密钥输入被后台忽略以及保存后盲目调用退出接口的问题。新版配置 API 带 schema 2、revision 与待重启提示，原子写本地覆盖，保留高级参数和当前运行配置。
+- API Key 继续由环境变量注入；未执行真实配置保存或主动重启。只读确认既有后台返回 schema 2 和 12 个模型角色，受保护配置文件哈希全部保持不变。
+- 验证：前端 **76 passed**、TypeScript/生产构建通过；源码副本 Python **1031 passed / 9 skipped / 2 deselected**，环境目录漏项另测 **1 passed**；隔离浏览器桌面/窄屏、键盘与模拟保存通过。新增 27 项后端及 15 项前端/客户端测试。
+- 使用与边界：`docs/MODEL_CONFIGURATION_UI.md`；证据：`out/model-config-20260913/`、`out/model-config-verification-full-20260913-185028/`。交互预览是内存演示，不是已经写入真实配置的证明。
+
+## 模型配置明暗主题与上游诊断修正（2026-09-13）
+
+- 修复模型配置页与真实 App 亮色主题混用的问题；语义色和容器响应式布局覆盖亮/暗主题、模型/提供商页及窄内容区。首轮孤立深色预览不足以验收，本次改用完整 App 外壳验证。
+- 新增认证 `POST /api/config/probe`：独立 GET 模型列表与明确费用确认后的最小文本推理。无自动请求/重试；20 秒总超时、响应体上限、重定向阻止、结果分类与旧后台能力门控。列表/HTTP 可达不冒充模型推理通过，文本测试不证明多模态/工具能力。
+- 前端 **85 passed / 15 files** + TypeScript/生产构建通过；脱敏源码副本 Python **1060 passed / 9 skipped / 2 deselected**。新增 29 项后端、9 项前端测试；模拟传输，不访问真实上游。
+- 原配置、密钥及前端环境文件共 5 项哈希未变。用户同意空闲时受控启用后，复核发现后台进程已更新，GET config 返回 **probe_version 1 / 12 roles**，无需重复重启；未执行历史任务或真实模型检测。
+- 详见 `docs/MODEL_CONFIGURATION_UI.md`、`out/model-probes-20260913/` 与 `out/model-probes-verification-full-20260913-191646/`。
+
+## 已保存中文提供商修复与真实连通性复测（2026-09-13）
+
+- 已保存中文提供商支持检测及原样保存，不再出现“国模”本地 422 或其他配置被保存校验阻断；新建标识规则、已保存端点白名单与控制字符限制保持。
+- 当前后台已加载修复。仅对“国模”复测一次 GET 模型列表：HTTP 401 / 约 1.47 秒，说明已到达上游，下一步需要正确注入密钥；未发起模型推理。
+- 定向后端 **100 passed**；全量脱敏回归 **1077 passed / 9 skipped / 2 deselected**；前端 **86 passed**，TypeScript/构建通过。新增 17 个后端与 1 个前端回归用例。原配置及密钥未修改；全量证据 `out/model-probes-verification-full-20260913-200034/`。
+- hejuapi 的 `/v1/models` 404 尚不能确定为地址错误，公开资料不足以确认替代地址，未猜测改写。参见 `docs/MODEL_CONFIGURATION_UI.md` 与 `out/upstream-connectivity-20260913-200100.json`。
+
 ## 已知短板
 
 1. ~~`python/api/server.py` 仍然是大型协调入口~~ **已拆分（两轮，2026-09-12）**：
@@ -63,3 +94,5 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 - 所有凭据只从环境变量或密钥服务读取；本地覆盖文件不得提交到 Git。
 
 7. Full-suite phantom failures (unknown_instruction/render) + root artifact regeneration **resolved (2026-09-13)**: external sibling-repo tool progress_view.py violates TOOL_INTERFACE_DESIGN 3.3/3.5 (failure branch lacks message key), auto-loaded via load_tools_from_dir; harness-side hermeticity fixes in test_tool_contract.py (scope to EXPECTED_TOOL_IDS) and test_instruction_inference.py (EAS_WORKSPACE_ROOT=tmp); suite now 824 passed, 8 skipped.
+
+8. Rust workspace builds green for the first time (2026-09-13): rustup stable 1.98.1 via Tsinghua mirror (msvc host + gnu toolchains, auto-self-update disabled, no MSVC/SDK on machine), linked with zig 0.16 via cargo-zigbuild; all 7 crates OK (eas-common/logger/tool-manager/dispatcher/db/server + eas-gui); warnings only, non-blocking (gui 32, db 2, server 2, tool-manager 1); evidence out/cargo-gnu3.log + out/cargo-gui.log.

@@ -25,10 +25,10 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 
-class ConfigUpdateRequest(BaseModel):
-    """更新配置请求"""
-    api_keys: Dict[str, str]
-    base_urls: Dict[str, str]
+from api.model_probe import ProbeRequest, probe_configuration
+from api.configuration import (
+    ConfigUpdateRequest, ConfigProblem, read_configuration, save_configuration,
+)
 
 
 def _config_dir() -> Path:
@@ -214,56 +214,34 @@ async def get_capabilities():
     }
 
 
+@router.post("/api/config/probe", dependencies=[Depends(require_token)])
+async def probe_models(request: "ProbeRequest"):
+    """Explicit non-persistent connectivity / minimal inference check."""
+    try:
+        return {"success": True, "result": await probe_configuration(_config_dir(), state.config, request)}
+    except ConfigProblem as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+
+
 @router.get("/api/config", dependencies=[Depends(require_token)])
 async def get_config():
-    """获取配置"""
+    """Read persisted model routing, with runtime drift and no secret values."""
     try:
-        # 隐藏敏感信息
-        safe_config = {
-            "base_urls": state.config.get("base_urls", {}),
-            "agents": state.config.get("agents", {}),
-            "api_keys_configured": {
-                k: bool(v) for k, v in state.config.get("api_keys", {}).items()
-            }
-        }
-        return {
-            "success": True,
-            "config": safe_config
-        }
-    except Exception as e:
-        logger.exception("查询配置失败: {}", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"success": True, "config": read_configuration(_config_dir(), state.config)}
+    except ConfigProblem as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+
 
 @router.post("/api/config", dependencies=[Depends(require_token)])
 async def update_config(request: ConfigUpdateRequest):
-    """更新配置"""
+    """Atomically persist non-secret settings; leave running tasks/config untouched."""
     try:
-        # 安全：真实 key 只写 gitignored 的 models.local.yaml，绝不写回被跟踪的 models.yaml。
-        # 目录由 _config_dir() 解析（服务端确定，不接收请求输入；层级无关）。
-        local_path = (_config_dir() / "models.local.yaml").resolve()
-        
-        local = {}
-        if local_path.exists():
-            with open(local_path, "r", encoding="utf-8") as f:
-                local = yaml.safe_load(f) or {}
-        
-        # 仅保存非敏感端点配置；API key 由环境变量/密钥服务注入。
-        local.pop("api_keys", None)
-        local["base_urls"] = request.base_urls
-        
-        with open(local_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(local, f, allow_unicode=True)
-        
-        await broadcast_log("配置已更新，需要重启服务生效", "warning")
-        
-        return {
-            "success": True,
-            "message": "配置已保存，重启服务后生效"
-        }
+        config = save_configuration(_config_dir(), state.config, request)
+        return {"success": True, "config": config,
+                "message": "配置已保存；未自动重启服务"}
+    except ConfigProblem as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
 
-    except Exception as e:
-        logger.exception("更新配置失败: {}", e)
-        raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/api/design/{design_id}", dependencies=[Depends(require_token)])
 async def delete_design(design_id: str):

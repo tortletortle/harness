@@ -161,7 +161,9 @@ class SkillCapabilityAdapter(ToolCapabilityAdapter):
             base,
             description=f"[技能包] {self.skill.description}",
             side_effect=self.skill.side_effect,
-            idempotent=self.skill.side_effect != "external",
+            # A side-effect label alone is not a declared idempotency contract.
+            # Script entry skills are not automatically retried, including local report writers.
+            idempotent=False,
         )
 
 

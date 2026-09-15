@@ -355,3 +355,90 @@ def test_registry_contains_super_search():
     assert "super_search" in tool_ids
     # 别名解析不回归
     assert registry.get_tool("super_search") is not None
+
+
+# 新增：真实搜索链路修复的离线回归，不访问搜索引擎。
+def test_bing_wrapped_result_is_decoded_before_reading():
+    import base64
+    target = 'https://docs.python.org/3/?x=1'
+    token = base64.urlsafe_b64encode(target.encode()).decode().rstrip('=')
+    assert ss._unwrap_bing_href('https://www.bing.com/ck/a?u=a1'+token) == target
+    html = '<li class="b_algo"><h2><a href="https://www.bing.com/ck/a?u=a1'+token+'">Python</a></h2><p>Docs</p></li>'
+    assert ss._parse_bing_html(html)[0]['url'] == target
+    for bad in ['javascript:alert(1)', 'https://user:secret@example.com', 'https://www.bing.com/ck/a?u=a1***']:
+        assert ss._unwrap_bing_href(bad) == ''
+
+
+def test_query_relevance_precedes_unrelated_engine_position():
+    rows=[{'url':'https://google.com','title':'Google Search','snippet':'Search the world','engine':'bing','position':0},
+          {'url':'https://docs.python.org','title':'Python documentation','snippet':'Official documentation','engine':'duckduckgo','position':1}]
+    assert ss._merge_and_rank(rows,5,'Python official documentation')[0]['url']=='https://docs.python.org'
+
+
+def _search_manager(tmp_path, hosts):
+    from authorization import AuthorizationManager
+    manager=AuthorizationManager(require_grant=True,workspace_root=tmp_path,allowed_hosts=hosts)
+    grant=manager.issue_grant('offline-test',['super_search'])
+    return manager,grant
+
+
+def test_tool_permission_without_engine_hosts_is_not_network_authorization(tmp_path,monkeypatch):
+    manager,grant=_search_manager(tmp_path,[])
+    def forbidden(*a,**k):raise AssertionError('must not call search engine')
+    monkeypatch.setitem(ss._ENGINE_FUNCS,'duckduckgo',forbidden)
+    result=ss.execute_with_grant('search',{'query':'python','engines':['duckduckgo']},manager,grant.grant_id)
+    assert result['blocked'] and not result['success']
+    assert ss._SEARCH_POLICY.get() is None
+
+
+def test_search_policy_propagates_to_engine_workers(tmp_path,monkeypatch):
+    manager,grant=_search_manager(tmp_path,['html.duckduckgo.com'])
+    def engine(*args):
+        ss._require_search_url('https://not-granted.example/')
+        raise AssertionError('policy not propagated')
+    monkeypatch.setitem(ss._ENGINE_FUNCS,'duckduckgo',engine)
+    result=ss.execute_with_grant('search',{'query':'python','engines':['duckduckgo']},manager,grant.grant_id)
+    assert not result['success'] and result['blocked']
+    assert result['engine_stats']['duckduckgo']['error']=='search_host_not_granted'
+    assert grant.used_tool_calls==1
+
+
+def test_deep_result_cannot_authorize_itself_or_trigger_dns(tmp_path,monkeypatch):
+    manager,grant=_search_manager(tmp_path,['html.duckduckgo.com'])
+    monkeypatch.setitem(ss._ENGINE_FUNCS,'duckduckgo',lambda *a:[{'url':'https://not-granted.example/','title':'Python','snippet':'docs'}])
+    def forbidden(*a,**k):raise AssertionError('DNS before authorization')
+    monkeypatch.setattr(ss,'_validate_url',forbidden)
+    result=ss.execute_with_grant('deep_search',{'query':'python','engines':['duckduckgo'],'fetch_top':1},manager,grant.grant_id)
+    assert result['success']
+    assert result['results'][0]['blocked'] and result['results'][0]['page_error']=='result_host_not_granted'
+
+
+def test_search_redirect_guard_rejects_before_ssrf_lookup():
+    import urllib.request
+    request=urllib.request.Request('https://html.duckduckgo.com/html/')
+    with pytest.raises(ss.SearchDenied,match='redirect_host_not_granted'):
+        ss._GrantRedirectHandler(lambda url:False).redirect_request(request,None,302,'Found',{},'https://other.example/')
+
+
+def test_gzip_is_bounded_after_decompression(monkeypatch):
+    import gzip
+    import io
+    class Headers(dict):
+        def get_content_charset(self):return 'utf-8'
+    class Response(io.BytesIO):
+        headers=Headers({'Content-Encoding':'gzip'})
+    class Opener:
+        def open(self,*a,**k):return Response(gzip.compress(b'x'*100000))
+    monkeypatch.setattr(ss,'_validate_url',lambda url:None)
+    monkeypatch.setattr(ss,'_safe_opener',lambda:Opener())
+    with pytest.raises(ss.EngineError):ss._http_fetch('https://example.com',max_bytes=1000)
+
+
+def test_authorized_search_still_blocks_after_revocation(tmp_path,monkeypatch):
+    manager,grant=_search_manager(tmp_path,['html.duckduckgo.com'])
+    def engine(*args):
+        grant.revoked=True
+        return [{'url':'https://docs.python.org','title':'Python','snippet':'docs'}]
+    monkeypatch.setitem(ss._ENGINE_FUNCS,'duckduckgo',engine)
+    result=ss.execute_with_grant('search',{'query':'python','engines':['duckduckgo']},manager,grant.grant_id)
+    assert not result['success'] and 'grant_no_longer_valid' in result['error']

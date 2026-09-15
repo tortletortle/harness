@@ -31,6 +31,7 @@ from api.shared import (
 )
 from api.runtime.artifacts import _register_step_artifacts
 from authorization import agent_step_grant_params
+from retry_policy import automatic_retry_policy, annotate_retry_failure
 from executor.acceptance_feedback import build_acceptance_feedback as _build_acceptance_feedback
 from models import AttemptStatus, Step, StepStatus
 
@@ -165,13 +166,31 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
     step_capability_kind = (
         getattr(step_capability.spec(), "kind", None) if step_capability is not None else None
     )
-    if state.approval_manager.is_required_for_step(tool_id_for_approval, step_capability_kind):
+    desktop_scope = None
+    desktop_approved = False
+    desktop_auto = False
+    desktop_worktree = state.database.get_active_worktree(plan_id) if tool_id_for_approval == "desktop_observe" else None
+    if tool_id_for_approval == "desktop_observe":
+        from api.desktop_approval import prepare_desktop_scope, desktop_auto_allowed
+        try:
+            desktop_scope = prepare_desktop_scope(step_model, desktop_worktree["worktree_path"] if desktop_worktree else state.authorization_manager.workspace_root)
+        except Exception:
+            return {"success": False, "blocked": True, "blocked_reason": "invalid_desktop_scope", "error": "Desktop scope unavailable; no window content read", "retryable": False, "check_status": "unverified", "duration_ms": 0}
+        desktop_auto = desktop_auto_allowed()
+        desktop_approved = desktop_auto
+        if desktop_auto:
+            state.database.add_step_event(step_id, plan_id, "desktop_auto_authorized",
+                {"policy": "persistent_read_only_desktop", "operation": desktop_scope["operation"],
+                 "window_id": (desktop_scope.get("identity") or {}).get("window_id")},
+                branch_version=step_model.branch_version)
+    if not desktop_auto and (tool_id_for_approval == "desktop_observe" or state.approval_manager.is_required_for_step(tool_id_for_approval, step_capability_kind)):
         approval = state.approval_manager.create(
             plan_id=plan_id,
             step_id=step_id,
             tool_id=tool_id_for_approval,
             instruction=str(step.get("description", "")),
             inputs=step_model.inputs,
+            **({"desktop_scope": desktop_scope} if desktop_scope else {}),
         )
         state.database.add_step_event(
             step_id, plan_id, "approval_requested",
@@ -214,9 +233,9 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
             inputs=step_model.inputs,
             plan_id=plan_id,
             step_id=step_id,
-            success=False,
-            blocked=True,
-            block_reason="user_rejected" if decision is None else f"user_rejected: {decision.comment or ''}",
+            success=bool(decision and decision.approved),
+            blocked=not bool(decision and decision.approved),
+            block_reason=None if decision and decision.approved else "user_rejected",
             actor="user",
         )
         await broadcast_approval_resolved(approval.approval_id, approved=bool(decision and decision.approved))
@@ -238,6 +257,7 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
                 "retryable": False,
                 "duration_ms": 0,
             }
+        desktop_approved = bool(decision and decision.approved)
         await broadcast_log(f"[APPROVAL] 步骤 {step_id} 审批通过，继续执行", "info")
 
     # Runtime Grant：审批（若有）结束后、工具调用前签发一次性授权。
@@ -253,15 +273,23 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
     # Worktree 绑定：计划挂在隔离 worktree 上时，Grant 的 workspace 指向
     # worktree 而非主工作区——命令类工具的隐式 cwd/path 与资源检查随之一致。
     _active_wt = state.database.get_active_worktree(plan_id)
-    grant = state.authorization_manager.issue_for_step(
-        plan_id=plan_id,
-        step=step_model,
-        subject="executor",
-        approval_required=False,
-        extra_allowed_tools=agent_extra_tools,
-        limits=agent_limits,
-        workspace_root=_active_wt["worktree_path"] if _active_wt else None,
-    )
+    if desktop_scope:
+        from api.desktop_approval import issue_approved_desktop_grant
+        try:
+            grant = issue_approved_desktop_grant(state.authorization_manager, plan_id, step_model, desktop_scope,
+                approved=desktop_approved, workspace_root=_active_wt["worktree_path"] if _active_wt else None)
+        except Exception:
+            return {"success": False, "blocked": True, "blocked_reason": "desktop_scope_changed", "error": "Desktop scope changed; a new approval is required", "retryable": False, "check_status": "unverified", "duration_ms": 0}
+    else:
+        grant = state.authorization_manager.issue_for_step(
+            plan_id=plan_id,
+            step=step_model,
+            subject="executor",
+            approval_required=False,
+            extra_allowed_tools=agent_extra_tools,
+            limits=agent_limits,
+            workspace_root=_active_wt["worktree_path"] if _active_wt else None,
+        )
     state.database.add_step_event(
         step_id, plan_id, "grant_issued",
         {"grant_id": grant.grant_id, "expires_at": grant.expires_at.isoformat(), "tool_id": tool_id_for_approval},
@@ -426,6 +454,7 @@ async def _execute_step_to_completion(
 
     await broadcast_plan_update(str(plan.plan_id))
 
+    retry_policy = automatic_retry_policy(step.get("tool", ""), getattr(state, "capability_registry", None), getattr(state, "tool_registry", None))
     configured_retries = step.get("max_retries")
     if configured_retries is None:
         max_attempts = getattr(state, "retry_max_attempts", 3)
@@ -466,6 +495,13 @@ async def _execute_step_to_completion(
                     logger.warning(f"finish_execution_attempt 失败（忽略）: {attempt_close_exc}")
                 attempt_id = None
             raise
+        result = annotate_retry_failure(result, retry_policy)
+        if not result.get("success") and not retry_policy["eligible"]:
+            state.database.add_step_event(
+                step_id, str(plan.plan_id), "retry_suppressed",
+                {"policy": retry_policy, "manual_retry_required": True}, branch_version=branch_version,
+            )
+            await broadcast_log(f"[RETRY_SUPPRESSED] 步骤 {step_id} 不自动重试；请核对可能已发生的操作后再明确发起执行", "warning")
         if attempt_id:
             try:
                 state.database.finish_execution_attempt(
@@ -490,6 +526,7 @@ async def _execute_step_to_completion(
             failure_reason = error
             debug_log(f"Step {step_id} blocked: {error}")
             failure_outputs = {"error": error, "check_status": result.get("check_status")}
+            failure_outputs.update({k: result[k] for k in ("retry_policy", "manual_retry_required") if k in result})
             if result.get("acceptance_result") is not None:
                 failure_outputs.update({
                     "acceptance": result.get("acceptance_result"),
@@ -522,9 +559,9 @@ async def _execute_step_to_completion(
             await broadcast_plan_update(str(plan.plan_id))
             return "stop", step_id
 
-        if result.get("check_status") == "failed" and _is_retryable_exit_code_acceptance(step, result):
+        if result.get("check_status") == "failed" and retry_policy["eligible"] and _is_retryable_exit_code_acceptance(step, result):
             result["retryable"] = True
-        if result.get("check_status") == "failed" and not _is_retryable_exit_code_acceptance(step, result):
+        if result.get("check_status") == "failed" and not (retry_policy["eligible"] and _is_retryable_exit_code_acceptance(step, result)):
             # P2 反馈回路：验收缺口作为 feedback 喂回 coding_agent 再修一轮
             # （每步最多一次；重试仍失败则走下方原判死路径）。
             feedback_text = _build_acceptance_feedback(result.get("acceptance_result"))
@@ -532,6 +569,7 @@ async def _execute_step_to_completion(
                 feedback_text
                 and step.get("tool") == "coding_agent"
                 and not feedback_used
+                and retry_policy["eligible"]
             ):
                 feedback_used = True
                 step_inputs = dict(step.get("inputs") or {})
@@ -547,6 +585,7 @@ async def _execute_step_to_completion(
             failure_reason = error
             debug_log(f"Step {step_id} check failed: {error}")
             failure_outputs = {"error": error, "check_status": "failed"}
+            failure_outputs.update({k: result[k] for k in ("retry_policy", "manual_retry_required") if k in result})
             if result.get("acceptance_result") is not None:
                 failure_outputs.update({
                     "acceptance": result.get("acceptance_result"),
@@ -591,6 +630,7 @@ async def _execute_step_to_completion(
             debug_log(f"Step {step_id} retry exhausted")
             if check_status == "failed" or not result.get("success"):
                 failure_outputs = {"error": error, "check_status": check_status}
+                failure_outputs.update({k: result[k] for k in ("retry_policy", "manual_retry_required") if k in result})
                 if result.get("acceptance_result") is not None:
                     failure_outputs.update({
                         "acceptance": result.get("acceptance_result"),

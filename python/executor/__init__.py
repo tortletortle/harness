@@ -147,6 +147,8 @@ class DefaultExecutor(ExecutorAI):
         logger.debug("工具: {}", step.tool)
         logger.debug("输入: {}", step.inputs)
 
+        from retry_policy import automatic_retry_policy
+        retry_policy = automatic_retry_policy(getattr(step, "tool", ""), self.capability_registry, self.tool_registry)
         try:
             # 解析工具ID和指令
             tool_parts = step.tool.split(":")
@@ -181,7 +183,7 @@ class DefaultExecutor(ExecutorAI):
                 elif tool_id == "git_operator" and not effective_inputs.get("path"):
                     # Git 工具的默认 path="." 由工具进程解释，必须显式绑定到 Grant workspace。
                     effective_inputs["path"] = grant.workspace_root
-            if tool_id != "browser_observe" and self.authorization_manager is not None and (
+            if tool_id not in ("browser_observe", "super_search", "pdf_reader", "image_reader", "office_reader", "desktop_observe", "file_find", "document_batch") and self.authorization_manager is not None and (
                 grant_id is not None or self.authorization_manager.require_grant
             ):
                 decision = self.authorization_manager.authorize(
@@ -227,7 +229,7 @@ class DefaultExecutor(ExecutorAI):
                         ),
                         timeout=max(self.step_timeout, self.agent_step_timeout),
                     )
-                elif tool_id == "browser_observe":
+                elif tool_id in ("browser_observe", "super_search", "pdf_reader", "image_reader", "office_reader", "desktop_observe", "file_find", "document_batch"):
                     # 浏览器桥拥有一次完整授权；不在此提前消费同一个 Grant 的调用额度。
                     result = await asyncio.wait_for(
                         asyncio.to_thread(
@@ -264,7 +266,9 @@ class DefaultExecutor(ExecutorAI):
                     "error": "Step execution timeout",
                     "blocked": False,
                     # P2 错误分类：超时多为瞬时负载，重试可能成功
-                    "retryable": True,
+                    "retryable": retry_policy["eligible"],
+                    "retry_policy": retry_policy,
+                    "manual_retry_required": not retry_policy["eligible"],
                 }
 
             # P0-b：结构化拦截判定（字段优先，错误码回退）
@@ -373,7 +377,9 @@ class DefaultExecutor(ExecutorAI):
                     # 无论重试多少次结果都不会变。
                     "blocked": blocked,
                     # P2 错误分类：拦截不可重试；其余失败（网络/依赖缺失等）可重试
-                    "retryable": not blocked,
+                    "retryable": not blocked and retry_policy["eligible"],
+                    "retry_policy": retry_policy,
+                    "manual_retry_required": not retry_policy["eligible"],
                 }
 
         except Exception as e:
@@ -386,7 +392,9 @@ class DefaultExecutor(ExecutorAI):
                 "error": str(e),
                 "blocked": False,
                 # P2 错误分类：未知异常按可重试处理，由重试上限兜底
-                "retryable": True,
+                "retryable": retry_policy["eligible"],
+                    "retry_policy": retry_policy,
+                    "manual_retry_required": not retry_policy["eligible"],
             }
 
     def _agent_capability(self, tool_id: str):

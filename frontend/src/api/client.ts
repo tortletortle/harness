@@ -1,3 +1,5 @@
+import type { ModelProbeRequest, ModelProbeResult } from '../types/modelConfig';
+import type { ModelConfiguration, ModelConfigUpdate } from '../types/modelConfig';
 /**
  * API 客户端
  * 与后端 FastAPI 服务通信
@@ -384,7 +386,7 @@ export class ApiClient {
   /**
    * 获取配置
    */
-  async getConfig(): Promise<any> {
+  async getConfig(): Promise<ModelConfiguration> {
     const response = await authFetch(`${API_BASE}/api/config`);
     if (!response.ok) {
       await throwResponseError(response, '获取配置失败');
@@ -395,6 +397,33 @@ export class ApiClient {
       throw new Error(data.detail || data.error || '获取配置失败');
     }
 
+    return data.config;
+  }
+
+  /** Explicit upstream probe: connectivity never invokes inference. */
+  async probeModelConfig(payload: ModelProbeRequest, signal?: AbortSignal): Promise<ModelProbeResult> {
+    const response = await authFetch(`${API_BASE}/api/config/probe`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload), signal,
+    });
+    if (!response.ok) await throwResponseError(response, '检测接口不可用，请确认后台已更新');
+    const data = await response.json();
+    if (!data.success || !data.result) throw new Error('检测接口返回无效响应');
+    return data.result;
+  }
+
+  /** Save non-secret model routing; does not restart the backend. */
+  async updateModelConfig(payload: ModelConfigUpdate): Promise<ModelConfiguration> {
+    const response = await authFetch(`${API_BASE}/api/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) await throwResponseError(response, '模型配置保存失败');
+    const data = await response.json();
+    if (!data.success || data.config?.schema_version !== 2) {
+      throw new Error('后台尚不支持新版模型配置保存');
+    }
     return data.config;
   }
 
@@ -469,13 +498,13 @@ export class ApiClient {
   /**
    * 批准工具调用（P0-a）：执行协程立即恢复
    */
-  async approveToolCall(planId: string, approvalId: string, comment?: string): Promise<void> {
+  async approveToolCall(planId: string, approvalId: string, comment?: string, desktopConfirmation?: string): Promise<void> {
     const response = await authFetch(
       `${API_BASE}/api/plan/${planId}/approval/${approvalId}/approve`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comment }),
+        body: JSON.stringify({ comment, ...(desktopConfirmation ? { desktop_confirmation: desktopConfirmation } : {}) }),
       },
     );
     if (!response.ok) {
@@ -546,6 +575,15 @@ export class ApiClient {
     }
     const data = await response.json();
     return (data.artifacts || []) as Artifact[];
+  }
+
+  async getArtifactImage(artifactId: string): Promise<Blob> {
+    const response = await authFetch(`${API_BASE}/api/artifacts/${encodeURIComponent(artifactId)}/content`);
+    if (!response.ok) await throwResponseError(response, '读取截图失败');
+    if (response.headers.get('Content-Type')?.split(';')[0] !== 'image/png') throw new Error('截图格式不是 PNG');
+    const blob = await response.blob();
+    if (blob.size > 8 * 1024 * 1024) throw new Error('截图超过大小限制');
+    return blob;
   }
 
   async getArtifactContent(artifactId: string): Promise<string> {

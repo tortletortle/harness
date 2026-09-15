@@ -7,7 +7,7 @@
 
 - 当前版本：`1.19-draft`
 - 状态：初版，已通过五个成熟开源项目源码分析验证；P0-P2、AcceptanceRunner 第一阶段、Runtime Grant 第一阶段、AgentTool 骨架、coding_agent 全流程贯通、工具管理修正三项（human_tool 真确认 / test_runner / 搜索授权化）多轮 Agent Loop（CodingAgentTool v2，有界自测迭代）与上下文缓存命中优化（对话式消息前缀复用、设计书缓存指纹校验与命中率观测）已实施；工具选型评测达标；工具补充四件（lint_gate / github_operator / http_api / browser_check，§24）已实施；验收失败反馈回路（content_contains 缺口转 feedback 喂回 coding_agent 重修一轮，§25）已实施；coding_agent patch 输出模式契约（削接缝动作 A，§26）已实施；test_passes 测试即验收类型（削接缝动作 B 第一级，§27）已实施；失败 checkpoint 续跑与 Retry 孤儿恢复已实施；最小 WorkGraph（1.15）、资源声明 + 受控并行（1.16）、Worktree 隔离（1.17）、多计划并行 + AgentSession/Turn 分层 + Artifact 内容层 + 动态重规划 + review/diagnosis Agent + 最终交付报告（1.18）、任务模式识别 + B 标准真实验收 4/4（1.19）已实施
-- 最后更新：2026-09-12
+- 最后更新：2026-09-13
 
 ## 1. 目标
 
@@ -1185,6 +1185,16 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
 - 验证：`test_worktree_isolation.py` 6 项（真实 git：roundtrip、路径逃逸拒绝、冲突结构化失败、DB 生命周期、端到端 workspace 重定向 + 合并带回产物）。离线回归 660 passed / 9 skipped / 2 deselected。
 - 待后续：多计划各占 worktree 并行执行（替换 current_execution 单执行权）、worktree 冲突的 review 流程接入。
 
+#### 2026-09-13：Worktree 生命周期路由失败契约修复
+
+- 合并成功路径补齐 `broadcast_plan_update` 导入，避免 Git 已合并、绑定已关闭后因 NameError 返回 500。
+- 合并与丢弃的 `close_worktree` 返回值统一通过 `_require_write` 检查；数据库未命中或故障不返回成功、不发送成功广播。
+- 丢弃时 Git 返回失败：HTTP 409，`success=false`、`removed=false`、`code=worktree_remove_failed`，保留 active 绑定及 Git 错误信息；成功关闭绑定后才发送计划更新与完成日志。
+- 重复合并/丢弃沿用“无 active 绑定返回 404”的契约，不重复调用 Git；Running 计划仍返回 409。
+- `tests/python/test_worktree_routes.py` 使用独立 FastAPI、临时 SQLite 和 Git 桩覆盖 HTTP 成功/失败、写入失败、鉴权、Running 拒绝及重复请求；真实广播函数保留，仅替换发送边界，防止测试掩盖缺失导入。
+- 边界：Git 副作用与 SQLite 提交并非跨系统原子操作。本轮确保故障不伪装成功，不实现自动补偿，也不改动执行所有权或重规划逻辑。
+- 定向验证（2026-09-13）：`python -m pytest -o addopts= -q tests/python/test_worktree_routes.py tests/python/test_worktree_isolation.py tests/python/test_multi_plan_parallel.py --tb=short --disable-warnings` → **27 passed**（新增路由 19 + 现有隔离 6 + 并行 2；116 warnings）。修改的 Python 文件编辑器诊断返回 0 条；本轮未跑全量回归、真实 LLM 或前端测试。
+
 ### 1.18-draft — 2026-09-12：多计划并行 + 运行记录分层 + Artifact 内容层 + 动态重规划（已实施）
 
 - **多计划并行执行**：工作区覆盖从进程级 env 升级为 contextvar（`tools/workspace.py`，`set_workspace_override`；file_creator/text_editor/manual_tool 的 ThreadPoolExecutor 边界显式 `copy_context().run` 传播）。绑定 worktree 的计划不占用 `current_execution` 主工作区执行权（execute/resume 端点 + finally 清理同步调整），可与任何计划并行；同计划重复执行仍由 DB 状态机原子认领拒绝。
@@ -1195,6 +1205,40 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
 - 验证：`test_multi_plan_parallel.py`（2 worktree 计划并行 + 与主工作区计划并行、产物隔离）、`test_agent_session_recording.py`（4）、`test_artifact_content.py`（3）、`test_replan.py`（5）、`test_agents_and_report.py`（4）。离线回归 **678 passed / 9 skipped / 2 deselected**。
 - 总目标能力域收尾状态：任务模式识别（直接工具模式）与前端 WorkGraph 可视化仍未实现；多计划并行已具备（worktree 绑定计划间），主工作区计划仍单执行权。
 
+
+#### 2026-09-13：重规划分支归属与原子提交修复
+
+- **无前驱路径**：F 与修复步骤留在当前活动分支；API 的 `new_branch` 返回实际生效分支（可能等于旧分支），不再指向空分支。有前驱时仍克隆后缀到下一分支、保留成功前缀。
+- **生成期只读**：`get_replan_snapshot` 一致性读取计划、全部步骤和 Run ID；LLM 调用前不克隆、不废弃、不清理检查点，也不跨网络持有事务。生成失败或取消不修改计划图。
+- **单事务提交**：纯函数 `domain/replan.py` 构造并校验候选图；`Database.commit_replan` 使用 `BEGIN IMMEDIATE` 重新比较快照，将克隆/修复插入、原步骤废弃、依赖及重试状态更新、检查点清空、计划 Pending/分支切换、replanned 事件一起提交。任意 SQL 异常或写入未命中整体回滚，不更改 schema。
+- **并发保护**：快照不一致返回 HTTP 409，不覆盖其他执行/重规划。Run ID 纳入比较，覆盖 execute 后又回到 Failed 的状态往返；两个连接并发提交最多一个成功。
+- **图边界**：锚点必须是当前分支活动 Failed 步骤；拒绝空修复、已有目标分支、悬空/循环依赖及不可执行的历史前置依赖；校验沿用调度器的 parent_step_id 别名解析。重试步骤清理旧执行结果与重试计数，克隆保留 max_retries。
+- **测试范围**：临时 SQLite 的触发器故障注入覆盖插入、废弃、依赖更新、计划更新和事件写入失败/忽略；覆盖首步与后续失败、生成失败/取消、检查点/分支/步骤变化、并发提交及二次重规划。执行循环用状态机桩验证修复步骤先于原失败步骤运行，不等同真实 LLM 验收。
+- **未包含**：修复历史遗留的部分写入数据、重规划次数/预算限制、后台执行所有权清理；这些仍需独立处理。
+- **本轮验证**：新增 `test_replan_atomic.py` 37 项；连同原有 replan、database_errors、execution_runs、plan_lifecycle_semantics、work_graph、worktree_routes、worktree_isolation、multi_plan_parallel 共 **113 passed / 288 warnings**（2026-09-13）。使用 `-o addopts= -q --tb=short --disable-warnings`，在测试启动包装器中指定临时 `EAS_WORKSPACE_ROOT`，并将测试进程 Loguru sink 改为控制台，规避已有日志文件的 Windows 占用/轮转冲突；不修改应用日志配置。四个相关 Python 文件的编辑器诊断返回 0 条；未跑全量、前端或真实 LLM 验收。
+
+#### 2026-09-13：执行所有权与任务收尾隔离
+
+- `AppState.execution_reservations` 为每个计划保存进程内占用令牌，`execution_tasks` 保持任务引用。execute/resume 在入队前认领，占用覆盖排队、执行及收尾；重复请求返回 409，不能仅凭计划已经 Paused/Completed 就释放主工作区。
+- `api/execution_ownership.py` 统一预占与按令牌释放。主工作区标记必须同时匹配 plan_id 和 reservation_token 才能清空；旧回调不清理新任务，Worktree 任务不清理并行的主工作区任务。无持有者且数据库非 Running 的旧标记仍可自愈。
+- 后台执行区分“拥有请求占用”和“已认领 Run”。认领失败/认领前异常仅释放自己的请求占用，不写执行摘要、不改计划状态、不撤销审批/Grant、不结束他人的 Run，也不清除未绑定的用量上下文。
+- 所有权检查包含进程内令牌与数据库 Run 的 plan_id/owner_token/Running 状态及最新 Run；显式传入 Run 也需校验。失去所有权或心跳被拒绝后不再启动新批次，也不做计划级清理。数据库心跳异常进入已有失败处理，不继续执行。
+- 成功持有者在计划级清理和 Run 收尾完成后才释放占用。创建任务失败会关闭尚未执行的协程并释放自身占用；done 回调兜底处理启动前取消。回调使用统一日志，不再写硬编码 `D:/spot/harness/.tmp/bg_done.log`。
+- 取消仍向上传播 CancelledError。仅有效持有者将本活动分支中断的 Running 步骤恢复为 Pending；Running 计划记录 Failed 与恢复点，已请求 Paused 的计划保留暂停语义。单步及并行批次的再次执行均有回归覆盖。
+- 验证：新增 `test_execution_ownership.py` **28 项**；与 replan/atomic、数据库错误、Run、计划生命周期、WorkGraph/依赖调度、Worktree 路由/隔离/多计划并行、工具审批、验收服务集成共 13 个文件 **167 passed / 561 warnings**。仍使用临时工作区、测试进程控制台日志、关闭默认覆盖率输出；未跑全量、前端、真实 LLM 或线上服务验收。
+- 边界：这是单服务事件循环内的占用与清理隔离，不是分布式租约。仍未覆盖跨进程完整写入 fencing、底层工具线程/子进程的强制终止、用量上下文由 thread-local 迁移到 ContextVar，以及历史遗留数据库修复。取消恢复点的收敛也不宣称能与外部工具副作用形成原子事务。
+
+#### 2026-09-13：鉴权 HTTP 测试隔离与遗留数据 dry-run
+
+- `tests/python/test_api_auth_http.py` 不再从原 `python/` 目录起服务：模块 fixture 只复制 Python 源码到临时根目录，生成最小离线配置，独立 data/logs/config/工作区/外部工具目录。不复制原数据库、本地模型覆盖配置或 token；原因是服务配置优先按 `__file__` 定位，仅改 cwd 或 `EAS_WORKSPACE_ROOT` 不能隔离本地配置。
+- 子进程清除继承的 EAS 配置路径与凭据、API key/token 和真实评测开关；独立 PYTHONPATH、随机测试 token，禁用 MCP/技能/通知等可配置外部入口。HTTP 客户端禁用继承代理。端口由子进程绑定 0 后持续持有同一个 socket 交给 uvicorn，readiness 核对 PID 与带 token 的状态响应，避免固定端口误连其他服务。
+- 进程清理覆盖 spawn 失败、提前退出、启动超时、错误 PID、测试体异常与正常退出；terminate 超时后 kill 并再次 wait，日志句柄随上下文关闭。
+- 验证：保留原 16 项 HTTP/CORS 测试，新增 11 项隔离/清理测试，专项 **27 passed / 5.58s**，编辑器诊断 0。源码副本中按 README/CI 离线选择回归 **915 passed / 9 skipped / 2 deselected / 902 DeprecationWarning，193.23s**；8 个跳过项为真实 LLM/GitHub，另 1 个环境目录依赖测试在独立进程中补测 **1 passed / 0.41s**。关闭默认覆盖率输出，未跑真实模型、浏览器或前端验收。
+- 数据边界：专项前后原 `data/eas.db`、`python/data/eas.db` 哈希及原配置/token/日志/辅助文件元数据一致；全轮两处主数据库哈希仍一致。独立只读审计会更新已有 SQLite SHM 元数据，未删除 WAL/SHM。
+- 只读 dry-run 再次核对 2 个 Completed 空活动分支计划及 10 条失效验收 Worktree 绑定，12/12 已观测前置条件与基线匹配。仅提出计划 Failed/branch 1/checkpoint 与绑定 discarded/纠正时间的待批准方案，保留 Steps/Runs/Attempts/Events；没有执行修复、备份、任务重跑或 Git 清理。实际执行仍须逐项批准、停写及外部任务停稳、一致备份与副本演练、事务内完整快照比较和审计/回滚守卫。
+- 证据：`out/auth-isolation-20260913-161857/`（专项、dry-run 与复核）；`out/offline-verification-20260913-162023/`（全量及补测）。本轮不改变生产服务路径语义，不承诺操作系统级沙箱或跨 Git/SQLite 原子性。
+- 后续隔离边界：本轮仅修鉴权 HTTP fixture；如 `test_pause_resume_retry.py` 虽已隔离数据库，仍从原源码导入服务、可能按 `__file__` 加载原本地配置。全量回归继续使用源码副本，不宣称原仓库原地执行的全部 HTTP fixture 已统一隔离。
+
 ### 1.19-draft — 2026-09-12：任务模式识别 + B 标准真实验收（已实施）
 
 - **任务模式识别（§4 第一阶段）**：`application/task_router.py` 确定性规则路由——创建/修改/删除/多步信号 → graph（保守优先）；搜索/读取/运行测试/仓库地图/语法检查单动作 → direct（附 tool_id/instruction/inputs）。`POST /api/quick-task`：direct 时签发一次性 Grant（max_tool_calls=3/TTL 600s）→ **强制 authorize**（与计划内同一闸门；实现时发现并修复了初版绕过 authorize 的安全缺口）→ to_thread 执行 → 审计 actor=direct_mode；graph 时返回引导。工具未注册回退 graph。
@@ -1204,3 +1248,16 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
   2. AcceptanceRunner 工作区在构造时固化——worktree 绑定后验收把相对路径解析到主工作区（改为：未显式传参时跟随执行级解析链，显式传参保持测试隔离语义）。
   3. quick-task 直达路径绕过 authorize（补同一 Grant 闸门 + blocked 语义）。
 - 验证：`test_task_router.py` 14 项、`test_designer_step_ids.py` 2 项；离线回归 **694 passed / 9 skipped / 2 deselected**；B 标准 4/4 真实验收通过。
+
+#### 2026-09-13：检查点恢复的依赖顺序与持久化加固
+
+- `domain/checkpoint.py` 提供无 IO 的恢复前沿计算。检查点必须是本计划、当前分支的非废弃步骤；Pending/Failed/Retry 可作为显式恢复目标，Success/Skipped 不重跑，Running/RolledBack、缺失或过期目标明确阻塞，不再以空结果冒充完成。
+- 恢复目标的未完成依赖闭包中，只选择已就绪的当前分支 Pending 前置步骤；先完成必要前置，再执行目标，不提前运行无关步骤。缺失、循环、非法依赖及失败/仍 Running/Retry 的前置步骤 fail-closed，不借恢复目标自动重试失败的前置步骤。
+- 沿用父步骤 ID 到活动克隆的别名语义，历史 Success/Skipped 前缀仍可满足依赖；未来分支不能满足当前恢复目标。前置批次继续经过已有资源冲突检测与并发上限，普通无检查点调度和默认串行保持兼容。
+- `select_next_batch` 仅在携带检查点时增加内部 `checkpoint_consumed` 标记：目标已就绪并被选中，或目标已完成，才可消费；选中前置步骤不消费。后台不再在 Run 认领后立即清空检查点，清空写入失败即停止，不启动工具。
+- 暂停端点在写 Paused 时立即保留仍未消费的目标；后台在暂停、预算暂停、取消、前置失败/异常时同样保留目标，避免 Failed 目标从普通 Pending 调度中丢失。依赖/检查点校验失败不被 finally 的“全部成功”兜底改成 Completed。
+- 新增 `tests/python/test_checkpoint_dependency_recovery.py`（51 项），使用临时 SQLite、独立 AppState 与工具执行桩；覆盖传递依赖、分支/别名、串并行与资源限制、失败目标重试、已完成/非法目标、清空故障、暂停/取消/预算以及错误收尾。修复前 7 个复现用例全部按预期失败；第一轮相关回归 176 passed（追加暂停端点保护前）。最终源码副本离线回归 **1004 passed / 9 skipped / 2 deselected / 1041 DeprecationWarning，188.91s**，涵盖新增 51 项及暂停端点补充；测试源码五文件哈希与工作区一致。验证与隔离边界见 `out/checkpoint-fix-20260913/CHECKPOINT_FIX_COMPLETED.md`。
+- 测试在不含真实数据库、token、本地模型覆盖配置的源码副本执行；本轮不改 schema，不执行或归档两个历史验收计划，不删除 Git 分支/Worktree，不覆盖其他开发中的修改。只读内存预演确认两旧计划会先选 file_creator 前置，假设其成功后才选 test_runner；未调用这些工具。
+- 边界：这是依赖调度与恢复点持久化修复，不承诺工具副作用与 checkpoint 的原子提交，不解决底层线程/子进程强制取消或跨进程完整 fencing。未重启既有后台服务；源码验证不等于运行中进程已加载新代码，也不等于批准重跑历史任务。
+
+- 并发数据保护复核：验证期间另有 `Desktop preview live fixture only` 计划新增。只读按该计划及设计 ID 分离后，12 张业务表的全部原有行指纹与验证前一致；两个旧验收计划仍为 Failed/branch 1/原检查点，未执行或归档。新记录完整保留，不回滚旧备份；不宣称整库字节/所有行数未变。

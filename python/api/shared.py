@@ -47,6 +47,9 @@ class AppState:
         self.websocket_clients: List[WebSocket] = []
         self.current_execution: Optional[str] = None  # 兼容：当前执行 plan_id
         self.current_execution_owner: Optional[Dict[str, str]] = None  # plan_id/run_id/owner_token
+        # 进程内任务占用覆盖排队/执行/收尾，独立于数据库 Run 状态。
+        self.execution_reservations: Dict[str, str] = {}
+        self.execution_tasks: set[asyncio.Task] = set()
         # 保护 current_execution 的 check-then-set，避免并发请求重复启动执行
         self.execution_lock: asyncio.Lock = asyncio.Lock()
         # 重试策略（阶段3.1）：从 config 顶层 retry 字段读取，lifespan 中赋值

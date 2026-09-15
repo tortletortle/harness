@@ -100,9 +100,22 @@ class ToolCapabilityAdapter:
     # 副作用分类（docs/TOOL_INTERFACE_DESIGN.md §4.2）：新工具有副作用时在此登记。
     # reversible：文件写入/git 本地操作，可回退；external：对外发送（PR/HTTP），
     # 不可回退，目录层展示给 Designer 前应审慎；其余视为 none。
-    _REVERSIBLE_TOOLS = {"file_creator", "text_editor", "git_operator"}
-    _EXTERNAL_TOOLS = {"github_operator", "http_api", "browser_observe", "review_agent"}
-    _NON_IDEMPOTENT_TOOLS = {"git_operator", "package_installer", "github_operator", "http_api", "browser_observe", "review_agent"}
+    _REVERSIBLE_TOOLS = {"file_creator", "text_editor", "code_context", "project_memory", "pdf_reader", "desktop_observe"}
+    _EXTERNAL_TOOLS = {"command_runner", "package_installer", "git_operator", "web_fetcher", "test_runner", "browser_check",
+                       "github_operator", "http_api", "browser_observe", "review_agent", "super_search"}
+    _READ_ONLY_TOOLS = {"manual_tool", "lint_gate", "file_find", "document_batch", "image_reader", "office_reader",
+                        "toolbox", "greeting", "uppercase_text", "progress_view"}
+    _NON_IDEMPOTENT_TOOLS = _REVERSIBLE_TOOLS | _EXTERNAL_TOOLS
+    _KNOWN_TOOLS = _READ_ONLY_TOOLS | _NON_IDEMPOTENT_TOOLS
+
+    @classmethod
+    def risk_for(cls, tool_id: str) -> tuple[str, bool]:
+        # An unknown plugin is not automatically safe merely because it is unlisted.
+        if tool_id in cls._READ_ONLY_TOOLS:
+            return "none", True
+        if tool_id in cls._REVERSIBLE_TOOLS:
+            return "reversible", False
+        return "external", False
 
     def __init__(self, tool_registry: Any, tool_id: str, version: str = "1.0.0") -> None:
         self.tool_registry = tool_registry
@@ -114,19 +127,14 @@ class ToolCapabilityAdapter:
             (item for item in self.tool_registry.list_tools() if item.get("tool_id") == self.tool_id),
             {},
         )
-        if self.tool_id in self._EXTERNAL_TOOLS:
-            side_effect = "external"
-        elif self.tool_id in self._REVERSIBLE_TOOLS:
-            side_effect = "reversible"
-        else:
-            side_effect = "none"
+        side_effect, idempotent = self.risk_for(self.tool_id)
         return CapabilitySpec(
             id=self.tool_id,
             version=metadata.get("version", self.version),
             kind="deterministic_tool",
             required_permissions=(f"tool:{self.tool_id}",),
             side_effect=side_effect,
-            idempotent=self.tool_id not in self._NON_IDEMPOTENT_TOOLS,
+            idempotent=idempotent,
             description=str(metadata.get("description", "")),
         )
 
@@ -135,7 +143,7 @@ class ToolCapabilityAdapter:
         grant_id = request.grant_id or _context_value(runtime_context, "grant_id")
         inputs = dict(request.inputs or {})
         instruction = str(inputs.pop("instruction", inputs.pop("action", "execute")))
-        if self.tool_id == "browser_observe":
+        if self.tool_id in ("browser_observe", "super_search", "pdf_reader", "image_reader", "office_reader", "desktop_observe", "file_find", "document_batch"):
             result = await asyncio.to_thread(
                 self.tool_registry.execute_tool_with_grant, self.tool_id, instruction, inputs,
                 authorization_manager=manager, grant_id=grant_id,

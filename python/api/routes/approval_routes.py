@@ -21,6 +21,7 @@ router = APIRouter()
 class ApprovalDecisionRequest(BaseModel):
     """审批决定请求"""
     comment: Optional[str] = None
+    desktop_confirmation: Optional[str] = None
 
 
 @router.get("/api/approvals", dependencies=[Depends(require_token)])
@@ -29,7 +30,7 @@ async def list_pending_approvals(plan_id: Optional[str] = None):
     return {"success": True, "approvals": state.approval_manager.list_pending(plan_id)}
 
 
-async def _resolve_tool_approval(plan_id: str, approval_id: str, approved: bool, comment: Optional[str]):
+async def _resolve_tool_approval(plan_id: str, approval_id: str, approved: bool, comment: Optional[str], desktop_confirmation: Optional[str] = None):
     """approve/reject 共用逻辑：校验归属 → resolve → 广播决定。"""
     pending = {a["approval_id"]: a for a in state.approval_manager.list_pending()}
     info = pending.get(approval_id)
@@ -38,7 +39,11 @@ async def _resolve_tool_approval(plan_id: str, approval_id: str, approved: bool,
     if info["plan_id"] != str(plan_id):
         raise HTTPException(status_code=409, detail="审批请求与计划不匹配")
 
-    if not state.approval_manager.resolve(approval_id, approved, comment):
+    if approved and info["tool_id"] == "desktop_observe":
+        scope=info.get("desktop_scope")
+        if not scope or desktop_confirmation != scope.get("confirmation"):
+            raise HTTPException(status_code=409, detail="请明确确认本次桌面读取范围；旧版审批按钮不能批准桌面访问")
+    if not state.approval_manager.resolve(approval_id, approved, comment, **({"desktop_confirmation": desktop_confirmation} if info["tool_id"] == "desktop_observe" else {})):
         raise HTTPException(status_code=409, detail="审批请求已被处理")
 
     await broadcast_approval_resolved(approval_id, approved)
@@ -53,7 +58,7 @@ async def approve_tool_call(plan_id: str, approval_id: str, request: Optional[Ap
     """批准一次待审批的工具调用，执行协程立即恢复。"""
     try:
         body = request or ApprovalDecisionRequest()
-        return await _resolve_tool_approval(plan_id, approval_id, True, body.comment)
+        return await _resolve_tool_approval(plan_id, approval_id, True, body.comment, body.desktop_confirmation)
     except HTTPException:
         raise
     except Exception as e:

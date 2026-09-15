@@ -22,6 +22,7 @@ from models import (
 )
 from logging_config import get_logger
 from domain.work_graph import dependency_statuses, normalize_dependencies, validate_graph
+from domain.checkpoint import checkpoint_frontier
 
 logger = get_logger(__name__)
 
@@ -617,6 +618,108 @@ class Database:
             raise DatabaseError(f"列出 agent turns 失败: {e}") from e
 
     # ===== 动态重规划：插入修复步骤 + 依赖改写 =====
+
+    @staticmethod
+    def _read_replan_snapshot(conn, plan_id):
+        plan = conn.execute("SELECT * FROM plans WHERE plan_id = ?", (plan_id,)).fetchone()
+        if plan is None:
+            return None
+        return {
+            "plan": dict(plan),
+            "steps": [dict(row) for row in conn.execute(
+                "SELECT * FROM steps WHERE plan_id = ? ORDER BY step_order, step_id", (plan_id,),
+            )],
+            # Detect execute -> Failed ABA even if steps/checkpoints look unchanged.
+            "run_ids": [row[0] for row in conn.execute(
+                "SELECT run_id FROM execution_runs WHERE plan_id = ? ORDER BY run_id", (plan_id,),
+            )],
+        }
+
+    def get_replan_snapshot(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        """Read a consistent plan/steps/run snapshot without changing the workspace."""
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                conn.execute("BEGIN")
+                return self._read_replan_snapshot(conn, str(plan_id))
+        except Exception as e:
+            logger.exception("读取重规划快照失败: {}", e)
+            raise DatabaseError(f"读取重规划快照失败: {e}") from e
+
+    def commit_replan(self, snapshot: Dict[str, Any], repair_steps: List[Dict[str, Any]]):
+        """Compare-and-commit the complete repair graph in one short transaction.
+
+        None means a stale snapshot (HTTP 409), never a SQL failure. Candidate
+        validation is pure and happens before BEGIN IMMEDIATE. No schema change
+        or database lock is held while waiting for the LLM.
+        """
+        from domain.replan import prepare_replan
+
+        changes = prepare_replan(snapshot, repair_steps)
+        plan_id = str(snapshot["plan"]["plan_id"])
+        columns = (
+            "step_id", "plan_id", "segment_id", "step_order", "description", "tool",
+            "inputs", "check_criteria", "acceptance_json", "outputs", "status",
+            "executed_at", "retry_count", "depends_on", "parent_step_id",
+            "branch_version", "state_snapshot", "compressed_context", "duration_ms",
+            "failure_reason", "is_obsolete", "max_retries",
+        )
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                conn.execute("BEGIN IMMEDIATE")
+                if self._read_replan_snapshot(conn, plan_id) != snapshot:
+                    return None
+                for row in changes["inserted"]:
+                    # SQL identifiers are fixed above; every row value is bound.
+                    cursor = conn.execute(
+                        f"INSERT INTO steps ({', '.join(columns)}) "
+                        f"VALUES ({', '.join('?' for _ in columns)})",
+                        tuple(row[column] for column in columns),
+                    )
+                    if cursor.rowcount != 1:
+                        raise DatabaseError("重规划插入步骤未命中")
+                for sid in changes["obsolete"]:
+                    cursor = conn.execute(
+                        "UPDATE steps SET is_obsolete = 1 WHERE plan_id = ? AND step_id = ?",
+                        (plan_id, sid),
+                    )
+                    if cursor.rowcount != 1:
+                        raise DatabaseError("重规划废弃步骤写入未命中")
+                for row in changes["updated"]:
+                    cursor = conn.execute("""
+                        UPDATE steps SET depends_on = ?, status = ?, outputs = ?,
+                            executed_at = ?, retry_count = ?, state_snapshot = ?,
+                            compressed_context = ?, duration_ms = ?, failure_reason = ?
+                        WHERE plan_id = ? AND step_id = ?
+                    """, (
+                        row["depends_on"], row["status"], row["outputs"], row["executed_at"],
+                        row["retry_count"], row["state_snapshot"], row["compressed_context"],
+                        row["duration_ms"], row["failure_reason"], plan_id, row["step_id"],
+                    ))
+                    if cursor.rowcount != 1:
+                        raise DatabaseError("重规划更新步骤未命中")
+                cursor = conn.execute("""
+                    UPDATE plans SET status = 'Pending', current_branch = ?,
+                        resume_from_step_id = NULL, paused_at_step_id = NULL
+                    WHERE plan_id = ? AND status = 'Failed' AND current_branch = ?
+                """, (changes["new_branch"], plan_id, snapshot["plan"]["current_branch"]))
+                if cursor.rowcount != 1:
+                    raise DatabaseError("重规划计划状态写入未命中")
+                event = {key: changes[key] for key in ("repair_steps", "new_branch", "anchor")}
+                event["strategy"] = "repair_before_retry"
+                cursor = conn.execute("""
+                    INSERT INTO step_events
+                    (step_id, plan_id, event_type, event_data, branch_version, created_at)
+                    VALUES (?, ?, 'replanned', ?, ?, ?)
+                """, (changes["anchor"], plan_id, json.dumps(event, ensure_ascii=False),
+                      changes["new_branch"], datetime.utcnow().isoformat()))
+                if cursor.rowcount != 1:
+                    raise DatabaseError("重规划事件写入未命中")
+            return {"success": True, **{key: changes[key] for key in (
+                "new_branch", "repair_steps", "anchor",
+            )}}
+        except Exception as e:
+            logger.exception("原子提交重规划失败: {}", e)
+            raise DatabaseError(f"原子提交重规划失败: {e}") from e
 
     def insert_repair_step(
         self, plan_id: str, branch_version: int, segment_id: str,
@@ -1420,7 +1523,9 @@ class Database:
         兼容规则：
         - 无显式依赖图的旧计划始终每批一个步骤（与旧串行行为一致）；
         - parallel_graphs=False 时强制每批一个步骤；
-        - max_concurrency <= 1 时每批一个步骤。
+        - max_concurrency <= 1 时每批一个步骤；
+        - 检查点先验证当前分支/状态/依赖，只选择已就绪的必要前置步骤；
+        - checkpoint_consumed 标识目标已被选中或已完成，前置批次不能清除恢复目标。
         """
         try:
             with closing(self._get_connection()) as conn:
@@ -1428,15 +1533,9 @@ class Database:
                 cursor.execute("""
                     SELECT * FROM steps
                     WHERE plan_id = ?
-                    ORDER BY is_obsolete DESC, branch_version ASC, step_order ASC
+                    ORDER BY is_obsolete DESC, branch_version ASC, step_order ASC, step_id ASC
                 """, (plan_id,))
                 rows = [dict(r) for r in cursor.fetchall()]
-
-            if resume_from_step_id:
-                for row in rows:
-                    if str(row["step_id"]) == str(resume_from_step_id) and not row.get("is_obsolete"):
-                        return {"steps": [row], "blocked_reason": None, "blocked_step_ids": []}
-                return {"steps": [], "blocked_reason": None, "blocked_step_ids": []}
 
             def _with_parsed_inputs(row: Dict[str, Any]) -> Dict[str, Any]:
                 enriched = dict(row)
@@ -1448,6 +1547,29 @@ class Database:
                 if isinstance(parsed, Mapping) and isinstance(parsed.get("resources"), Mapping):
                     enriched["resources"] = parsed["resources"]
                 return enriched
+
+            checkpoint_consumed = False
+
+            def _selection(steps, reason=None, blocked=None):
+                selected = {"steps": steps, "blocked_reason": reason,
+                            "blocked_step_ids": blocked or []}
+                if resume_from_step_id:
+                    selected["checkpoint_consumed"] = checkpoint_consumed
+                return selected
+
+            if resume_from_step_id:
+                frontier = checkpoint_frontier(rows, branch_version, resume_from_step_id)
+                checkpoint_consumed = frontier["checkpoint_consumed"]
+                if frontier["handled"]:
+                    candidates = frontier["candidates"]
+                    if parallel_graphs and max_concurrency > 1:
+                        from domain.work_graph import select_parallel_batch
+                        batch = select_parallel_batch(
+                            [_with_parsed_inputs(row) for row in candidates], max_concurrency,
+                        )
+                    else:
+                        batch = candidates[:1]
+                    return _selection(batch, frontier["blocked_reason"], frontier["blocked_step_ids"])
 
             statuses: Dict[str, str] = {}
             for row in rows:
@@ -1462,7 +1584,7 @@ class Database:
             ]
             pending = [row for row in active if str(row["status"]) == StepStatus.PENDING.value]
             if not pending:
-                return {"steps": [], "blocked_reason": None, "blocked_step_ids": []}
+                return _selection([])
 
             has_explicit_graph = any(
                 str(row.get("depends_on") or "").strip() not in ("", "[]", "null")
@@ -1476,12 +1598,12 @@ class Database:
                 for row in pending:
                     ready, failed, blocking = dependency_statuses(row, statuses)
                     if ready:
-                        return {"steps": [row], "blocked_reason": None, "blocked_step_ids": blocked}
+                        return _selection([row], blocked=blocked)
                     blocked.append(str(row["step_id"]))
                     if failed:
                         failed_deps.extend(blocking)
                 reason = f"依赖步骤失败，无法继续: {sorted(set(failed_deps))}" if failed_deps else None
-                return {"steps": [], "blocked_reason": reason, "blocked_step_ids": blocked}
+                return _selection([], reason, blocked)
 
             # 并行路径：收集全部就绪候选，贪心挑选非冲突批次。
             from domain.work_graph import select_parallel_batch
@@ -1496,7 +1618,7 @@ class Database:
                         failed_deps.extend(blocking)
             batch = select_parallel_batch(candidates, max_concurrency)
             reason = f"依赖步骤失败，无法继续: {sorted(set(failed_deps))}" if failed_deps and not batch else None
-            return {"steps": batch, "blocked_reason": reason, "blocked_step_ids": blocked}
+            return _selection(batch, reason, blocked)
         except Exception as e:
             logger.exception("获取下一个可执行批次失败: {}", e)
             raise DatabaseError(f"获取下一个可执行批次失败: {e}") from e

@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from tools.git_operator import GitOperator
 
 from api.auth import require_token
+from api.execution_ownership import ExecutionBusy, reserve_execution, release_execution
 from api.shared import (
     state, broadcast_plan_update, broadcast_log, format_plan_for_frontend,
     _require_write, _compute_pause_checkpoint,
@@ -98,6 +99,40 @@ async def get_run_attempts(run_id: str, limit: int = 500):
     return {"success": True, "attempts": attempts}
 
 
+async def _schedule_plan_execution(plan, resume: bool = False):
+    """Reserve before enqueueing; release by identity after all cleanup finishes."""
+    plan_id = str(plan.plan_id)
+    isolated = state.database.get_active_worktree(plan_id) is not None
+    try:
+        token = await reserve_execution(state, plan_id, isolated=isolated)
+    except ExecutionBusy as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    coroutine = None
+    try:
+        from api.server import execute_plan_background
+        coroutine = execute_plan_background(plan, resume=resume, reservation_token=token)
+        task = asyncio.create_task(coroutine)
+    except BaseException:
+        if coroutine is not None:
+            coroutine.close()
+        release_execution(state, plan_id, token)
+        raise
+    state.execution_tasks.add(task)
+
+    def done(completed):
+        # Also handles cancellation before the coroutine entered its try/finally.
+        state.execution_tasks.discard(completed)
+        release_execution(state, plan_id, token)
+        if completed.cancelled():
+            return
+        error = completed.exception()
+        if error is not None:
+            logger.error("计划后台任务异常 plan={}: {}", plan_id, error)
+
+    task.add_done_callback(done)
+    return task
+
+
 @router.post("/api/plan/{plan_id}/execute", dependencies=[Depends(require_token)])
 async def execute_plan(plan_id: str):
     """执行计划"""
@@ -106,44 +141,7 @@ async def execute_plan(plan_id: str):
         if not plan:
             raise HTTPException(status_code=404, detail="执行计划不存在")
 
-        # check-then-set 必须在同一把锁内完成。
-        # 否则两个并发请求可以同时通过检查，产出两个后台任务争抢同一份 DB 和文件系统。
-        # 绑定 active worktree 的计划走隔离工作区，不占用主工作区执行权，
-        # 可与其它计划并行（同计划重复执行由 DB 状态机原子认领兜底拒绝）。
-        _worktree_bound = state.database.get_active_worktree(plan_id) is not None
-        if not _worktree_bound:
-            async with state.execution_lock:
-                if state.current_execution:
-                    # 认领残留自愈：进程重启可能发生在 claim 之后、执行任务死亡之前，
-                    # 留下"current_execution 残留 + 计划非 Running"僵局（孤儿恢复不覆盖此态）。
-                    # 只有被认领计划确实 Running 时才视为真冲突（409）；否则释放残留并放行。
-                    claimed = state.current_execution
-                    claimed_status = state.database.get_plan_status(claimed)
-                    if claimed_status == "Running":
-                        raise HTTPException(
-                            status_code=409,
-                            detail=f"已有任务在执行中: {claimed}",
-                        )
-                    logger.warning("释放残留执行认领: {}（计划 DB 状态: {}，非 Running）", claimed, claimed_status)
-                    state.current_execution = None
-                    state.current_execution_owner = None
-                state.current_execution = plan_id
-
-        # 在后台执行（run 由 execute_plan_background 内部原子认领并签发）
-        from api.server import execute_plan_background  # 延迟导入：运行时留在 server，避免装配期循环
-        task = asyncio.create_task(execute_plan_background(plan))
-        def _bg_done(t):
-            try:
-                exc = t.exception()
-            except Exception as e:
-                exc = e
-            try:
-                with open('D:/spot/harness/.tmp/bg_done.log', 'a', encoding='utf-8') as f:
-                    f.write(f'plan={plan.plan_id} exc={exc}\n')
-                    f.flush()
-            except Exception:
-                pass
-        task.add_done_callback(_bg_done)
+        await _schedule_plan_execution(plan)
 
         return {
             "success": True,
@@ -179,6 +177,12 @@ async def pause_plan(plan_id: str):
 
         branch_version = getattr(plan, 'current_branch', 1) or 1
         paused_at_step_id, resume_from_step_id = _compute_pause_checkpoint(plan_id, branch_version)
+
+        # A checkpoint may be waiting on prerequisite batches (including a Failed
+        # goal). Persist that goal now, not only when the background loop exits.
+        # Otherwise a crash after pause could lose the deferred retry target.
+        if getattr(plan, "resume_from_step_id", None):
+            resume_from_step_id = str(plan.resume_from_step_id)
 
         if paused_at_step_id is None and resume_from_step_id is None:
             # 当前分支上没有 Running/Pending/Retry 步骤（例如全部已完成）：
@@ -250,27 +254,7 @@ async def resume_plan(plan_id: str):
                 detail=f"只能恢复 Paused 状态的计划，当前状态: {current_status}",
             )
 
-        # 绑定 active worktree 的计划走隔离工作区，不占用主工作区执行权。
-        _worktree_bound = state.database.get_active_worktree(plan_id) is not None
-        if not _worktree_bound:
-            async with state.execution_lock:
-                if state.current_execution:
-                    # 认领残留自愈：进程重启可能发生在 claim 之后、执行任务死亡之前，
-                    # 留下"current_execution 残留 + 计划非 Running"僵局（孤儿恢复不覆盖此态）。
-                    # 只有被认领计划确实 Running 时才视为真冲突（409）；否则释放残留并放行。
-                    claimed = state.current_execution
-                    claimed_status = state.database.get_plan_status(claimed)
-                    if claimed_status == "Running":
-                        raise HTTPException(
-                            status_code=409,
-                            detail=f"已有任务在执行中: {claimed}",
-                        )
-                    logger.warning("释放残留执行认领: {}（计划 DB 状态: {}，非 Running）", claimed, claimed_status)
-                    state.current_execution = None
-                state.current_execution = plan_id
-
-        from api.server import execute_plan_background  # 延迟导入：同上
-        asyncio.create_task(execute_plan_background(plan, resume=True))
+        await _schedule_plan_execution(plan, resume=True)
 
         return {"success": True, "message": "已从断点恢复执行"}
     except HTTPException:

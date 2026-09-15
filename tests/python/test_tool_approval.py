@@ -161,11 +161,13 @@ async def test_executor_second_gate_success_with_blocked_flag():
 @pytest.mark.asyncio
 async def test_executor_retryable_classification():
     """P2：超时/普通失败可重试；拦截与校验失败不可重试。"""
-    # 普通失败 → retryable=True
+    # 非幂等命令的普通失败也不自动重试；只读工具仍可重试
     registry = _StubRegistry({"success": False, "message": "boom", "error": "ConnectionError"})
     executor = _make_executor(registry)
     result = await executor.execute_step(_make_step())
-    assert result["retryable"] is True
+    assert result["retryable"] is False
+    safe = await executor.execute_step(_make_step("greeting:greet"))
+    assert safe["retryable"] is True
 
     # 校验明确失败（check_criteria 命中且 LLM 判 NO）→ retryable=False
     step = _make_step()

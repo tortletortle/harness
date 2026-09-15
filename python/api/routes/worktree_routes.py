@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 
 from api.auth import require_token
-from api.shared import state, broadcast_log, _require_write
+from api.shared import state, broadcast_log, broadcast_plan_update, _require_write
 
 from logging_config import get_logger
 
@@ -120,7 +120,10 @@ async def merge_plan_worktree(plan_id: str, request: Optional[Dict[str, Any]] = 
                 "output": result.get("output"),
                 "error": result.get("error"),
             })
-        state.database.close_worktree(binding["worktree_id"], "merged")
+        _require_write(
+            state.database.close_worktree(binding["worktree_id"], "merged"),
+            f"Git 已合并，worktree {binding['worktree_id']} 的 merged 绑定状态更新",
+        )
         await broadcast_plan_update(plan_id)
         await broadcast_log(
             f"[WORKTREE] 计划 {plan_id} 的分支 {result.get('branch')} 已合并回主仓库", "success"
@@ -151,11 +154,26 @@ async def discard_plan_worktree(plan_id: str):
         result = GitOperator.execute("worktree_remove", {
             "path": binding["repo_path"], "worktree_path": binding["worktree_path"],
         })
-        state.database.close_worktree(binding["worktree_id"], "discarded")
+        if not result.get("success"):
+            # Git 失败不能关闭绑定；保留 active，供用户检查原因后重试。
+            return JSONResponse(status_code=409, content={
+                "success": False,
+                "removed": False,
+                "code": "worktree_remove_failed",
+                "detail": "worktree 移除失败，绑定已保留，请检查原因后重试",
+                "message": result.get("message") or "worktree 移除失败",
+                "output": result.get("output"),
+                "error": result.get("error"),
+            })
+        _require_write(
+            state.database.close_worktree(binding["worktree_id"], "discarded"),
+            f"Git 已移除 worktree {binding['worktree_id']}，discarded 绑定状态更新",
+        )
+        await broadcast_plan_update(plan_id)
         await broadcast_log(
             f"[WORKTREE] 计划 {plan_id} 的 worktree 已丢弃: {binding['worktree_path']}", "warning"
         )
-        return {"success": True, "removed": bool(result.get("success")), "detail": result.get("message")}
+        return {"success": True, "removed": True, "detail": result.get("message")}
     except HTTPException:
         raise
     except Exception as e:

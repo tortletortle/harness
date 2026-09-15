@@ -51,6 +51,9 @@ def _register_step_artifacts(plan_id: str, step_id: str, result: Dict[str, Any])
     file:// 产物引用。登记失败只降级（观察性），绝不影响执行主链路。
     """
     try:
+        from api.desktop_artifacts import store_desktop_screenshot
+        if store_desktop_screenshot(state, plan_id, step_id, result):
+            return
         candidates: List[str] = []
         output = result.get("output")
         if isinstance(output, dict):

@@ -263,6 +263,7 @@ async def test_search_super_search_branch_authorized(tmp_path, monkeypatch):
         "design_search",
         ["web_fetcher", "super_search"],
         limits=GrantLimits(max_tool_calls=2, max_model_calls=0),
+        allowed_hosts=["html.duckduckgo.com", "www.bing.com"],
     )
     calls = []
     monkeypatch.setattr(

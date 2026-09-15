@@ -105,6 +105,7 @@ interface AppState {
   setPendingApproval: (approval: ApprovalRequestEvent | null) => void;
 
   // 配置
+  configDirty: boolean;
   config: any;
   setConfig: (config: any) => void;
 }
@@ -128,9 +129,12 @@ export const useAppStore = create<AppState>((set) => ({
   isExecuting: false,
   pendingApproval: null,
   config: null,
+  configDirty: false,
 
   // Actions
   setCurrentView: (view) => set((state) => {
+    if (state.currentView === 'config' && view !== 'config' && state.configDirty &&
+        !window.confirm('模型配置有未保存的修改，确定离开并放弃吗？')) return state;
     const next = { ...state, currentView: view };
     persistUiState(next);
     return { currentView: view };

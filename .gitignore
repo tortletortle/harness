@@ -111,3 +111,17 @@ data/notifications.jsonl
 # 只存本地运行状态，不入库；如需保留请另存到 docs/
 data/artifacts/
 data/reports/
+
+# 仓库根 artifacts/ 下的本地验收夹具与截图（保留已跟踪的性能基准）
+artifacts/*
+!artifacts/performance_benchmark.json
+
+# SQLite WAL/SHM 边车（含 python/data、data/usage）
+*.db-wal
+*.db-shm
+
+# 本机桌面只读同意（用户本地状态，不是配置模板）
+config/desktop_access.json
+
+# 工作区执行摘要（project_memory 工具自动追加，不入库）
+PROJECT_MEMORY.md

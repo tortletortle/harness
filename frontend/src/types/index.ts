@@ -129,6 +129,13 @@ export interface ApprovalRequestEvent {
   instruction: string;
   inputs: Record<string, unknown>;
   created_at: string;
+  desktop_scope?: {
+    operation: 'list_windows' | 'inspect_window' | 'screenshot';
+    summary: string;
+    confirmation: string;
+    identity: { window_id: string; pid: number; process_created: string } | null;
+    output: string | null;
+  };
 }
 
 /** WebSocket 推送的审批决定（type=approval_resolved） */

@@ -299,6 +299,13 @@ class ToolRegistryAgent:
         database = getattr(registry, "database", None) if registry is not None else None
         grant_id = context.get("grant_id") if isinstance(context, dict) else None
 
+        if tool_id == "super_search" and manager is not None and manager.enforce:
+            from .super_search import execute_with_grant
+            result = await asyncio.to_thread(execute_with_grant, instruction, inputs, manager, grant_id)
+            self._audit(database, tool_id, instruction, inputs, result.get("success", False),
+                        result.get("error") if not result.get("success") else None, grant_id)
+            return result
+
         if manager is not None:
             decision = manager.authorize(grant_id, tool_id, instruction, inputs)
             self._audit(database, tool_id, instruction, inputs, decision.allowed, decision.reason if not decision.allowed else None, grant_id)
@@ -530,6 +537,8 @@ class ToolRegistry:
             }
         
         try:
+            if tool_id == "super_search":
+                return {"success": False, "blocked": True, "error": "search_runtime_required"}
             if tool_id == "toolbox":
                 from harness_tools.toolbox import bind_inventory
                 with bind_inventory(self.list_tools):
@@ -544,6 +553,9 @@ class ToolRegistry:
     
     def execute_tool_with_grant(self, tool_id, instruction, inputs, *, authorization_manager, grant_id, allow_loopback=False):
         """受保护外部网页观察入口；Grant 由 Runtime 传入，绝不从模型 inputs 读取。"""
+        if tool_id == "super_search":
+            from .super_search import execute_with_grant as search_with_grant
+            return search_with_grant(instruction, inputs, authorization_manager, grant_id)
         from harness_tools.host_bridge import execute_with_grant
         return execute_with_grant(self, tool_id, instruction, inputs, authorization_manager,
                                   grant_id, allow_loopback=allow_loopback)

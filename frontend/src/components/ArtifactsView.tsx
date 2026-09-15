@@ -4,7 +4,7 @@
  * 列出产物元数据（文件 / 测试报告 / 交付报告），点击预览已入库内容；
  * 交付报告单独高亮置顶。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, Loader2, Package, RefreshCw, ShieldCheck } from 'lucide-react';
 import { apiClient } from '../api/client';
 import { useAppStore } from '../stores/appStore';
@@ -12,6 +12,7 @@ import type { Artifact } from '../types';
 
 const KIND_LABELS: Record<string, { label: string; tone: string }> = {
   delivery_report: { label: '交付报告', tone: 'border-violet-400/25 bg-violet-400/10 text-violet-200' },
+  desktop_screenshot: { label: '窗口截图', tone: 'border-sky-400/25 bg-sky-400/10 text-sky-200' },
   file: { label: '文件', tone: 'border-sky-400/25 bg-sky-400/10 text-sky-200' },
   test_report: { label: '测试报告', tone: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' },
 };
@@ -33,8 +34,22 @@ export function ArtifactsView() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [planFilter, setPlanFilter] = useState('');
-  const [preview, setPreview] = useState<{ artifact: Artifact; content: string } | null>(null);
+  const [preview, setPreview] = useState<{ artifact: Artifact; content: string; imageUrl?: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState<string | null>(null);
+
+  const previewRequest = useRef(0);
+  const imageUrl = useRef<string | null>(null);
+  const releaseImage = () => {
+    if (imageUrl.current) URL.revokeObjectURL(imageUrl.current);
+    imageUrl.current = null;
+  };
+  useEffect(() => () => { previewRequest.current += 1; releaseImage(); }, []);
+  const closePreview = () => {
+    previewRequest.current += 1;
+    releaseImage();
+    setPreview(null);
+    setPreviewLoading(null);
+  };
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -55,15 +70,28 @@ export function ArtifactsView() {
   }, [refresh]);
 
   const openPreview = async (artifact: Artifact) => {
+    const requestId = ++previewRequest.current;
     setPreviewLoading(artifact.artifact_id);
     try {
-      const content = await apiClient.getArtifactContent(artifact.artifact_id);
-      setPreview({ artifact, content });
+      if (artifact.kind === 'desktop_screenshot') {
+        const blob = await apiClient.getArtifactImage(artifact.artifact_id);
+        if (requestId !== previewRequest.current) return;
+        releaseImage();
+        const url = URL.createObjectURL(blob);
+        imageUrl.current = url;
+        setPreview({ artifact, content: '', imageUrl: url });
+      } else {
+        const content = await apiClient.getArtifactContent(artifact.artifact_id);
+        if (requestId !== previewRequest.current) return;
+        releaseImage();
+        setPreview({ artifact, content });
+      }
     } catch (err) {
+      if (requestId !== previewRequest.current) return;
       const message = `读取产物内容失败: ${err instanceof Error ? err.message : String(err)}`;
       addLog({ type: 'log', level: 'error', message });
     } finally {
-      setPreviewLoading(null);
+      if (requestId === previewRequest.current) setPreviewLoading(null);
     }
   };
 
@@ -72,7 +100,9 @@ export function ArtifactsView() {
 
   const renderRow = (artifact: Artifact) => {
     const meta = kindMeta(artifact.kind);
-    const hashVerified = artifact.content_hash ? 'sha256' : null;
+    const label = artifact.kind === 'desktop_screenshot' && typeof artifact.metadata?.window_title === 'string'
+      ? `窗口截图 · ${artifact.metadata.window_title}`
+      : artifact.uri.replace(/^artifact:\/\//, '').replace(/^file:\/\//, '');
     return (
       <button
         key={artifact.artifact_id}
@@ -84,7 +114,7 @@ export function ArtifactsView() {
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-sm font-medium text-zinc-100">{artifact.uri.replace(/^artifact:\/\//, '').replace(/^file:\/\//, '')}</span>
+            <span className="truncate text-sm font-medium text-zinc-100">{label}</span>
             <span className={`rounded-full border px-2 py-0.5 text-[10px] ${meta.tone}`}>{meta.label}</span>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-zinc-600">
@@ -169,9 +199,14 @@ export function ArtifactsView() {
                     )}
                   </p>
                 </div>
-                <button onClick={() => setPreview(null)} className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-300 transition-colors hover:bg-white/[0.08]">关闭</button>
+                <button onClick={closePreview} className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-300 transition-colors hover:bg-white/[0.08]">关闭</button>
               </div>
-              <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-5 font-mono text-[12px] leading-6 text-zinc-300">{preview.content}</pre>
+              {preview.imageUrl ? (
+                <div className="min-h-0 flex-1 overflow-auto p-5">
+                  <p className="mb-3 text-xs text-amber-200">只读窗口截图 · 未自动遮挡隐私 · 图片来自已校验的产物副本</p>
+                  <img src={preview.imageUrl} alt="窗口截图" className="mx-auto max-w-full rounded object-contain" />
+                </div>
+              ) : <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-5 font-mono text-[12px] leading-6 text-zinc-300">{preview.content}</pre>}
             </div>
           </div>
         )}

@@ -13,6 +13,7 @@
   保持向后兼容：不配置时所有工具照旧自动执行，现有测试不受影响。
 """
 
+from copy import deepcopy
 import asyncio
 import uuid
 from dataclasses import dataclass, field
@@ -44,6 +45,7 @@ class ApprovalRequest:
     event: asyncio.Event = field(default_factory=asyncio.Event)
     approved: Optional[bool] = None
     comment: Optional[str] = None
+    desktop_scope: Optional[Dict[str, Any]] = None
 
     @property
     def resolved(self) -> bool:
@@ -56,7 +58,8 @@ class ApprovalRequest:
             "step_id": self.step_id,
             "tool_id": self.tool_id,
             "instruction": self.instruction,
-            "inputs": self.inputs,
+            "inputs": deepcopy(self.inputs),
+            **({"desktop_scope": deepcopy(self.desktop_scope)} if self.desktop_scope else {}),
             "created_at": self.created_at,
         }
 
@@ -79,7 +82,7 @@ class ApprovalManager:
 
     def is_required(self, tool_id: str) -> bool:
         """该工具是否需要人工审批。"""
-        return tool_id in self.required_tools
+        return tool_id == "desktop_observe" or tool_id in self.required_tools
 
     def is_required_for_step(self, tool_id: str, capability_kind: Optional[str] = None) -> bool:
         """步骤级审批判定：配置的高风险工具，或 human_tool 步骤（§23.1）。
@@ -98,6 +101,7 @@ class ApprovalManager:
         tool_id: str,
         instruction: str,
         inputs: Dict[str, Any],
+        desktop_scope: Optional[Dict[str, Any]] = None,
     ) -> ApprovalRequest:
         request = ApprovalRequest(
             approval_id=uuid.uuid4().hex,
@@ -105,7 +109,8 @@ class ApprovalManager:
             step_id=str(step_id),
             tool_id=tool_id,
             instruction=instruction,
-            inputs=inputs or {},
+            inputs=deepcopy(inputs or {}),
+            desktop_scope=deepcopy(desktop_scope),
             created_at=datetime.utcnow().isoformat(),
         )
         self._pending[request.approval_id] = request
@@ -124,7 +129,7 @@ class ApprovalManager:
             raise ApprovalTimeout(f"审批等待超时（{self.timeout_seconds}s）: {approval_id}")
         return request
 
-    def resolve(self, approval_id: str, approved: bool, comment: Optional[str] = None) -> bool:
+    def resolve(self, approval_id: str, approved: bool, comment: Optional[str] = None, desktop_confirmation: Optional[str] = None) -> bool:
         """
         写入审批决定并唤醒等待者。
 
@@ -135,6 +140,9 @@ class ApprovalManager:
         request = self._pending.get(approval_id)
         if request is None or request.resolved:
             return False
+        if approved and request.tool_id == "desktop_observe":
+            if not request.desktop_scope or desktop_confirmation != request.desktop_scope.get("confirmation"):
+                return False
         request.approved = bool(approved)
         request.comment = comment
         request.event.set()

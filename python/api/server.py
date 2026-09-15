@@ -365,7 +365,7 @@ async def lifespan(app: FastAPI):
         from agent_tools import SingleTurnAgentTool
         state.capability_registry.register(
             SingleTurnAgentTool(
-                agent_id="review_agent",
+                agent_id="host_review_agent" if state.capability_registry.get("review_agent") else "review_agent",
                 description=(
                     "代码审查 Agent：审查指定文件或变更，输出结构化 review 报告"
                     "（status/issues[{severity,title,detail}]/conclusion）。inputs: {path}"
