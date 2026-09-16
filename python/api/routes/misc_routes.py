@@ -27,7 +27,8 @@ router = APIRouter()
 
 from api.model_probe import ProbeRequest, probe_configuration
 from api.configuration import (
-    ConfigUpdateRequest, ConfigProblem, read_configuration, save_configuration,
+    ConfigUpdateRequest, ConfigProblem, KeyUpdateRequest, read_configuration,
+    save_configuration, save_api_key,
 )
 
 
@@ -239,6 +240,15 @@ async def update_config(request: ConfigUpdateRequest):
         config = save_configuration(_config_dir(), state.config, request)
         return {"success": True, "config": config,
                 "message": "配置已保存；未自动重启服务"}
+    except ConfigProblem as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+
+
+@router.post("/api/config/key", dependencies=[Depends(require_token)])
+async def set_config_key(request: KeyUpdateRequest):
+    """Persist or clear one provider key in the encrypted account-local store."""
+    try:
+        return {"success": True, "key": save_api_key(_config_dir(), request)}
     except ConfigProblem as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from None
 

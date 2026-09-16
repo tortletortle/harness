@@ -70,6 +70,10 @@ export function ConfigView() {
   const [search, setSearch] = useState('');
   const [newName, setNewName] = useState('');
   const [nameError, setNameError] = useState('');
+  const [keyDraft, setKeyDraft] = useState<Record<string, string>>({});
+  const [keyState, setKeyState] = useState<
+    Record<string, { saving?: boolean; message?: string; failed?: boolean }>
+  >({});
   const [confirmReload, setConfirmReload] = useState(false);
   const sequence = useRef(0);
   const discardTrigger = useRef<HTMLElement | null>(null);
@@ -289,6 +293,59 @@ export function ConfigView() {
   const openDiscard = () => {
     discardTrigger.current = document.activeElement as HTMLElement | null;
     setConfirmReload(true);
+  };
+  const saveKey = async (name: string) => {
+    const value = keyDraft[name] ?? '';
+    setKeyState((current) => ({
+      ...current,
+      [name]: { ...current[name], saving: true, message: undefined, failed: false },
+    }));
+    try {
+      const result = await apiClient.setConfigKey(name, value);
+      // Patch only the key status: a full reload here would discard an
+      // unsaved endpoint/model draft the user is still editing.
+      setBaseline((current) =>
+        current
+          ? {
+              ...current,
+              api_keys_configured: {
+                ...current.api_keys_configured,
+                [name]: result.configured,
+              },
+              api_keys_persisted: {
+                ...current.api_keys_persisted,
+                [name]: !value.trim() ? false : !!result.persisted,
+              },
+            }
+          : current,
+      );
+      setKeyState((current) => ({
+        ...current,
+        [name]: {
+          saving: false,
+          message: value.trim()
+            ? '已加密保存；重启后台后生效。'
+            : '已清除本地密钥。',
+        },
+      }));
+      setKeyDraft((current) => {
+        const next = { ...current };
+        delete next[name];
+        return next;
+      });
+    } catch (failure) {
+      setKeyState((current) => ({
+        ...current,
+        [name]: {
+          saving: false,
+          failed: true,
+          message:
+            failure instanceof Error
+              ? failure.message
+              : '密钥保存失败，请重试。',
+        },
+      }));
+    }
   };
   const closeDiscard = () => {
     setConfirmReload(false);
@@ -720,9 +777,68 @@ export function ConfigView() {
                         <div className="mc-key-note">
                           <KeyRound size={15} />
                           <div>
-                            <span>API Key · 环境变量注入</span>
+                            <span>API Key · 加密保存</span>
                             <code>EAS_LLM_API_KEY_{name.toUpperCase()}</code>
-                            <p>不回显、不在浏览器中保存密钥。</p>
+                            <p>
+                              仅在后台加密落盘、不回显；环境变量优先。保存后需重启后台。
+                            </p>
+                            <div className="mc-key-row">
+                              <input
+                                type="password"
+                                aria-label={`${name} API Key`}
+                                placeholder={
+                                  baseline?.api_keys_persisted?.[name]
+                                    ? '已保存密钥（输入可覆盖）'
+                                    : '粘贴密钥'
+                                }
+                                value={keyDraft[name] ?? ''}
+                                autoComplete="off"
+                                spellCheck={false}
+                                onChange={(event) => {
+                                  setKeyDraft((current) => ({
+                                    ...current,
+                                    [name]: event.target.value,
+                                  }));
+                                  setKeyState((current) => ({
+                                    ...current,
+                                    [name]: { message: undefined, failed: false },
+                                  }));
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className="mc-button mc-secondary"
+                                aria-label={`${name} 保存密钥`}
+                                disabled={keyState[name]?.saving}
+                                onClick={() => saveKey(name)}
+                              >
+                                {keyState[name]?.saving ? '保存中…' : '保存'}
+                              </button>
+                              {baseline?.api_keys_persisted?.[name] &&
+                                !(keyDraft[name] ?? '') && (
+                                  <button
+                                    type="button"
+                                    className="mc-button mc-secondary"
+                                    aria-label={`${name} 清除密钥`}
+                                    disabled={keyState[name]?.saving}
+                                    onClick={() => saveKey(name)}
+                                  >
+                                    清除
+                                  </button>
+                                )}
+                            </div>
+                            {keyState[name]?.message && (
+                              <p
+                                className={
+                                  keyState[name]?.failed
+                                    ? 'mc-field-error'
+                                    : 'mc-key-confirm'
+                                }
+                                role="status"
+                              >
+                                {keyState[name]?.message}
+                              </p>
+                            )}
                           </div>
                         </div>
                       </article>

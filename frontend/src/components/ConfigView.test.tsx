@@ -10,6 +10,7 @@ vi.mock('../api/client', () => ({
   apiClient: {
     getConfig: vi.fn(),
     updateModelConfig: vi.fn(),
+    setConfigKey: vi.fn(),
     restartService: vi.fn(),
   },
 }));
@@ -101,15 +102,42 @@ describe('模型配置', () => {
       'arbitrary/custom',
     );
   });
-  it('密钥仅展示状态与环境变量，不提供明文输入', async () => {
+  it('密钥只在加密输入框提交，不回显已存值', async () => {
     const user = userEvent.setup();
     await ready();
     await user.click(screen.getByRole('tab', { name: /服务提供商/ }));
     expect(screen.getByText('EAS_LLM_API_KEY_ALPHA')).toBeInTheDocument();
-    expect(document.querySelector('input[type="password"]')).toBeNull();
     expect(
       screen.getByText('密钥已注入', { selector: '.mc-status' }),
     ).toBeInTheDocument();
+    const field = screen.getByLabelText('alpha API Key');
+    expect(field).toHaveAttribute('type', 'password');
+    // A saved key is never rendered back into the field.
+    expect(field).toHaveValue('');
+    api.setConfigKey.mockResolvedValue({ configured: true });
+    await user.type(field, 'sk-typed-secret');
+    await user.click(screen.getByRole('button', { name: 'alpha 保存密钥' }));
+    await waitFor(() =>
+      expect(api.setConfigKey).toHaveBeenCalledWith('alpha', 'sk-typed-secret'),
+    );
+    await user.clear(field);
+    await user.click(screen.getByRole('button', { name: 'alpha 保存密钥' }));
+    await waitFor(() => expect(api.setConfigKey).toHaveBeenCalledWith('alpha', ''));
+  });
+  it('保存密钥不会丢弃未保存的模型草稿', async () => {
+    const user = userEvent.setup();
+    await ready();
+    await user.type(screen.getByLabelText('designer 主模型 ID'), '-edited');
+    await user.click(screen.getByRole('tab', { name: /服务提供商/ }));
+    api.setConfigKey.mockResolvedValue({ configured: true });
+    await user.type(screen.getByLabelText('alpha API Key'), 'sk-abc');
+    await user.click(screen.getByRole('button', { name: 'alpha 保存密钥' }));
+    await waitFor(() => expect(api.setConfigKey).toHaveBeenCalled());
+    expect(api.getConfig).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('tab', { name: /模型分配/ }));
+    expect(screen.getByLabelText('designer 主模型 ID')).toHaveValue(
+      'arbitrary/custom-edited',
+    );
   });
   it('无效 URL 与空模型禁止保存', async () => {
     const user = userEvent.setup();

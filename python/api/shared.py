@@ -23,6 +23,7 @@ from tools import ToolRegistry
 from capabilities import CapabilityRegistry
 from api.approval import ApprovalManager
 from api.auth import load_token, require_token, verify_token
+from api import secret_store
 from authorization import AuthorizationManager
 from chat import ChatManager
 from skills_loader import SkillManager
@@ -91,9 +92,9 @@ def _deep_merge_dict(base: dict, override: dict) -> dict:
     return merged
 
 
-def _load_models_config() -> dict:
-    """加载提交的模型模板与本地非敏感覆盖，并从环境变量注入凭据。"""
-    config_root = Path(__file__).resolve().parents[2] / "config"
+def _load_models_config(config_root: Path | None = None) -> dict:
+    """加载提交的模型模板与本地覆盖，并从环境变量或加密存储注入凭据。"""
+    config_root = config_root or (Path(__file__).resolve().parents[2] / "config")
     candidates = [config_root / "models.yaml", Path.cwd() / "config" / "models.yaml"]
     config_path = next((p for p in candidates if p.exists()), None)
     if not config_path:
@@ -111,16 +112,22 @@ def _load_models_config() -> dict:
         local.pop("api_keys", None)
         config = _deep_merge_dict(config, local)
 
-    # Credentials come only from environment variables (or an external secret
-    # manager populated into them). Template/local YAML values are ignored.
+    # Credentials come from environment variables, falling back to the
+    # encrypted account-local store. Template/local YAML values are ignored.
     config["api_keys"] = {}
     api_keys = config["api_keys"]
     base_urls = config.setdefault("base_urls", {})
+    keys_dir = config_root if (config_root / "models.yaml").exists() else Path.cwd() / "config"
+    try:
+        stored_keys = secret_store.load_api_keys(keys_dir)
+    except secret_store.SecretStoreError:
+        stored_keys = {}
     for provider_name in list(base_urls):
         env_key = os.getenv(f"EAS_LLM_API_KEY_{provider_name.upper()}")
         env_url = os.getenv(f"EAS_LLM_BASE_URL_{provider_name.upper()}")
-        if env_key:
-            api_keys[provider_name] = env_key
+        api_key = env_key or stored_keys.get(provider_name, "")
+        if api_key:
+            api_keys[provider_name] = api_key
         if env_url:
             base_urls[provider_name] = env_url
     return config

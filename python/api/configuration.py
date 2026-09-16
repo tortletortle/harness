@@ -12,6 +12,8 @@ from urllib.parse import urlsplit
 import yaml
 from pydantic import BaseModel, Field, ConfigDict
 
+from api import secret_store
+
 _LOCK = threading.RLock()
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 
@@ -40,6 +42,12 @@ class ConfigUpdateRequest(BaseModel):
     base_urls: dict[str, str]
     models: dict[str, RoleUpdate] | None = None
     revision: str | None = None
+
+
+class KeyUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str = Field(min_length=1, max_length=64, pattern=r"^[\p{L}][\p{L}\p{N}_-]*$")
+    value: str = Field(default="", max_length=4096)
 
 
 def _merge(base, override):
@@ -82,31 +90,61 @@ def _public_models(config):
     return result
 
 
-def _snapshot(merged, revision, runtime):
+def _snapshot(merged, revision, runtime, directory: Path):
     urls = {str(k): str(v or "") for k, v in merged.get("base_urls", {}).items()}
     models = _public_models(merged)
     overridden = [p for p in urls if os.getenv(f"EAS_LLM_BASE_URL_{p.upper()}")]
     effective_urls = {p: os.getenv(f"EAS_LLM_BASE_URL_{p.upper()}") or url for p, url in urls.items()}
+    env_configured = {p: bool(os.getenv(f"EAS_LLM_API_KEY_{p.upper()}")) for p in urls}
+    # Persisted keys live in an encrypted, account-local file; report only
+    # presence, never the value, and never let a read failure break the page.
+    try:
+        persisted = set(secret_store.load_api_keys(directory))
+    except secret_store.SecretStoreError:
+        persisted = set()
     return {
         "schema_version": 2, "probe_version": 1, "revision": revision,
         "base_urls": urls, "models": models, "agents": models,
-        "api_keys_configured": {p: bool(os.getenv(f"EAS_LLM_API_KEY_{p.upper()}")) for p in urls},
+        "api_keys_configured": {p: env_configured[p] or p in persisted for p in urls},
+        "api_keys_persisted": {p: p in persisted and not env_configured[p] for p in urls},
         "environment_overrides": overridden,
         "requires_restart": effective_urls != runtime.get("base_urls", {}) or models != _public_models(runtime),
     }
 
 
+def save_api_key(directory: Path, request: KeyUpdateRequest):
+    """Persist (or clear) one provider key in the encrypted local store."""
+    with _LOCK:
+        _, merged, _ = _read(directory)
+        if request.provider not in merged.get("base_urls", {}):
+            raise ConfigProblem("请先保存该提供商，再设置密钥。")
+        try:
+            secret_store.save_api_keys(directory, {request.provider: request.value})
+        except secret_store.SecretStoreError as exc:
+            raise ConfigProblem(str(exc), exc.status) from None
+        value = request.value.strip()
+        env_set = bool(os.getenv(f"EAS_LLM_API_KEY_{request.provider.upper()}"))
+        return {
+            "provider": request.provider,
+            "persisted": bool(value),
+            "configured": bool(value) or env_set,
+            "cleared": not value,
+        }
+
+
 def read_configuration(directory: Path, runtime: dict):
     with _LOCK:
         _, merged, revision = _read(directory)
-        return _snapshot(merged, revision, runtime)
+        return _snapshot(merged, revision, runtime, directory)
 
 
 def save_configuration(directory: Path, runtime: dict, request: ConfigUpdateRequest):
     with _LOCK:
         local, merged, revision = _read(directory)
         if request.api_keys:
-            raise ConfigProblem("API Key 仅支持环境变量注入，配置页面不会保存密钥。")
+            raise ConfigProblem(
+                "API Key 不随配置保存提交，请在提供商卡片单独加密保存或用环境变量注入。"
+            )
         if request.revision is None:
             raise ConfigProblem("请刷新页面后重试，配置保存需要版本校验。", 409)
         if request.revision is not None and request.revision != revision:
@@ -169,4 +207,4 @@ def save_configuration(directory: Path, runtime: dict, request: ConfigUpdateRequ
             if temporary and Path(temporary).exists():
                 Path(temporary).unlink()
         _, persisted, new_revision = _read(directory)
-        return _snapshot(persisted, new_revision, runtime)
+        return _snapshot(persisted, new_revision, runtime, directory)

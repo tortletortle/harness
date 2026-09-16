@@ -428,6 +428,22 @@ export class ApiClient {
   }
 
   /**
+   * 保存单个提供商的 API Key（后台加密落盘，不回显）。
+   * 空字符串表示清除已保存的密钥。
+   */
+  async setConfigKey(provider: string, value: string): Promise<{ configured: boolean }> {
+    const response = await authFetch(`${API_BASE}/api/config/key`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, value }),
+    });
+    if (!response.ok) await throwResponseError(response, '密钥保存失败');
+    const data = await response.json();
+    if (!data.success || !data.key) throw new Error('后台尚不支持密钥保存');
+    return data.key;
+  }
+
+  /**
    * 更新配置
    */
   async updateConfig(apiKeys: Record<string, string>, baseUrls: Record<string, string>): Promise<void> {

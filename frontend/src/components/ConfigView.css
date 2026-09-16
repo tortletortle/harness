@@ -505,6 +505,37 @@
   margin: 6px 0 0;
   color: var(--mc-muted);
 }
+.mc-key-note.mc-key-persisted {
+  border-color: var(--mc-success-soft);
+}
+.mc-key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.mc-key-row input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 7px 9px;
+  color: var(--mc-text);
+  background: var(--mc-input);
+  border: 1px solid var(--mc-border);
+  border-radius: 5px;
+}
+.mc-key-row input:focus {
+  outline: 1px solid var(--mc-brand);
+  border-color: var(--mc-brand);
+}
+.mc-key-row .mc-button {
+  flex-shrink: 0;
+}
+.mc-key-confirm {
+  font-size: 11px;
+  margin: 6px 0 0;
+  color: var(--mc-success);
+}
 .mc-icon-button {
   border: 0;
   background: transparent;

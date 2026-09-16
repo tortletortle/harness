@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
+from api import secret_store
 from api.configuration import ConfigProblem, read_configuration
 
 _GATE = asyncio.Lock()
@@ -60,7 +61,7 @@ def _endpoint(directory, runtime, request):
         or any(ord(c) < 32 for c in request.model)
     ):
         raise ConfigProblem("模型测试需要填写模型 ID 并明确确认可能产生费用。")
-    return url.rstrip("/"), os.getenv(f"EAS_LLM_API_KEY_{request.provider.upper()}", "")
+    return url.rstrip("/"), secret_store.effective_key(directory, request.provider)
 
 
 async def probe_configuration(directory: Path, runtime: dict, request: ProbeRequest):

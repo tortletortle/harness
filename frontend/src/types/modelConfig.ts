@@ -16,6 +16,8 @@ export interface ModelConfiguration {
   models?: Record<string, ModelRole>;
   agents?: Record<string, ModelRole>;
   api_keys_configured: Record<string, boolean>;
+  /** Key comes from the encrypted local store rather than an environment variable. */
+  api_keys_persisted?: Record<string, boolean>;
   environment_overrides?: string[];
   requires_restart?: boolean;
 }
