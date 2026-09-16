@@ -52,7 +52,7 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 
 - 模型工作台新增角色/提供商概览、搜索、主/备用模型编辑、响应式卡片、未保存及冲突保护；模型 ID 不再受硬编码列表限制。
 - 修复旧页读取 agents 而运行时使用 models、模型分配未提交、密钥输入被后台忽略以及保存后盲目调用退出接口的问题。新版配置 API 带 schema 2、revision 与待重启提示，原子写本地覆盖，保留高级参数和当前运行配置。
-- API Key 继续由环境变量注入；未执行真实配置保存或主动重启。只读确认既有后台返回 schema 2 和 12 个模型角色，受保护配置文件哈希全部保持不变。
+- API Key 支持环境变量注入或页面单独 DPAPI 加密保存；保存后仍需手动重启后台，未自动执行真实上游推理。只读确认既有后台返回 schema 2 和 12 个模型角色，受保护配置文件哈希全部保持不变。
 - 验证：前端 **76 passed**、TypeScript/生产构建通过；源码副本 Python **1031 passed / 9 skipped / 2 deselected**，环境目录漏项另测 **1 passed**；隔离浏览器桌面/窄屏、键盘与模拟保存通过。新增 27 项后端及 15 项前端/客户端测试。
 - 使用与边界：`docs/MODEL_CONFIGURATION_UI.md`；证据：`out/model-config-20260913/`、`out/model-config-verification-full-20260913-185028/`。交互预览是内存演示，不是已经写入真实配置的证明。
 
@@ -70,6 +70,14 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 - 当前后台已加载修复。仅对“国模”复测一次 GET 模型列表：HTTP 401 / 约 1.47 秒，说明已到达上游，下一步需要正确注入密钥；未发起模型推理。
 - 定向后端 **100 passed**；全量脱敏回归 **1077 passed / 9 skipped / 2 deselected**；前端 **86 passed**，TypeScript/构建通过。新增 17 个后端与 1 个前端回归用例。原配置及密钥未修改；全量证据 `out/model-probes-verification-full-20260913-200034/`。
 - hejuapi 的 `/v1/models` 404 尚不能确定为地址错误，公开资料不足以确认替代地址，未猜测改写。参见 `docs/MODEL_CONFIGURATION_UI.md` 与 `out/upstream-connectivity-20260913-200100.json`。
+
+## 模型密钥页面录入与加密保存（2026-09-16）
+
+- 模型配置页已支持直接填写提供商 API Key；后台用 Windows DPAPI 加密保存到 `config/keys.enc.json`，文件已加入 `.gitignore`，接口和日志不回显明文。
+- 环境变量 `EAS_LLM_API_KEY_<提供商大写标识>` 继续优先；页面显示环境变量/本地加密保存状态，支持单提供商保存与清除，保存不会丢弃其他未保存草稿。
+- 新增 `POST /api/config/key`，旧配置接口提交 `api_keys` 仍明确拒绝；配置读取、上游探测和服务启动均使用相同的环境变量优先级。
+- 非 Windows 平台不写明文降级，保存明确失败并继续支持环境变量；加密文件损坏只显示未配置。
+- 验证：Python 离线回归 **1120 passed / 9 skipped / 2 deselected**；前端 **87 passed / 15 files**；TypeScript 与生产构建通过。
 
 ## 已知短板
 
@@ -91,7 +99,7 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 - 第一阶段不修改数据库 schema，不引入 outbox；先稳定 Repository、Application Service 和状态机边界。
 - 服务端 HTTP 请求仅允许 http/https，并在请求前拒绝 localhost、环回、私有及保留地址。
 - 所有 SQL 外部输入必须使用参数绑定，禁止字符串拼接。
-- 所有凭据只从环境变量或密钥服务读取；本地覆盖文件不得提交到 Git。
+- 所有凭据只从环境变量或账户绑定的加密密钥存储读取；本地覆盖文件与 `config/keys.enc.json` 不得提交到 Git。
 
 7. Full-suite phantom failures (unknown_instruction/render) + root artifact regeneration **resolved (2026-09-13)**: external sibling-repo tool progress_view.py violates TOOL_INTERFACE_DESIGN 3.3/3.5 (failure branch lacks message key), auto-loaded via load_tools_from_dir; harness-side hermeticity fixes in test_tool_contract.py (scope to EXPECTED_TOOL_IDS) and test_instruction_inference.py (EAS_WORKSPACE_ROOT=tmp); suite now 824 passed, 8 skipped.
 

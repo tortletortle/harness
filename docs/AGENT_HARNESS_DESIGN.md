@@ -1260,4 +1260,15 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
 - 测试在不含真实数据库、token、本地模型覆盖配置的源码副本执行；本轮不改 schema，不执行或归档两个历史验收计划，不删除 Git 分支/Worktree，不覆盖其他开发中的修改。只读内存预演确认两旧计划会先选 file_creator 前置，假设其成功后才选 test_runner；未调用这些工具。
 - 边界：这是依赖调度与恢复点持久化修复，不承诺工具副作用与 checkpoint 的原子提交，不解决底层线程/子进程强制取消或跨进程完整 fencing。未重启既有后台服务；源码验证不等于运行中进程已加载新代码，也不等于批准重跑历史任务。
 
+#### 2026-09-16：模型密钥的页面录入与 DPAPI 加密存储（已实施）
+
+- 配置页原先只能提示环境变量名，密钥必须手工写进进程环境。本轮改为在提供商卡片的密码输入框直接录入，保存即加密落盘；环境变量**仍然优先**，页面显式区分「环境变量提供 / 本地加密保存 / 未配置」三种状态。
+- 新增 `python/api/secret_store.py`：用 Windows DPAPI（`CryptProtectData`/`CryptUnprotectData`，`CRYPTPROTECT_UI_FORBIDDEN`）加密，落点 `config/keys.enc.json`（已 gitignore）。密钥与当前 Windows 账户/机器绑定，复制文件到别的账户或机器无法解密。ctypes 需显式声明 `restype`/`argtypes`，否则 64 位下 `LocalFree` 会因指针截断抛 `OverflowError`。
+- 新增鉴权端点 `POST /api/config/key`：请求 `{provider, value}`，空值表示删除本地密钥；provider 必须是已保存的提供商，未保存的标识返回 400。任何响应、日志或 `GET /api/config` 都不回显密钥值，只返回 `api_keys_configured` 与 `api_keys_persisted` 两个存在性标记。
+- 密钥绝不写入 `models.yaml` / `models.local.yaml`；`ConfigUpdateRequest.api_keys` 仍被拒绝（错误文案改为指向新的单提供商端点），不会出现「页面收下密钥但后台忽略」的假成功。运行时取钥顺序：环境变量 > 加密存储，`model_probe` 与启动加载共用同一 `effective_key`。
+- 非 Windows 平台不做明文降级：保存返回 500 并提示改用环境变量，读取返回空存储，服务继续以环境变量运行。加密文件损坏只降级为「未保存」状态，不会让配置页报错。
+- 前端：卡片内密码框 + 逐提供商「保存/清除」，保存后只合并该提供商的密钥状态，不整页重载，避免丢弃未保存的端点/模型草稿。
+- 验证：新增 `tests/python/test_secret_store.py` 11 项（DPAPI 往返、明文不落盘、环境变量优先、损坏文件不泄漏内容、未保存标识拒绝、HTTP 鉴权与清除契约）；`tests/python/test_model_configuration.py` 与 `test_model_probe.py` 同步扩展。离线回归 **1120 passed / 9 skipped / 2 deselected**；前端 **87 passed / 15 files**，TypeScript 与生产构建通过。
+- 边界：DPAPI 只保护静态文件，不防进程内已被注入的代码读取密钥；本轮未做密钥轮换、多用户隔离或跨平台密钥库（macOS Keychain / libsecret 未实现），也未改动 Grant、审批与执行路径。
+
 - 并发数据保护复核：验证期间另有 `Desktop preview live fixture only` 计划新增。只读按该计划及设计 ID 分离后，12 张业务表的全部原有行指纹与验证前一致；两个旧验收计划仍为 Failed/branch 1/原检查点，未执行或归档。新记录完整保留，不回滚旧备份；不宣称整库字节/所有行数未变。
