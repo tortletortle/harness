@@ -217,13 +217,17 @@ def test_pause_requires_running_plan(server, plans_fixture):
     assert code == 409, f"code={code} {data}"
 
 
-def test_retry_exhausts_and_plan_fails(server, plans_fixture):
-    """manual 工具的步骤必定失败，重试耗尽后（默认 max_retries=2，共尝试3次）计划应标记为 Failed。"""
+def test_manual_failure_is_not_auto_repeated_and_plan_fails(server, plans_fixture):
+    """human_tool 步骤失败不可自动重试：只尝试一次即 Failed，计划随之 Failed。
+
+    自动重试只对「确定性 + 无副作用 + 幂等」的工具开放（见 python/retry_policy.py）。
+    manual 是人工确认步骤，重放会重复请求人工动作，因此要求显式重新执行。
+    """
     plan_id = plans_fixture["plan_b_id"]
 
     code, data = _req(f"/api/plan/{plan_id}/execute", method="POST")
     assert code == 200, f"code={code} {data}"
-    assert _wait_idle(timeout_s=60), "重试执行未在预期时间内结束"
+    assert _wait_idle(timeout_s=60), "执行未在预期时间内结束"
 
     from database import Database
     fresh = Database(str(plans_fixture["db_path"])).get_plan(str(plan_id))
@@ -231,9 +235,12 @@ def test_retry_exhausts_and_plan_fails(server, plans_fixture):
     assert status == "Failed", f"实际={status}"
 
     step = fresh.segments[0].steps[0]
-    assert step.retry_count == step.max_retries, (
-        f"应该已用完全部重试次数: retry_count={step.retry_count} max_retries={step.max_retries}"
+    assert step.retry_count == 0, (
+        f"人工步骤不应被自动重放: retry_count={step.retry_count}"
     )
+    outputs = step.outputs or {}
+    assert outputs.get("retry_policy", {}).get("eligible") is False, outputs
+    assert outputs.get("manual_retry_required") is True, outputs
 
 
 def test_resume_continues_from_first_incomplete_step(server, plans_fixture, workdir):

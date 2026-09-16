@@ -227,6 +227,12 @@ def _install_fail_replan_trigger(conn, stage):
     raise ValueError(stage)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage,failed_index", [
+    ("repair_insert", 1), ("obsolete", 1), ("dependency_update", 0),
+    ("plan_update", 1), ("event_insert", 1), ("event_ignore", 0),
+    ("step_ignore", 1),
+])
 async def test_sql_failure_rolls_back_all_changes_including_event(make_env, stage, failed_index):
     env = make_env(failed_index=failed_index)
     with closing(env.db._get_connection()) as conn, conn:
