@@ -51,6 +51,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Correlation ID（P2 可观测性）：与 api/server.py 相同的贯穿策略
+from correlation import new_correlation_id, set_correlation_id  # noqa: E402
+
+
+@app.middleware("http")
+async def correlation_id_middleware(request, call_next):
+    incoming = request.headers.get("X-Correlation-ID", "").strip()
+    cid = incoming[:64] if incoming and incoming.isprintable() else new_correlation_id()
+    set_correlation_id(cid)
+    response = await call_next(request)
+    response.headers["X-Correlation-ID"] = cid
+    return response
+
 
 async def initialize_services() -> None:
     """初始化所有AI服务"""

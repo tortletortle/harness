@@ -467,6 +467,22 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-API-Token"],
 )
 
+
+# ===== Correlation ID（P2 可观测性）=====
+# 每个请求绑定一个 correlation id：优先透传调用方的 X-Correlation-ID
+# （长度限制防止日志注入），否则生成新值；响应头回传便于跨端关联。
+from correlation import get_correlation_id, new_correlation_id, set_correlation_id  # noqa: E402
+
+
+@app.middleware("http")
+async def correlation_id_middleware(request, call_next):
+    incoming = request.headers.get("X-Correlation-ID", "").strip()
+    cid = incoming[:64] if incoming and incoming.isprintable() else new_correlation_id()
+    set_correlation_id(cid)
+    response = await call_next(request)
+    response.headers["X-Correlation-ID"] = cid
+    return response
+
 # ===== 全局异常处理 =====
 # DatabaseError / GenerationError 统一转换为带 code 的 JSON 响应：
 # - 数据库故障 → 500 database_error

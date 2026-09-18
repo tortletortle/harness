@@ -1,6 +1,6 @@
 [project]
 name = "eas-python"
-version = "0.1.0"
+version = "0.2.0"
 description = "EAS 2.0 Python AI Services"
 requires-python = ">=3.10"
 authors = [
@@ -25,6 +25,7 @@ dependencies = [
     "pyyaml>=6.0.1",
     "python-multipart>=0.0.9",
     "loguru>=0.7.2",
+    "playwright>=1.61.0",
 ]
 
 [project.optional-dependencies]

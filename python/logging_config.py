@@ -55,7 +55,18 @@ def configure_logging(log_dir: Path = None) -> None:
         "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | trace={extra[trace_id]} | "
         "{name}:{function}:{line} - {message}"
     )
-    logger.configure(extra={"trace_id": "-"})
+
+    def _inject_trace_id(record):
+        # correlation ID（P2）：每条日志自动带上当前上下文的 correlation id，
+        # 显式 bind(trace_id=...) 的值优先于上下文值。
+        # 注意 configure(extra=...) 会给每条记录预置 trace_id="-"，
+        # 因此按"仍是占位值"判断，而不是按 key 是否存在。
+        if record["extra"].get("trace_id", "-") == "-":
+            from correlation import get_correlation_id
+
+            record["extra"]["trace_id"] = get_correlation_id()
+
+    logger.configure(extra={"trace_id": "-"}, patcher=_inject_trace_id)
 
     # 控制台输出：本地开发直接可见
     logger.add(sys.stderr, level="INFO", format=fmt, enqueue=False)

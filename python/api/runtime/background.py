@@ -143,6 +143,10 @@ async def execute_plan_background(
         slot = state.current_execution_owner or {}
         if slot.get("reservation_token") == reservation_token:
             slot.update(run_id=run_id, owner_token=owner_token)
+        # Correlation ID（P2）：整条后台执行链路共享 run-{run_id}，
+        # 使一次 run 的全部日志可以用同一个 trace= 值串起来。
+        from correlation import set_correlation_id
+        set_correlation_id(f"run-{run_id}")
         await broadcast_plan_update(str(plan.plan_id))
 
         # 认领成功后重新读取计划：请求入队与真正执行之间，失败重试/回滚可能已经

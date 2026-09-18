@@ -12,9 +12,10 @@
 |---|---|
 | `Cargo.toml` `[workspace.package] version` | 全部 Rust crate（成员用 `version.workspace = true`） |
 | `python/version.py` `__version__` | 全部 Python（其余模块一律 import，禁止硬编码） |
+| `python/pyproject.toml` `[project] version` | Python 包元数据（与 version.py 保持一致） |
 | `frontend/package.json` `version` | 前端 |
 
-三处必须一致。根 `package.json` 无版本号（仅依赖桩）。
+以上各处必须一致。根 `package.json` 无版本号（仅依赖桩）。
 
 ## Git 溯源注入（Rust 产物）
 
