@@ -17,6 +17,7 @@ from api.auth import verify_token
 from api.shared import state, broadcast_log, _load_models_config, _deep_merge_dict
 from database import DatabaseError
 from designer import GenerationError
+from version import __version__ as EAS_VERSION
 
 from logging_config import get_logger
 
@@ -51,7 +52,7 @@ async def root():
     """健康检查"""
     return {
         "status": "ok",
-        "version": "0.1.0",
+        "version": EAS_VERSION,
         "message": "EAS 2.0 API is running"
     }
 

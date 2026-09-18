@@ -634,6 +634,16 @@ fn load_fonts(ctx: &egui::Context) {
 }
 
 fn main() -> eframe::Result<()> {
+    // --version / -V：打印版本与 git 溯源信息后退出（docs/VERSIONING.md）。
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        println!(
+            "eas-gui {} ({}, {})",
+            env!("CARGO_PKG_VERSION"),
+            env!("EAS_GIT_DESCRIBE"),
+            env!("EAS_GIT_COMMIT_DATE"),
+        );
+        return Ok(());
+    }
     let base = env_or("EAS_API_BASE", "http://127.0.0.1:8000");
     let token = load_api_token();
 

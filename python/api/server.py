@@ -7,6 +7,8 @@ import asyncio
 import inspect
 import json
 import os
+
+from version import __version__ as EAS_VERSION
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -439,7 +441,7 @@ async def lifespan(app: FastAPI):
 
 # ===== FastAPI App =====
 
-app = FastAPI(title="EAS 2.0 API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="EAS 2.0 API", version=EAS_VERSION, lifespan=lifespan)
 
 # CORS：仅放行本地前端来源。
 # 不使用 allow_origins=["*"]，它与 allow_credentials=True 组合违反 CORS 规范，

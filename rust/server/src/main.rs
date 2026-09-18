@@ -125,6 +125,16 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // --version / -V：打印版本与 git 溯源信息后退出（docs/VERSIONING.md）。
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        println!(
+            "eas-server {} ({}, {})",
+            env!("CARGO_PKG_VERSION"),
+            env!("EAS_GIT_DESCRIBE"),
+            env!("EAS_GIT_COMMIT_DATE"),
+        );
+        return Ok(());
+    }
     // 初始化日志
     tracing_subscriber::fmt::init();
 

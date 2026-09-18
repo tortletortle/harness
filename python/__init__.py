@@ -8,4 +8,6 @@ EAS 2.0 Python Package
 - Executor AI
 """
 
-__version__ = "0.1.0"
+from version import __version__ as _v
+
+__version__ = _v

@@ -9,6 +9,8 @@ Executor - 执行器
 
 from typing import Any, Dict, Optional
 import asyncio
+
+from version import __version__ as EAS_VERSION
 from pathlib import Path
 from datetime import datetime
 
@@ -84,7 +86,7 @@ class DefaultExecutor(ExecutorAI):
 
     @property
     def version(self) -> str:
-        return "0.1.0"
+        return EAS_VERSION
 
     async def process(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """统一处理入口"""

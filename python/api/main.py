@@ -8,6 +8,8 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict
 
+from version import __version__ as EAS_VERSION
+
 import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,7 +38,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="EAS 2.0 Python API",
-    version="0.1.0",
+    version=EAS_VERSION,
     lifespan=lifespan,
 )
 

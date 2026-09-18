@@ -10,6 +10,8 @@ Designer AI - 设计师
 
 from typing import Any, Dict, List, Optional
 
+from version import __version__ as EAS_VERSION
+
 from models import (
     Architecture,
     DesignDocument,
@@ -64,7 +66,7 @@ class DefaultDesigner(Designer):
     
     @property
     def version(self) -> str:
-        return "0.1.0"
+        return EAS_VERSION
     
     async def process(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """统一处理入口"""
