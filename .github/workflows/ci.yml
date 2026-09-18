@@ -60,6 +60,9 @@ jobs:
       - name: Set up Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Linux desktop dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev
+
       # Workspace Cargo.toml 在仓库根目录（[workspace] members = rust/*），
       # 因此 rust-cache 使用默认工作目录，无需 workspaces 参数。
       - name: Cache Rust builds
@@ -67,3 +70,9 @@ jobs:
 
       - name: Run Rust tests
         run: cargo test --workspace
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check Rust targets
+        run: cargo check --workspace --all-targets

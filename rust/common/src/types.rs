@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 /// 设计书
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,13 +60,16 @@ pub struct ExecutionPlan {
     pub dynamic_insertions: Vec<DynamicInsertion>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlanStatus {
+    Draft,
     Pending,
+    Approved,
     Running,
     Paused,
     Completed,
     Failed,
+    RolledBack,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,13 +92,15 @@ pub struct Step {
     pub executed_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StepStatus {
     Pending,
     Running,
     Success,
     Failed,
+    Retry,
     Skipped,
+    RolledBack,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

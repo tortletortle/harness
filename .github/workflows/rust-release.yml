@@ -1,0 +1,54 @@
+name: Rust desktop release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: eas-rust-windows-x64
+            gui: target/release/eas-gui.exe
+            server: target/release/eas-server.exe
+          - os: macos-latest
+            artifact: eas-rust-macos-arm64
+            gui: target/release/eas-gui
+            server: target/release/eas-server
+          - os: ubuntu-latest
+            artifact: eas-rust-linux-x64
+            gui: target/release/eas-gui
+            server: target/release/eas-server
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D clippy::correctness
+      - name: Build release
+        run: cargo build --release -p eas-gui -p eas-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.gui }}
+            ${{ matrix.server }}
+          if-no-files-found: error

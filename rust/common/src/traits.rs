@@ -1,13 +1,12 @@
 /// 插件化接口定义
 ///
 /// 所有核心组件都实现这些Trait，支持插件扩展
-
 use async_trait::async_trait;
 use serde_json::Value;
-use uuid::Uuid;
 use std::sync::Arc;
+use uuid::Uuid;
 
-use crate::{EasResult, EasError, DesignDocument, ExecutionPlan, Step, ToolSchema};
+use crate::{DesignDocument, EasError, EasResult, ExecutionPlan, Step, ToolSchema};
 
 /// AI服务接口 - Designer, ToolManager, Knowledge AI都实现此接口
 #[async_trait]

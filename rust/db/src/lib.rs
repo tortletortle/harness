@@ -124,9 +124,9 @@ impl SqliteDatabase {
 impl Database for SqliteDatabase {
     async fn save_design(&self, design: &DesignDocument) -> EasResult<()> {
         let design_json =
-            serde_json::to_string(&design.part1_design).map_err(|e| EasError::Serialization(e))?;
+            serde_json::to_string(&design.part1_design).map_err(EasError::Serialization)?;
         let assessment_json = serde_json::to_string(&design.part2_tool_assessment)
-            .map_err(|e| EasError::Serialization(e))?;
+            .map_err(EasError::Serialization)?;
 
         sqlx::query(
             r#"
@@ -167,13 +167,13 @@ impl Database for SqliteDatabase {
                 row.try_get("part1_design")
                     .map_err(|e| EasError::Database(e.to_string()))?,
             )
-            .map_err(|e| EasError::Serialization(e))?;
+            .map_err(EasError::Serialization)?;
 
             let part2_tool_assessment: ToolAssessment = serde_json::from_str(
                 row.try_get("part2_tool_assessment")
                     .map_err(|e| EasError::Database(e.to_string()))?,
             )
-            .map_err(|e| EasError::Serialization(e))?;
+            .map_err(EasError::Serialization)?;
 
             let timestamp_str: String = row
                 .try_get("timestamp")
@@ -200,12 +200,16 @@ impl Database for SqliteDatabase {
 
     async fn save_plan(&self, plan: &ExecutionPlan) -> EasResult<()> {
         let segments_json =
-            serde_json::to_string(&plan.segments).map_err(|e| EasError::Serialization(e))?;
-        let impl_list_json = serde_json::to_string(&plan.implementation_list)
-            .map_err(|e| EasError::Serialization(e))?;
-        let insertions_json = serde_json::to_string(&plan.dynamic_insertions)
-            .map_err(|e| EasError::Serialization(e))?;
+            serde_json::to_string(&plan.segments).map_err(EasError::Serialization)?;
+        let impl_list_json =
+            serde_json::to_string(&plan.implementation_list).map_err(EasError::Serialization)?;
+        let insertions_json =
+            serde_json::to_string(&plan.dynamic_insertions).map_err(EasError::Serialization)?;
         let status_str = format!("{:?}", plan.status);
+        let mut transaction =
+            self.pool.begin().await.map_err(|e| {
+                EasError::Database(format!("Failed to begin plan transaction: {}", e))
+            })?;
 
         sqlx::query(
             r#"
@@ -224,46 +228,201 @@ impl Database for SqliteDatabase {
         .bind(segments_json)
         .bind(impl_list_json)
         .bind(insertions_json)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|e| EasError::Database(format!("Failed to save plan: {}", e)))?;
+
+        sqlx::query("DELETE FROM steps WHERE plan_id = ?1")
+            .bind(plan.plan_id.to_string())
+            .execute(&mut *transaction)
+            .await
+            .map_err(|e| EasError::Database(format!("Failed to replace plan steps: {}", e)))?;
+
+        for segment in &plan.segments {
+            for step in &segment.steps {
+                let inputs =
+                    serde_json::to_string(&step.inputs).map_err(EasError::Serialization)?;
+                let outputs = step
+                    .outputs
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()
+                    .map_err(EasError::Serialization)?;
+                sqlx::query(
+                    r#"
+                    INSERT INTO steps (
+                        step_id, plan_id, segment_id, step_order, description, tool,
+                        inputs, check_criteria, outputs, status, executed_at
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                    "#,
+                )
+                .bind(step.step_id.to_string())
+                .bind(plan.plan_id.to_string())
+                .bind(segment.segment_id.to_string())
+                .bind(step.order)
+                .bind(&step.description)
+                .bind(&step.tool)
+                .bind(inputs)
+                .bind(&step.check_criteria)
+                .bind(outputs)
+                .bind(format!("{:?}", step.status))
+                .bind(step.executed_at.map(|value| value.to_rfc3339()))
+                .execute(&mut *transaction)
+                .await
+                .map_err(|e| EasError::Database(format!("Failed to save plan step: {}", e)))?;
+            }
+        }
+
+        transaction
+            .commit()
+            .await
+            .map_err(|e| EasError::Database(format!("Failed to commit plan: {}", e)))?;
 
         Ok(())
     }
 
     async fn get_plan(&self, plan_id: Uuid) -> EasResult<Option<ExecutionPlan>> {
-        // 实现类似get_design的逻辑
-        // 为简洁起见，这里留空，实际使用时需要完整实现
-        Ok(None)
+        let row = sqlx::query(
+            "SELECT design_id, created_at, status, segments, implementation_list, dynamic_insertions FROM plans WHERE plan_id = ?1",
+        )
+        .bind(plan_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| EasError::Database(format!("Failed to get plan: {}", e)))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let design_id_text: String = row
+            .try_get("design_id")
+            .map_err(|e| EasError::Database(e.to_string()))?;
+        let design_id = Uuid::parse_str(&design_id_text)
+            .map_err(|e| EasError::Database(format!("Invalid design_id in plan: {}", e)))?;
+
+        let created_at_text: String = row
+            .try_get("created_at")
+            .map_err(|e| EasError::Database(e.to_string()))?;
+        let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_text)
+            .map_err(|e| EasError::Database(format!("Invalid plan created_at: {}", e)))?
+            .with_timezone(&chrono::Utc);
+
+        let status_text: String = row
+            .try_get("status")
+            .map_err(|e| EasError::Database(e.to_string()))?;
+        let status: PlanStatus = serde_json::from_str(&format!("\"{}\"", status_text))
+            .map_err(EasError::Serialization)?;
+
+        let mut segments: Vec<PlanSegment> = serde_json::from_str(
+            row.try_get::<&str, _>("segments")
+                .map_err(|e| EasError::Database(e.to_string()))?,
+        )
+        .map_err(EasError::Serialization)?;
+        let implementation_list: Vec<String> = serde_json::from_str(
+            row.try_get::<&str, _>("implementation_list")
+                .map_err(|e| EasError::Database(e.to_string()))?,
+        )
+        .map_err(EasError::Serialization)?;
+        let dynamic_insertions: Vec<DynamicInsertion> = serde_json::from_str(
+            row.try_get::<&str, _>("dynamic_insertions")
+                .map_err(|e| EasError::Database(e.to_string()))?,
+        )
+        .map_err(EasError::Serialization)?;
+
+        let step_rows = sqlx::query(
+            "SELECT step_id, status, outputs, executed_at FROM steps WHERE plan_id = ?1",
+        )
+        .bind(plan_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| EasError::Database(format!("Failed to get plan steps: {}", e)))?;
+        let mut persisted = std::collections::HashMap::new();
+        for step_row in step_rows {
+            let step_id_text: String = step_row
+                .try_get("step_id")
+                .map_err(|e| EasError::Database(e.to_string()))?;
+            let step_id = Uuid::parse_str(&step_id_text)
+                .map_err(|e| EasError::Database(format!("Invalid step_id in plan: {}", e)))?;
+            let status_text: String = step_row
+                .try_get("status")
+                .map_err(|e| EasError::Database(e.to_string()))?;
+            let status: StepStatus = serde_json::from_str(&format!("\"{}\"", status_text))
+                .map_err(EasError::Serialization)?;
+            let outputs_text: Option<String> = step_row
+                .try_get("outputs")
+                .map_err(|e| EasError::Database(e.to_string()))?;
+            let outputs = outputs_text
+                .map(|value| serde_json::from_str(&value))
+                .transpose()
+                .map_err(EasError::Serialization)?;
+            let executed_at_text: Option<String> = step_row
+                .try_get("executed_at")
+                .map_err(|e| EasError::Database(e.to_string()))?;
+            let executed_at = executed_at_text
+                .map(|value| {
+                    chrono::DateTime::parse_from_rfc3339(&value)
+                        .map(|parsed| parsed.with_timezone(&chrono::Utc))
+                        .map_err(|e| EasError::Database(format!("Invalid step executed_at: {}", e)))
+                })
+                .transpose()?;
+            persisted.insert(step_id, (status, outputs, executed_at));
+        }
+        for segment in &mut segments {
+            for step in &mut segment.steps {
+                if let Some((status, outputs, executed_at)) = persisted.remove(&step.step_id) {
+                    step.status = status;
+                    step.outputs = outputs;
+                    step.executed_at = executed_at;
+                }
+            }
+        }
+
+        Ok(Some(ExecutionPlan {
+            plan_id,
+            design_id,
+            created_at,
+            status,
+            segments,
+            implementation_list,
+            dynamic_insertions,
+        }))
     }
 
     async fn update_step(&self, step: &Step) -> EasResult<()> {
-        let inputs_json =
-            serde_json::to_string(&step.inputs).map_err(|e| EasError::Serialization(e))?;
+        let inputs_json = serde_json::to_string(&step.inputs).map_err(EasError::Serialization)?;
         let outputs_json = step
             .outputs
             .as_ref()
-            .map(|o| serde_json::to_string(o))
+            .map(serde_json::to_string)
             .transpose()
-            .map_err(|e| EasError::Serialization(e))?;
+            .map_err(EasError::Serialization)?;
         let status_str = format!("{:?}", step.status);
 
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             UPDATE steps SET
                 status = ?1,
-                outputs = ?2,
-                executed_at = ?3
-            WHERE step_id = ?4
+                inputs = ?2,
+                outputs = ?3,
+                executed_at = ?4
+            WHERE step_id = ?5
             "#,
         )
         .bind(status_str)
+        .bind(inputs_json)
         .bind(outputs_json)
         .bind(step.executed_at.map(|t| t.to_rfc3339()))
         .bind(step.step_id.to_string())
         .execute(&self.pool)
         .await
         .map_err(|e| EasError::Database(format!("Failed to update step: {}", e)))?;
+
+        if result.rows_affected() == 0 {
+            return Err(EasError::Database(format!(
+                "Step {} does not exist",
+                step.step_id
+            )));
+        }
 
         Ok(())
     }
@@ -278,6 +437,72 @@ mod tests {
         let db = SqliteDatabase::new(":memory:").await.unwrap();
         db.initialize().await.unwrap();
 
-        // 测试会在这里添加
+        let design_id = Uuid::new_v4();
+        let design = DesignDocument {
+            design_id,
+            user_request: "round trip".into(),
+            timestamp: chrono::Utc::now(),
+            part1_design: DesignPart1 {
+                architecture: Architecture {
+                    components: vec![],
+                    interactions: vec![],
+                },
+                difficulty: Difficulty {
+                    overall: "small".into(),
+                    breakdown: serde_json::json!({}),
+                },
+            },
+            part2_tool_assessment: ToolAssessment {
+                required_tools: vec![],
+                overall_tool_completeness: 1.0,
+                risks: vec![],
+            },
+            user_approval: Some(true),
+            user_comments: None,
+        };
+        db.save_design(&design).await.unwrap();
+
+        let plan = ExecutionPlan {
+            plan_id: Uuid::new_v4(),
+            design_id,
+            created_at: chrono::Utc::now(),
+            status: PlanStatus::Approved,
+            segments: vec![PlanSegment {
+                segment_id: Uuid::new_v4(),
+                description: "segment".into(),
+                steps: vec![Step {
+                    step_id: Uuid::new_v4(),
+                    order: 1,
+                    description: "step".into(),
+                    tool: "test".into(),
+                    inputs: serde_json::json!({"input": true}),
+                    check_criteria: "ok".into(),
+                    outputs: None,
+                    status: StepStatus::Retry,
+                    executed_at: None,
+                }],
+            }],
+            implementation_list: vec!["item".into()],
+            dynamic_insertions: vec![],
+        };
+
+        db.save_plan(&plan).await.unwrap();
+        let loaded = db.get_plan(plan.plan_id).await.unwrap().unwrap();
+        assert_eq!(loaded.status, PlanStatus::Approved);
+        assert_eq!(loaded.segments[0].steps[0].status, StepStatus::Retry);
+        assert_eq!(loaded.implementation_list, vec!["item"]);
+
+        let mut updated_step = loaded.segments[0].steps[0].clone();
+        updated_step.status = StepStatus::Success;
+        updated_step.outputs = Some(serde_json::json!({"done": true}));
+        updated_step.executed_at = Some(chrono::Utc::now());
+        db.update_step(&updated_step).await.unwrap();
+        let updated = db.get_plan(plan.plan_id).await.unwrap().unwrap();
+        assert_eq!(updated.segments[0].steps[0].status, StepStatus::Success);
+        assert_eq!(
+            updated.segments[0].steps[0].outputs,
+            Some(serde_json::json!({"done": true}))
+        );
+        assert!(db.get_plan(Uuid::new_v4()).await.unwrap().is_none());
     }
 }

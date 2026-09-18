@@ -8,9 +8,7 @@ license.workspace = true
 [dependencies]
 eas-common = { path = "../common" }
 eas-dispatcher = { path = "../dispatcher" }
-eas-logger = { path = "../logger" }
 eas-tool-manager = { path = "../tool_manager" }
-eas-db = { path = "../db" }
 tokio.workspace = true
 axum.workspace = true
 tower.workspace = true

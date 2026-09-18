@@ -1,7 +1,6 @@
 /// EAS 2.0 Logger
 ///
 /// 高性能日志系统，支持插件化扩展
-
 use async_trait::async_trait;
 use eas_common::*;
 use serde_json::Value;

@@ -4,7 +4,6 @@
 /// 1. 工具实例管理（复制、删除）
 /// 2. 工具注册表维护
 /// 3. 支持插件化扩展
-
 use async_trait::async_trait;
 use eas_common::*;
 use serde_json::Value;
@@ -20,10 +19,7 @@ pub struct DefaultToolManager {
 
 #[derive(Debug, Clone)]
 struct ToolInstance {
-    instance_id: String,
     tool_id: String,
-    location: String,
-    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl DefaultToolManager {
@@ -44,6 +40,25 @@ impl Default for DefaultToolManager {
 #[async_trait]
 impl ToolManager for DefaultToolManager {
     async fn register_tool(&self, tool: ToolSchema) -> EasResult<()> {
+        if tool.tool_id.trim().is_empty()
+            || tool.version.trim().is_empty()
+            || tool.name.trim().is_empty()
+        {
+            return Err(EasError::Validation(
+                "Tool id, version and name are required".to_string(),
+            ));
+        }
+        if tool.license.max_instances < 1 {
+            return Err(EasError::Validation(
+                "Tool max_instances must be positive".to_string(),
+            ));
+        }
+        let success_rate = tool.capabilities.performance.success_rate;
+        if !success_rate.is_finite() || !(0.0..=1.0).contains(&success_rate) {
+            return Err(EasError::Validation(
+                "Tool success_rate must be between 0 and 1".to_string(),
+            ));
+        }
         let mut tools = self.tools.write().await;
         tools.insert(tool.tool_id.clone(), tool);
         Ok(())
@@ -56,32 +71,48 @@ impl ToolManager for DefaultToolManager {
 
     async fn list_tools(&self) -> EasResult<Vec<ToolSchema>> {
         let tools = self.tools.read().await;
-        Ok(tools.values().cloned().collect())
+        let mut result: Vec<_> = tools.values().cloned().collect();
+        result.sort_by(|left, right| left.tool_id.cmp(&right.tool_id));
+        Ok(result)
     }
 
     async fn assess_tool(&self, tool_id: &str) -> EasResult<Value> {
-        // 这里会调用Python的ToolManager AI进行评估
-        // 现在返回一个简单的响应
+        let tool = self
+            .get_tool(tool_id)
+            .await?
+            .ok_or_else(|| EasError::Tool(format!("Tool {} not found", tool_id)))?;
         Ok(serde_json::json!({
             "tool_id": tool_id,
             "availability": "available",
-            "quality": "good"
+            "quality": tool.capabilities.quality_level,
+            "success_rate": tool.capabilities.performance.success_rate,
+            "limitations": tool.capabilities.limitations
         }))
     }
 
     async fn create_instance(&self, tool_id: &str) -> EasResult<String> {
-        let tool = self.get_tool(tool_id).await?
+        let tool = self
+            .get_tool(tool_id)
+            .await?
             .ok_or_else(|| EasError::Tool(format!("Tool {} not found", tool_id)))?;
+
+        let mut instances = self.instances.write().await;
+        let active = instances
+            .values()
+            .filter(|instance| instance.tool_id == tool_id)
+            .count();
+        if active >= tool.license.max_instances as usize {
+            return Err(EasError::Tool(format!(
+                "Tool {} reached its instance limit ({})",
+                tool_id, tool.license.max_instances
+            )));
+        }
 
         let instance_id = Uuid::new_v4().to_string();
         let instance = ToolInstance {
-            instance_id: instance_id.clone(),
             tool_id: tool_id.to_string(),
-            location: tool.file_location.clone(),
-            created_at: chrono::Utc::now(),
         };
 
-        let mut instances = self.instances.write().await;
         instances.insert(instance_id.clone(), instance);
 
         Ok(instance_id)
@@ -89,7 +120,8 @@ impl ToolManager for DefaultToolManager {
 
     async fn delete_instance(&self, instance_id: &str) -> EasResult<()> {
         let mut instances = self.instances.write().await;
-        instances.remove(instance_id)
+        instances
+            .remove(instance_id)
             .ok_or_else(|| EasError::Tool(format!("Instance {} not found", instance_id)))?;
         Ok(())
     }

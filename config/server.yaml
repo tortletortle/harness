@@ -2,28 +2,27 @@
 
 # Rust HTTP 服务器
 rust_server:
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 8090
   workers: 4
   
 # Python API 服务
 python_api:
-  host: 0.0.0.0
-  port: 9000
+  host: 127.0.0.1
+  port: 8000
   workers: 2
   reload: false  # 开发环境设为 true
   
 # 服务间通信
 service_urls:
-  python_api: http://localhost:9000
-  rust_server: http://localhost:8090
+  python_api: http://127.0.0.1:8000
+  rust_server: http://127.0.0.1:8090
 
 # CORS 配置
 cors:
   allow_origins:
     - http://localhost:3000
-    - http://localhost:8090
-    - http://localhost:9000
+    - http://127.0.0.1:3000
   allow_methods:
     - GET
     - POST
