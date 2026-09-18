@@ -3,6 +3,18 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)；条目格式参考 Keep a Changelog。
 0.x 阶段：MINOR 表示功能里程碑，PATCH 表示修复/小改进。
 
+## [Unreleased]
+
+### Added
+- Python 依赖锁定：python/uv.lock（uv lock，74 packages），pyproject 补 playwright
+- Correlation ID 贯穿：HTTP middleware（X-Correlation-ID 生成/透传/回传）+
+  后台执行链路绑定 run-{run_id} + loguru patcher 自动注入日志 trace= 字段
+- 数据保留策略：scripts/prune_data.py（默认 dry-run，--apply 自动备份）+
+  docs/DATA_RETENTION.md
+
+### Changed
+- python/pyproject.toml version 对齐 0.2.0（并入版本单一来源清单）
+
 ## [0.2.0] - 2026-09-19
 
 首个正式打 tag 的版本，将此前全部工作固化为基线。

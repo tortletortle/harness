@@ -155,7 +155,9 @@ def _no_sleep_fixture(monkeypatch):
 def test_name_and_version(tmp_path):
     designer = _make_designer(_ScriptedLLM([]), tmp_path)
     assert designer.name == "designer"
-    assert designer.version == "0.1.0"
+    # 版本随 python/version.py 单一来源走，不再硬编码具体值
+    from version import __version__
+    assert designer.version == __version__
 
 
 # ===== process() 分发 =====
