@@ -15,6 +15,8 @@ const LOG_CAP: usize = 1000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LogLine {
+    /// 单调递增序号：日志环形裁剪后仍能稳定标识一行（展开状态的 key）。
+    pub seq: u64,
     pub level: String,
     pub message: String,
 }
@@ -89,6 +91,8 @@ pub struct GuiState {
     /// 每个计划最后观察到的 WS 版本，计划切换后仍可防止旧 REST detail 清零版本。
     pub last_versions: HashMap<String, u64>,
     pub logs: Vec<LogLine>,
+    /// 下一条日志的序号（只增不减）。
+    pub log_seq: u64,
     pub notice: Option<String>,
 
     /// 当前仍待人工处理的工具调用审批。
@@ -136,6 +140,7 @@ impl Default for GuiState {
             selected: None,
             last_versions: HashMap::new(),
             logs: Vec::new(),
+            log_seq: 0,
             notice: None,
             pending_approvals: Vec::new(),
             approvals_loading: false,
@@ -159,7 +164,9 @@ impl Default for GuiState {
 
 impl GuiState {
     pub fn push_log(&mut self, level: &str, message: String) {
+        self.log_seq += 1;
         self.logs.push(LogLine {
+            seq: self.log_seq,
             level: level.to_string(),
             message,
         });
@@ -484,6 +491,7 @@ impl GuiState {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 
@@ -658,6 +666,17 @@ mod tests {
         assert_eq!(st.logs.len(), 1000);
         assert!(st.logs[0].message.ends_with("500"));
         assert!(st.logs[999].message.ends_with("1499"));
+    }
+
+    #[test]
+    fn log_seq_is_monotonic_and_survives_drain() {
+        let mut st = GuiState::default();
+        for i in 0..1200 {
+            st.push_log("info", format!("m{i}"));
+        }
+        assert_eq!(st.logs.len(), 1000);
+        assert_eq!(st.logs[999].seq, 1200);
+        assert_eq!(st.logs[999].seq - st.logs[0].seq, 999);
     }
 
     fn approval(id: &str, plan_id: &str) -> ApprovalRequest {

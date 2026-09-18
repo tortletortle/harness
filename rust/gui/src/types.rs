@@ -205,6 +205,7 @@ impl<'de> Deserialize<'de> for DesignApprovalResponse {
 }
 
 /// GET /api/plan/{id} 的步骤（segments 内嵌与顶层 steps 同构）
+#[allow(dead_code)] // 跨版本 API 契约字段并非都在当前布局展示。
 #[derive(Debug, Clone, Deserialize)]
 pub struct StepView {
     pub step_id: String,
@@ -220,6 +221,7 @@ pub struct StepView {
     pub outputs: Option<serde_json::Value>,
 }
 
+#[allow(dead_code)] // 保留完整 segment 契约用于后续分组视图。
 #[derive(Debug, Clone, Deserialize)]
 pub struct SegmentView {
     #[serde(default)]
@@ -231,6 +233,7 @@ pub struct SegmentView {
 }
 
 /// GET /api/plan/{id} 响应体（status 为新增的计划级字段）
+#[allow(dead_code)] // design_id/segments 用于契约兼容和未来分组视图。
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlanDetail {
     pub plan_id: String,
@@ -347,6 +350,7 @@ pub struct RollbackResult {
 }
 
 /// GET /api/tools 单条工具摘要。
+#[allow(dead_code)] // tool_id 是稳定机器标识，当前卡片优先展示名称。
 #[derive(Debug, Clone, Deserialize)]
 pub struct ToolInfo {
     #[serde(default)]
@@ -362,6 +366,7 @@ pub struct ToolInfo {
 }
 
 /// GET /api/capabilities 单条能力声明（字段宽松：缺失/空值降级默认）。
+#[allow(dead_code)] // 权限字段保留用于契约审计，默认摘要不重复展示。
 #[derive(Debug, Clone, Deserialize)]
 pub struct CapabilitySpec {
     #[serde(default)]

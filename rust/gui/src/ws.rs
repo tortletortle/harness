@@ -37,7 +37,17 @@ fn should_reconnect(kind: DisconnectKind) -> bool {
 }
 
 fn classify_close(reason: Option<&str>, code: CloseCode) -> DisconnectKind {
-    let _ = reason; // @todo 可进一步用 reason 文本辅助判断
+    let auth_reason = reason
+        .map(str::to_ascii_lowercase)
+        .map(|text| {
+            ["auth", "token", "unauthorized", "forbidden", "credential"]
+                .iter()
+                .any(|needle| text.contains(needle))
+        })
+        .unwrap_or(false);
+    if auth_reason {
+        return DisconnectKind::AuthRejected;
+    }
     match code {
         CloseCode::Policy => DisconnectKind::AuthRejected,
         CloseCode::Normal | CloseCode::Away => DisconnectKind::Normal,
@@ -365,6 +375,10 @@ mod tests {
         assert_eq!(
             classify_close(None, CloseCode::Abnormal),
             DisconnectKind::Error
+        );
+        assert_eq!(
+            classify_close(Some("invalid token"), CloseCode::Normal),
+            DisconnectKind::AuthRejected
         );
     }
 

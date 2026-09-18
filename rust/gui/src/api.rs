@@ -153,6 +153,7 @@ impl ApiClient {
     }
 
     /// 安全更新 API base。空值、非 http(s) 或无主机 URL 都不会覆盖旧配置。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn set_base(&self, base: String) -> Result<RuntimeConfig, ApiError> {
         let base = normalize_base(&base)?;
         let mut config = self.config.write().expect("API 配置锁被污染");
@@ -176,25 +177,23 @@ impl ApiClient {
         }
 
         // base 可能由另一个运行时设置调用改变。验证后比较 base，避免把 token
-        // 写入一个已经不是验证目标的配置；在这种极窄竞态下重新验证。
-        loop {
-            let before = self.config();
-            self.get_status_with(&before.base, &token).await?;
+        // 写入一个已经不是验证目标的配置；在这种极窄竞态下要求用户重试。
+        let before = self.config();
+        self.get_status_with(&before.base, &token).await?;
 
-            let mut config = self.config.write().expect("API 配置锁被污染");
-            if config.base != before.base || config.generation != before.generation {
-                return Err(ApiError {
-                    status: 0,
-                    message: "API 配置在 token 校验期间已变化，请重试".into(),
-                });
-            }
-            if config.token != token {
-                config.token = token;
-                config.generation = config.generation.saturating_add(1);
-                let _ = self.config_changes.send(config.generation);
-            }
-            return Ok(config.clone());
+        let mut config = self.config.write().expect("API 配置锁被污染");
+        if config.base != before.base || config.generation != before.generation {
+            return Err(ApiError {
+                status: 0,
+                message: "API 配置在 token 校验期间已变化，请重试".into(),
+            });
         }
+        if config.token != token {
+            config.token = token;
+            config.generation = config.generation.saturating_add(1);
+            let _ = self.config_changes.send(config.generation);
+        }
+        Ok(config.clone())
     }
 
     async fn request(

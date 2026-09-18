@@ -21,6 +21,15 @@ fn env_or(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.to_string())
 }
 
+fn load_api_token() -> String {
+    std::env::var("EAS_API_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| std::fs::read_to_string("config/api_token").ok())
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default()
+}
+
 /// 转发事件并唤醒 UI。日志在 UI 队列满时跳过，控制/状态/计划事件等待空间，
 /// 避免关键事件静默丢失。
 async fn forward_event(
@@ -567,37 +576,66 @@ fn spawn_ws_manager(api: Arc<api::ApiClient>, ws_tx: mpsc::Sender<ws::WsEvent>) 
     });
 }
 
-/// 加载系统中文字体（egui 默认字体无 CJK 字形）。
-/// 找不到字体文件时静默跳过——界面退化为方块但不崩溃。
-fn load_cjk_font(ctx: &egui::Context) {
-    let candidates = [
+/// 字体管线：CJK 正文 + 专业等宽 + Phosphor 图标一次性挂载。
+/// 找不到字体文件时静默跳过——界面退化但不崩溃。
+fn load_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    // 1. CJK 正文字体（egui 默认字体无 CJK 字形）
+    let cjk_candidates = [
         "C:/Windows/Fonts/msyh.ttc",   // 微软雅黑
         "C:/Windows/Fonts/simhei.ttf", // 黑体
         "C:/Windows/Fonts/simsun.ttc", // 宋体
         "/System/Library/Fonts/PingFang.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     ];
-    for path in candidates {
+    for path in cjk_candidates {
         if let Ok(bytes) = std::fs::read(path) {
-            let mut fonts = egui::FontDefinitions::default();
-            fonts
-                .font_data
-                .insert("cjk".into(), egui::FontData::from_owned(bytes).into());
+            fonts.font_data.insert(
+                "cjk".into(),
+                std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+            );
             if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
                 family.insert(0, "cjk".into());
             }
             if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-                family.insert(0, "cjk".into());
+                // CJK 兜底放到等宽族末尾，等宽字形优先。
+                family.push("cjk".into());
             }
-            ctx.set_fonts(fonts);
-            return;
+            break;
         }
     }
+
+    // 2. 专业等宽字体：日志/ID/SHA 显示质量的关键
+    let mono_candidates = [
+        "C:/Windows/Fonts/CascadiaMono.ttf",
+        "C:/Windows/Fonts/consola.ttf",
+        "/System/Library/Fonts/Menlo.ttc",
+        "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    ];
+    for path in mono_candidates {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts.font_data.insert(
+                "mono".into(),
+                std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+            );
+            if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                family.insert(0, "mono".into());
+            }
+            break;
+        }
+    }
+
+    // 3. Phosphor 图标字体：作为 Proportional 兜底，图标与文字可直接混排
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+
+    ctx.set_fonts(fonts);
 }
 
 fn main() -> eframe::Result<()> {
     let base = env_or("EAS_API_BASE", "http://127.0.0.1:8000");
-    let token = env_or("EAS_API_TOKEN", "");
+    let token = load_api_token();
 
     let (events_tx, events_rx) = tokio::sync::mpsc::channel::<GuiEvent>(CHANNEL_CAPACITY);
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<Command>(CHANNEL_CAPACITY);
@@ -605,6 +643,7 @@ fn main() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 720.0])
+            .with_min_inner_size([900.0, 600.0])
             .with_title("EAS 2.0 桌面控制台"),
         ..Default::default()
     };
@@ -615,7 +654,18 @@ fn main() -> eframe::Result<()> {
         Box::new(move |cc| {
             // 后台线程 + tokio 运行时（cc 提供 UI Context 用于重绘唤醒）
             let ctx = cc.egui_ctx.clone();
-            load_cjk_font(&ctx);
+            load_fonts(&ctx);
+            // 恢复上次会话的主题偏好（窗口大小/位置由 eframe persistence 自动处理）。
+            let dark_mode = cc
+                .storage
+                .and_then(|storage| eframe::get_value::<bool>(storage, "eas.dark_mode"))
+                .unwrap_or(false);
+            theme::set_dark(dark_mode);
+            let compact_mode = cc
+                .storage
+                .and_then(|storage| eframe::get_value::<bool>(storage, "eas.compact_mode"))
+                .unwrap_or(false);
+            theme::set_compact(compact_mode);
             theme::install(&ctx);
             let initial_state = state::GuiState {
                 token: token.clone(),

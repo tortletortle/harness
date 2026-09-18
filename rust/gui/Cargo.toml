@@ -9,7 +9,12 @@ license.workspace = true
 eas-common = { path = "../common" }
 eframe.workspace = true
 egui.workspace = true
+egui_extras.workspace = true
+egui-phosphor.workspace = true
+egui-notify.workspace = true
+egui_commonmark.workspace = true
 tokio.workspace = true
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
