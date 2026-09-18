@@ -1,12 +1,12 @@
 # EAS 2.0 项目状态
 
-> 本文记录当前实现状态（2026-09-13）。历史测试报告以 archive/ 中的日期版本为准。
+> 本文记录当前实现状态（2026-09-17）。历史测试报告以 archive/ 中的日期版本为准。
 
 ## 一句话现状
 
 EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求 → Designer 生成设计书 → 人工审批 → 执行计划 → Executor 分步调用工具 → SQLite 持久化与 React 控制台展示。
 
-当前 Python/FastAPI 是唯一实际运行时；Rust workspace 保留为未来主实现，尚未接入 Python 主链路。
+当前 Python/FastAPI 是生产任务执行的唯一权威运行时；Rust workspace 已产品化为桌面控制台、契约校验/工具伴随服务及迁移基础，不重复实现或伪装成第二套完整 Executor。
 
 ## 已完成能力
 
@@ -37,7 +37,7 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 - 覆盖率补齐（2026-09-12）：`python/designer/__init__.py` 60%→100%（401/401）、`python/llm_client/__init__.py` 47%→100%（162/162），全仓 TOTAL 66%→70%；0% 纯脚本与 browser_check 判定为有意不测/不管。证据 `out/pytest-full-after-cov.log`（该次全量+覆盖跑法下 2 个 e2e 因建服超时 error，单跑复核 2 passed，属环境抖动与本次改动无关；证据 `out/pytest-e2e-rerun.log`）。
 - 真实浏览器（Playwright Chromium）检查：11 passed。
 - Mimosa 深度扫描复核完成（2026-09-12）：台账 8 findings——6 项 static_fix_verified（git_operator：list-form 无 shell=True；acceptance_b×5：_validate_base 本机 allowlist；机器复扫+人工抽核）；2 项 HIGH 路径穿越（misc_routes:233/shared.py:157）判误报：路径全由服务端固定拼接（_config_dir()/__file__+固定文件名），零请求输入，routes 开槽审计仅 3 处 open 全安全。另补真实残留：urllib 重定向链不复检（302 可跳内网），新增 _SafeRedirectHandler（web_fetcher+super_search 共用）+7 用例；证据 `out/pytest-ssrf.log`；browser_check 页内跳转与 DNS-rebinding 列为接受残留。
-- Rust 测试：当前开发机未安装 cargo，尚未执行。
+- Rust 可执行测试（2026-09-17）：七个 workspace 测试程序全部通过，共 **36 passed / 0 failed**（GUI 31，DB/Dispatcher/Logger/Server/Tool Manager 各 1，Common 0）。
 
 
 ## 检查点恢复加固（2026-09-13）
@@ -88,7 +88,7 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
    - 顺手清理：删除 `_is_retryable_exit_code_acceptance` 函数尾部的孤儿 docstring + if/raise（永不执行的死代码）；删除与 `api/shared.py` 重复的 `format_plan_for_frontend` 定义，统一以 shared.py 为准。
 2. ~~AgentSession/Run/Turn/Attempt 的完整持久化分层尚未完成~~ Session/Turn 已落地（2026-09-12，含前端视图）；Turn 级上下文压缩与跨会话恢复仍为后续。
 3. 覆盖率分布不均，Designer、LLM client 和部分入口代码较薄。
-4. Rust 与 Python 的运行时、错误码和事件契约仍需通过兼容测试逐步对齐；Rust 代码从未编译验证（本机无 cargo）。
+4. Rust 不拥有完整生产执行链；Python/FastAPI 仍是权威运行时。迁移必须继续遵守 `docs/runtime-boundary.md` 并以跨语言兼容测试证明，不得双写状态。
 5. ~~根目录存在历史脚本、实验目录和运行残留，需先分类再决定归档，不直接删除未知文件~~ **已归档（2026-09-12）**：14 个跟踪文件 `git mv` 至 `docs/archive/`（根目录 9 个调试残留 + `eas_2_0_ui_platform.tsx` 早期原型 + `python/check_*.py` 3 个 0 引用临检脚本 + `server.py.bak` 拆分备份），`.coverage` 删除，`scripts/check_env.py` 有引用保留；归档清单见 `docs/archive/README.md`。
 6. ~~工具契约“工具返回结构化失败而非把业务失败冒充成功”有文档和测试约束，但仍需逐工具验证异常路径~~ **已验证（2026-09-12）**：新增 `tests/python/test_tool_contract.py`（34 用例：未知指令/缺参数/错误类型/None 输入逐工具覆盖）；修复 5 类问题——project_memory 非法 limit 抛 ValueError、git worktree 组 `_run_git` 未捕获（Windows NotADirectoryError 穿透）、file_creator 空 path 谎报成功、`resolve_workspace_path` 非字符串 TypeError、7 个工具缺 None-guard。
 7. 前端已覆盖 WorkGraph 依赖视图、产物库与 Agent 记录、quick-task 直达入口（2026-09-12：新建任务页「快速执行」按钮 + 内联结果展示，见 InputView.tsx）。
@@ -104,3 +104,11 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 7. Full-suite phantom failures (unknown_instruction/render) + root artifact regeneration **resolved (2026-09-13)**: external sibling-repo tool progress_view.py violates TOOL_INTERFACE_DESIGN 3.3/3.5 (failure branch lacks message key), auto-loaded via load_tools_from_dir; harness-side hermeticity fixes in test_tool_contract.py (scope to EXPECTED_TOOL_IDS) and test_instruction_inference.py (EAS_WORKSPACE_ROOT=tmp); suite now 824 passed, 8 skipped.
 
 8. Rust workspace builds green for the first time (2026-09-13): rustup stable 1.98.1 via Tsinghua mirror (msvc host + gnu toolchains, auto-self-update disabled, no MSVC/SDK on machine), linked with zig 0.16 via cargo-zigbuild; all 7 crates OK (eas-common/logger/tool-manager/dispatcher/db/server + eas-gui); warnings only, non-blocking (gui 32, db 2, server 2, tool-manager 1); evidence out/cargo-gnu3.log + out/cargo-gui.log.
+
+9. Rust hardening increment (2026-09-17): common 状态枚举与 runtime-boundary 对齐；SQLite plan/step 事务持久化、读取与更新回读落地；Dispatcher 增加完成态不变量、ID/order 校验和路由输入防护；Tool Manager 增加 schema 校验、稳定排序和实例配额；GUI 增加 Ctrl/Cmd+K 快捷操作中心、工作流切换、上下文刷新及 WS 鉴权断开识别。最初受本机链接器缺失影响，最终已用 Zig GNU 工具链完成全部链接与运行验证。
+
+10. Rust productization increment (2026-09-17): Rust server 改为本地安全默认绑定，统一结构化错误，受保护端点启用 Bearer/X-API-Token 常数时间校验、受限 CORS、环境配置和优雅退出；GUI 支持从环境或 `config/api_token` 自动加载凭据并设置最小可用窗口；补充 Windows/Unix 构建脚本、三平台 release workflow、CI 桌面依赖与 all-target 检查，交付边界和验收流程见 `docs/RUST_PRODUCT.md`。
+
+11. Rust 最终产品验证（2026-09-17）：rustfmt、严格 Clippy（`-D warnings`）、workspace all-target、YAML、diff check 与编辑器诊断全部通过；七个已链接测试程序 **36 passed / 0 failed**；Windows GNU release 产物 `eas-server.exe`（2,102,272 bytes）和最终 `eas-gui.exe`（6,384,128 bytes）构建成功。冒烟验证覆盖服务健康检查、未认证 401、Bearer/X-API-Token 认证 200、缺失 Token 明确拒绝启动，以及 GUI 在后端不可用时仍能启动并进入恢复界面。真实桌面截图复核进一步发现并修复了普通工作区被设置页错误覆盖、日志分支与确认窗重复渲染的问题；修复后计划详情、快捷操作、服务状态、项目列表和错误状态均实际显示，GUI 31 项测试与严格 Clippy 重跑通过。Zig 0.13 链接器的 libunwind/deprecated optimization 提示和 `sqlx-postgres 0.7.4` future-incompatibility 报告来自第三方工具链/依赖，不是 workspace Clippy 或 Rust 源码告警。
+
+12. Workbench UX 重构（2026-09-17）：根据真实桌面截图复核结果，将 GUI 重组为 VS Code 风格的紧凑标题/命令中心、固定 Activity Bar、上下文侧栏、中央工作区、受限宽度 AI 辅助侧栏、独立底部输出区和固定状态栏。工具箱从设置中移出，成为可搜索的一级工作区；Ctrl/Cmd+K 改为支持输入过滤、上下键选择、Enter 执行与 Esc 关闭的命令面板；AI 助手取消易误触的全屏入口。最终 GUI 严格 Clippy 通过，31 项 GUI 测试通过，Windows GNU release 为 6,402,048 bytes，SHA-256 `E9E60E973F9621B6EA4CDAC143DCA6DAFF5FF5C1680896898577243BAA51C78C`，启动 5 秒存活冒烟通过。
