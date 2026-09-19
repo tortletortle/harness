@@ -11,7 +11,8 @@
     logger.error("失败: {}", err)
 
 设计要点：
-- 单一 loguru sink 写入 logs/eas.log，按 10MB 轮转、保留 5 个历史文件、自动压缩，
+- 单一 loguru sink 写入 <仓库根>/logs/eas.log（EAS_LOG_DIR 可覆盖，不依赖启动目录），
+  按 10MB 轮转、保留 5 个历史文件、自动压缩，
   避免旧版 execution_debug.log 手写 append 导致的无限增长问题。
 - 同时保留一份控制台输出（stderr），级别 INFO，方便本地开发直接看到日志。
 - trace_id（阶段4.2）通过 loguru 的 contextvars-based `bind()` 机制注入，
@@ -23,21 +24,23 @@ from pathlib import Path
 
 from loguru import logger
 
+from paths import resolve_log_dir
+
 _configured = False
 
 
 def _resolve_log_dir() -> Path:
-    """定位 logs/ 目录：优先当前工作目录下的 logs/，不存在则退回 python/ 所在目录的上一级。"""
-    candidates = [Path("logs"), Path(__file__).resolve().parent.parent / "logs"]
-    for candidate in candidates:
-        try:
-            candidate.mkdir(parents=True, exist_ok=True)
-            return candidate
-        except OSError:
-            continue
-    # 兜底：当前目录
-    fallback = Path(".")
-    return fallback
+    """定位日志目录：EAS_LOG_DIR 优先，否则仓库根 logs/（paths.resolve_log_dir，不依赖 cwd）。
+
+    以前是"cwd 下的 logs/ 优先"，从 python/ 目录启动会生出第二份 python/logs/eas.log。
+    目录无法创建时兜底到当前目录，保证日志系统不会阻断服务启动。
+    """
+    log_dir = resolve_log_dir()
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        return log_dir
+    except OSError:
+        return Path(".")
 
 
 def configure_logging(log_dir: Path = None) -> None:

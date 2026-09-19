@@ -55,16 +55,21 @@ async def _run(output_path: Path) -> int:
     original_execute = server._execute_step_with_state_machine
     original_cwd = Path.cwd()
     old_workspace = os.environ.get("EAS_WORKSPACE_ROOT")
+    # 数据库路径不再跟随 cwd（paths.resolve_db_path 固定到仓库根 data/eas.db），
+    # 必须显式指到隔离目录，否则这次验收会把设计书/计划写进真实数据库。
+    old_db_path = os.environ.get("EAS_DB_PATH")
 
     with tempfile.TemporaryDirectory(prefix="harness-checkpoint-", ignore_cleanup_errors=True) as temp_name:
         isolated_root = Path(temp_name)
         artifact = isolated_root / "workspace" / "final-artifact.txt"
         (isolated_root / "workspace").mkdir()
         os.environ["EAS_WORKSPACE_ROOT"] = str(isolated_root / "workspace")
+        os.environ["EAS_DB_PATH"] = str(isolated_root / "data" / "eas.db")
         os.chdir(isolated_root)
         try:
             async with server.lifespan(server.app):
                 db = server.state.database
+                _check(Path(db.db_path).is_relative_to(isolated_root), f"database is not isolated: {db.db_path}", failures)
                 design_id = uuid.uuid4()
                 design = DesignDocument(
                     design_id=design_id,
@@ -203,6 +208,10 @@ async def _run(output_path: Path) -> int:
                 os.environ.pop("EAS_WORKSPACE_ROOT", None)
             else:
                 os.environ["EAS_WORKSPACE_ROOT"] = old_workspace
+            if old_db_path is None:
+                os.environ.pop("EAS_DB_PATH", None)
+            else:
+                os.environ["EAS_DB_PATH"] = old_db_path
 
     result["checks"] = ["isolated_database", "isolated_workspace", "failed_checkpoint", "same_plan_recovery", "runs", "attempts", "audit_events", "artifact"]
     output_path.parent.mkdir(parents=True, exist_ok=True)

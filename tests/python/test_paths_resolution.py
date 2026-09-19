@@ -1,4 +1,6 @@
-"""数据库路径解析（python/paths.py）：显式参数 > EAS_DB_PATH > 仓库根 data/eas.db，且不依赖 cwd。
+"""固定路径解析（python/paths.py）：显式参数 > 环境变量 > 仓库根默认值，且不依赖 cwd。
+
+覆盖数据库文件（EAS_DB_PATH）、日志目录（EAS_LOG_DIR）与缓存文件默认位置。
 
 注意：本文件不得以默认参数实例化 Database()，否则会碰到真实的 data/eas.db。
 """
@@ -8,13 +10,18 @@ import pytest
 
 import database as database_mod
 from database import Database, get_database
-from paths import DB_PATH_ENV, DEFAULT_DB_PATH, REPO_ROOT, resolve_db_path
+from paths import (
+    DATA_DIR, DB_PATH_ENV, DEFAULT_DB_PATH, DEFAULT_LOG_DIR, LOG_DIR_ENV, REPO_ROOT,
+    resolve_db_path, resolve_log_dir,
+)
 
 
 def test_repo_root_points_at_repository_not_python_dir():
     assert (REPO_ROOT / "python" / "paths.py").is_file()
     assert (REPO_ROOT / "pytest.ini").is_file()
-    assert DEFAULT_DB_PATH == REPO_ROOT / "data" / "eas.db"
+    assert DATA_DIR == REPO_ROOT / "data"
+    assert DEFAULT_DB_PATH == DATA_DIR / "eas.db"
+    assert DEFAULT_LOG_DIR == REPO_ROOT / "logs"
 
 
 def test_default_is_absolute_and_independent_of_cwd(monkeypatch, tmp_path):
@@ -86,3 +93,35 @@ def test_alembic_env_shares_runtime_resolver(monkeypatch, tmp_path):
     assert "from paths import resolve_db_path" in source
     assert 'os.environ.get("EAS_DB_PATH"' not in source
     assert 'sqlite:///data/eas.db' not in source
+
+
+def test_log_dir_default_is_repo_root_independent_of_cwd(monkeypatch, tmp_path):
+    monkeypatch.delenv(LOG_DIR_ENV, raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert resolve_log_dir() == DEFAULT_LOG_DIR
+    assert resolve_log_dir().is_absolute()
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_log_dir_blank_env_falls_back_to_default(monkeypatch, blank):
+    monkeypatch.setenv(LOG_DIR_ENV, blank)
+    assert resolve_log_dir() == DEFAULT_LOG_DIR
+
+
+def test_log_dir_env_and_explicit_precedence(monkeypatch, tmp_path):
+    monkeypatch.setenv(LOG_DIR_ENV, str(tmp_path / "from-env"))
+    assert resolve_log_dir() == tmp_path / "from-env"
+    assert resolve_log_dir(tmp_path / "explicit") == tmp_path / "explicit"
+    assert resolve_log_dir("relative/logs") == Path("relative/logs")  # 显式值原样透传
+
+
+def test_cache_defaults_live_under_repo_data_dir(monkeypatch, tmp_path):
+    """DesignCache()/PlanCache() 默认文件固定在仓库根 data/，不再跟随 cwd（python/data 残留的另一来源）。"""
+    from cache import DesignCache, PlanCache
+
+    monkeypatch.chdir(tmp_path)
+    # 只检查类级默认值，不以默认参数实例化，避免读写真实 data/ 下的缓存文件
+    assert DesignCache.DEFAULT_CACHE_FILE == DATA_DIR / "design_cache.json"
+    assert PlanCache.DEFAULT_CACHE_FILE == DATA_DIR / "plan_cache.json"
+    explicit = PlanCache(cache_file=str(tmp_path / "c.json"))
+    assert explicit.cache_file == tmp_path / "c.json"

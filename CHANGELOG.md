@@ -16,13 +16,24 @@
 - python/pyproject.toml version 对齐 0.2.0（并入版本单一来源清单）
 
 ### Fixed
-- 数据库路径解析统一为 python/paths.resolve_db_path（EAS_DB_PATH 优先，否则仓库根
-  data/eas.db，基于 __file__ 不依赖启动目录）：api/server.py 不再用 cwd 相对路径 +
-  ../data 回退（从 python/ 启动会产生第二份 python/data/eas.db），Alembic env.py 与
-  运行时共用同一解析器，迁移的库与服务实际使用的库保证一致；新增 12 项回归
+- 固定路径解析统一到 python/paths.py（基于 __file__ 定位仓库根，不依赖启动目录）：
+  数据库 `resolve_db_path`（EAS_DB_PATH 优先，否则仓库根 data/eas.db）——api/server.py
+  不再用 cwd 相对路径 + ../data 回退，Alembic env.py 与运行时共用同一解析器，迁移的库
+  与服务实际使用的库保证一致；日志目录 `resolve_log_dir`（EAS_LOG_DIR 优先，否则仓库根
+  logs/）——logging_config 不再"cwd 下 logs/ 优先"；DesignCache/PlanCache 默认文件固定
+  在仓库根 data/。从 python/ 目录启动不会再生出第二份 python/data、python/logs。
+  scripts/prune_data.py、scripts/live_checkpoint_acceptance.py 与三个真实起服务的
+  测试改为显式 EAS_DB_PATH/EAS_LOG_DIR 隔离（后者原先只靠 cwd，实际会写到临时目录
+  的上一级）。新增 19 项回归（tests/python/test_paths_resolution.py 等）
 - 离线回归命令开箱可用：test_desktop_approval / test_desktop_artifacts 在未配置
   EAS_TOOLS_DIR（外部 harness_tools 仓库）时整文件 skip，不再在收集阶段 KeyError
   中断整个 pytest 会话
+
+### Removed
+- python/start_backend.bat、python/launch_server.py、python/restart.bat 归档至
+  docs/archive/（写死旧机器路径 D:\spot\harness\python、从 python/ 目录启动；
+  restart.bat 会 taskkill 本机所有 >100MB 的 python.exe）。统一使用根目录
+  《启动后端.bat》/《重启后端.bat》→ scripts/start_api.py
 
 ## [0.2.0] - 2026-09-19
 

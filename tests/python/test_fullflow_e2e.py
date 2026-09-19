@@ -68,6 +68,7 @@ def server():
     env["EAS_WORKSPACE_ROOT"] = str(root)
     # 数据库同理：服务端路径解析（paths.resolve_db_path）不再跟随 cwd，必须显式指到隔离目录。
     env["EAS_DB_PATH"] = str(root / "data" / "eas.db")
+    env["EAS_LOG_DIR"] = str(root / "logs")  # 日志目录同理，不写进仓库根 logs/
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONPATH"] = str(PYTHON_DIR) + os.pathsep + env.get("PYTHONPATH", "")

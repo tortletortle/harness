@@ -21,6 +21,9 @@ def isolated_logging_config(tmp_path, monkeypatch):
     避免多个测试之间共享全局 loguru sink 状态、避免污染仓库根目录的 logs/。
     """
     monkeypatch.chdir(tmp_path)
+    # 日志目录不再跟随 cwd（paths.resolve_log_dir 固定到仓库根 logs/），
+    # 必须用 EAS_LOG_DIR 显式指到临时目录，否则会污染仓库根的 logs/。
+    monkeypatch.setenv("EAS_LOG_DIR", str(tmp_path / "logs"))
 
     # logging_config 和 loguru 的 logger 都是模块级全局单例，必须彻底移除后重新 import
     for mod_name in ("logging_config",):
@@ -108,3 +111,12 @@ def test_trace_id_bind_appears_in_log(isolated_logging_config):
     log_path = tmp_path / "logs" / "eas.log"
     content = log_path.read_text(encoding="utf-8")
     assert "trace=test-trace-123" in content
+
+
+def test_log_dir_defaults_to_repo_root_not_cwd(isolated_logging_config, monkeypatch):
+    """未设置 EAS_LOG_DIR 时日志目录固定为仓库根 logs/，即使 cwd 在别处（不再生成 python/logs/）。"""
+    module, tmp_path = isolated_logging_config
+    from paths import REPO_ROOT
+
+    monkeypatch.delenv("EAS_LOG_DIR", raising=False)
+    assert module._resolve_log_dir() == REPO_ROOT / "logs"

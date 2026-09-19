@@ -16,5 +16,6 @@
 | eas_2_0_ui_platform.tsx | 早期单文件 UI 原型 | 已被 frontend/ 取代，仅作参考 |
 | check_db_schema.py / check_plan.py / check_plans.py | python/ 临检脚本 | 全仓 0 引用，由 python/ 归档 |
 | server.py.bak | server.py 拆分前备份 | 拆分已完成（3242→545 行），仅留历史 |
+| start_backend.bat / launch_server.py / restart.bat | python/ 下的早期后端启动/重启脚本 | 写死旧机器路径 `D:\spot\harness\python`、从 python/ 目录启动导致产生第二份 `python/data`、`python/logs`；restart.bat 还会 `taskkill` 本机所有 >100MB 的 python.exe。全仓 0 引用，由根目录《启动后端.bat》/《重启后端.bat》→ `scripts/start_api.py` 取代（2026-09-19 归档） |
 
 当前有效的文档索引见根目录 [README.md](../../README.md)。

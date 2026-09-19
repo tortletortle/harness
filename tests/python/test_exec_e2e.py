@@ -71,6 +71,7 @@ def server():
     # 数据库必须显式绑定到隔离目录：服务端路径解析（paths.resolve_db_path）不再跟随 cwd，
     # 否则通过 API 创建的设计书/计划会写进仓库根的真实 data/eas.db。
     env["EAS_DB_PATH"] = str(root / "data" / "eas.db")
+    env["EAS_LOG_DIR"] = str(root / "logs")  # 日志目录同理，不写进仓库根 logs/
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONPATH"] = str(PYTHON_DIR) + os.pathsep + env.get("PYTHONPATH", "")

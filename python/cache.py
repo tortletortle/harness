@@ -10,23 +10,27 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 from logging_config import get_logger
+from paths import DATA_DIR
 
 logger = get_logger(__name__)
 
 
 class DesignCache:
     """设计书缓存"""
-    
-    def __init__(self, cache_file: str = "data/design_cache.json", max_size: int = 100, ttl: int = 7 * 24 * 3600):
+
+    # 默认落在仓库根 data/ 下（不依赖当前工作目录）；子类覆盖此属性即可换文件名
+    DEFAULT_CACHE_FILE = DATA_DIR / "design_cache.json"
+
+    def __init__(self, cache_file: Optional[str] = None, max_size: int = 100, ttl: int = 7 * 24 * 3600):
         """
         初始化缓存
         
         Args:
-            cache_file: 缓存文件路径
+            cache_file: 缓存文件路径；省略时为仓库根 data/<默认文件名>
             max_size: 最大缓存数量
             ttl: 缓存有效期（秒），默认 7 天
         """
-        self.cache_file = Path(cache_file)
+        self.cache_file = Path(cache_file) if cache_file else self.DEFAULT_CACHE_FILE
         self.max_size = max_size
         self.ttl = ttl
         self.cache: Dict[str, Dict[str, Any]] = self._load_cache()
@@ -200,6 +204,8 @@ class DesignCache:
 
 class PlanCache(DesignCache):
     """执行计划缓存（继承设计书缓存的逻辑）"""
-    
-    def __init__(self, cache_file: str = "data/plan_cache.json", max_size: int = 100, ttl: int = 7 * 24 * 3600):
+
+    DEFAULT_CACHE_FILE = DATA_DIR / "plan_cache.json"
+
+    def __init__(self, cache_file: Optional[str] = None, max_size: int = 100, ttl: int = 7 * 24 * 3600):
         super().__init__(cache_file, max_size, ttl)

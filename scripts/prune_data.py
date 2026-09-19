@@ -6,22 +6,28 @@
 - logs          : 超过保留期的运行日志（当前项目未使用该表，顺带覆盖）
 - worktrees     : discarded 状态、超过保留期的记录行（仅 DB 行，不动磁盘目录）
 
-用法（项目根目录执行）：
+用法（任意目录执行均可；数据库路径与运行时同规则：EAS_DB_PATH 优先，否则仓库根 data/eas.db）：
     python scripts/prune_data.py                 # dry-run：只统计将删除多少行
     python scripts/prune_data.py --apply         # 真正执行删除 + VACUUM
     python scripts/prune_data.py --events-days 30 --audit-days 180 --apply
 
 安全设计：
 - 默认 dry-run，必须显式 --apply 才写库；
-- --apply 前自动备份数据库到 out/eas.db.bak-prune-<日期>；
+- --apply 前自动备份数据库到仓库根 out/eas.db.bak-prune-<日期>；
 - 只按"计划已终结 + 时间早于阈值"双条件删除，运行中计划的数据绝不触碰。
 """
 
 import argparse
 import shutil
 import sqlite3
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# 与运行时共用数据库路径解析器（python/paths.py），不再要求从项目根目录执行
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "python"))
+from paths import resolve_db_path  # noqa: E402
 
 TERMINAL_PLAN_STATUSES = ("Completed", "Failed")
 
@@ -32,7 +38,8 @@ def cutoff_iso(days: int) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="EAS 数据保留清理（默认 dry-run）")
-    parser.add_argument("--db", default="data/eas.db", help="数据库路径（默认 data/eas.db）")
+    parser.add_argument("--db", default=resolve_db_path(),
+                        help="数据库路径（默认同运行时：EAS_DB_PATH，否则仓库根 data/eas.db）")
     parser.add_argument("--events-days", type=int, default=60,
                         help="step_events / logs 保留天数（默认 60）")
     parser.add_argument("--audit-days", type=int, default=180,
@@ -97,7 +104,7 @@ def main() -> int:
             return 0
 
         # 备份后执行
-        backup = Path("out") / f"eas.db.bak-prune-{datetime.now():%Y%m%d}"
+        backup = REPO_ROOT / "out" / f"eas.db.bak-prune-{datetime.now():%Y%m%d}"
         backup.parent.mkdir(exist_ok=True)
         conn.close()
         shutil.copy2(db_path, backup)
