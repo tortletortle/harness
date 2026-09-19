@@ -4,7 +4,12 @@ import sys
 from types import SimpleNamespace as NS
 import pytest
 from api.desktop_artifacts import is_bounded_png,store_desktop_screenshot
-sys.path.insert(0,str(Path(os.environ['EAS_TOOLS_DIR']).resolve().parents[1]))
+# store_desktop_screenshot 运行时懒加载外部 harness_tools.file_perception（通过 EAS_TOOLS_DIR 定位）。
+# 未配置时整文件跳过，而不是在收集阶段抛 KeyError 让整个测试会话中断。
+_TOOLS_DIR=os.environ.get('EAS_TOOLS_DIR')
+if not _TOOLS_DIR:pytest.skip('EAS_TOOLS_DIR 未配置，跳过依赖外部 harness_tools 的桌面截图测试',allow_module_level=True)
+sys.path.insert(0,str(Path(_TOOLS_DIR).resolve().parents[1]))
+pytest.importorskip('harness_tools.file_perception')
 PNG=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
 
 @pytest.fixture

@@ -50,6 +50,7 @@ from designer import DefaultDesigner, GenerationError
 from executor import DefaultExecutor
 from tools import ToolRegistry
 from database import Database, DatabaseError
+from paths import resolve_db_path
 from models import DesignDocument, ExecutionPlan, PlanSegment, Step, StepStatus, PlanStatus, RunStatus, AttemptStatus
 from api.auth import load_token, require_token, verify_token
 from api import secret_store
@@ -144,11 +145,11 @@ async def lifespan(app: FastAPI):
         # 加载配置（models.yaml 模板 + models.local.yaml 深覆盖，后者存真实 key 且不入库）
         state.config = _load_models_config()
         
-        # 初始化数据库
-        db_path = Path("data/eas.db")
-        if not db_path.parent.exists():
-            db_path = Path("../data/eas.db")
-        state.database = Database(str(db_path))
+        # 初始化数据库：路径统一由 paths.resolve_db_path 决定（EAS_DB_PATH 优先，
+        # 否则仓库根 data/eas.db），不再依赖启动目录，并与 Alembic 迁移使用同一份库。
+        db_path = resolve_db_path()
+        logger.info("数据库路径: {}", db_path)
+        state.database = Database(db_path)
         
         # 初始化 LLM 客户端
         state.llm_client = LLMClient()

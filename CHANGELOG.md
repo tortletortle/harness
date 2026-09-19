@@ -15,6 +15,15 @@
 ### Changed
 - python/pyproject.toml version 对齐 0.2.0（并入版本单一来源清单）
 
+### Fixed
+- 数据库路径解析统一为 python/paths.resolve_db_path（EAS_DB_PATH 优先，否则仓库根
+  data/eas.db，基于 __file__ 不依赖启动目录）：api/server.py 不再用 cwd 相对路径 +
+  ../data 回退（从 python/ 启动会产生第二份 python/data/eas.db），Alembic env.py 与
+  运行时共用同一解析器，迁移的库与服务实际使用的库保证一致；新增 12 项回归
+- 离线回归命令开箱可用：test_desktop_approval / test_desktop_artifacts 在未配置
+  EAS_TOOLS_DIR（外部 harness_tools 仓库）时整文件 skip，不再在收集阶段 KeyError
+  中断整个 pytest 会话
+
 ## [0.2.0] - 2026-09-19
 
 首个正式打 tag 的版本，将此前全部工作固化为基线。

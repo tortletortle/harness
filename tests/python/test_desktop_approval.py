@@ -8,8 +8,12 @@ import pytest
 from authorization import AuthorizationManager
 from api.approval import ApprovalManager,ApprovalTimeout
 from api.desktop_approval import prepare_desktop_scope,issue_approved_desktop_grant
-sys.path.insert(0,str(Path(os.environ['EAS_TOOLS_DIR']).resolve().parents[1]))
-from harness_tools.desktop_native import Native
+# 本文件依赖外部 harness_tools 仓库（通过 EAS_TOOLS_DIR 定位）。
+# 未配置时整文件跳过，而不是在收集阶段抛 KeyError 让整个测试会话中断。
+_TOOLS_DIR=os.environ.get('EAS_TOOLS_DIR')
+if not _TOOLS_DIR:pytest.skip('EAS_TOOLS_DIR 未配置，跳过依赖外部 harness_tools 的桌面审批测试',allow_module_level=True)
+sys.path.insert(0,str(Path(_TOOLS_DIR).resolve().parents[1]))
+Native=pytest.importorskip('harness_tools.desktop_native').Native
 
 @pytest.fixture
 def fixture(monkeypatch,tmp_path):

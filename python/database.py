@@ -23,6 +23,7 @@ from models import (
 from logging_config import get_logger
 from domain.work_graph import dependency_statuses, normalize_dependencies, validate_graph
 from domain.checkpoint import checkpoint_frontier
+from paths import resolve_db_path
 
 logger = get_logger(__name__)
 
@@ -34,12 +35,16 @@ class DatabaseError(RuntimeError):
 class Database:
     """数据库管理类"""
     
-    def __init__(self, db_path: str = "data/eas.db"):
-        """初始化数据库"""
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None):
+        """初始化数据库
+
+        db_path 省略时由 paths.resolve_db_path 决定：EAS_DB_PATH 优先，
+        否则仓库根 data/eas.db（不依赖当前工作目录）。
+        """
+        self.db_path = resolve_db_path(db_path)
         
         # 确保数据目录存在
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
         # 初始化表结构
         self._initialize_tables()
@@ -2123,8 +2128,8 @@ class Database:
 _db_instance = None
 
 
-def get_database(db_path: str = "data/eas.db") -> Database:
-    """获取全局数据库实例"""
+def get_database(db_path: Optional[str] = None) -> Database:
+    """获取全局数据库实例（路径解析规则同 Database.__init__）"""
     global _db_instance
     if _db_instance is None:
         _db_instance = Database(db_path)
