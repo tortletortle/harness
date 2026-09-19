@@ -10,11 +10,10 @@ python/ 目录下的模块互相之间使用顶层导入（例如 `from models i
 而不必逐个文件手写 sys.path hack，这里在会话级别统一插入路径。
 """
 
-import sys
-from pathlib import Path
-
 import hashlib
 import os
+import sys
+from pathlib import Path
 
 import pytest
 

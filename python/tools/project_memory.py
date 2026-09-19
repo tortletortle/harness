@@ -4,17 +4,26 @@
 - 记录的是工作状态：做了什么、什么状态、失败原因、下一步；
 - 存储位置固定：工作区根 PROJECT_MEMORY.md（不接受路径输入，杜绝越权）；
 - Markdown 格式：人和 AI 都能读；追加式；读取方取尾部（最近优先）；
-- 容量：单条最多 2000 字符、全文最多 20000 字符；超限时把**最旧的整条**滚动到
-  同目录 PROJECT_MEMORY-archive.md（旧实现从头部硬切字符，会留下半截条目——
-  2026-09-19 整理时文件第 1 行就是半条 `or] Success —— 步骤2`）；
+- 容量：**条数与字符数双限**（默认 60 条 / 20000 字符），超限时把**最旧的整条**
+  滚动到同目录 PROJECT_MEMORY-archive.md（归档默认 2000 条 / 200000 字符）。
+  旧实现从头部硬切字符，会留下半截条目——2026-09-19 整理时文件第 1 行就是半条
+  `or] Success —— 步骤2`；
 - 重复：`collapse_duplicates=True` 时同一身份的记忆覆盖更新而不是追加。身份优先用
   显式 `dedupe_key`（写进标题的括号里，如 `执行摘要（计划 3f7fd751）`），因为执行
   摘要的首行含最终状态、Failed→Completed 会变，不能拿它当键；未给 key 时退化为
   「同标题 + 同首行」匹配。
+
+容量可用环境变量覆盖（进程级，非法值回落默认并告警）：
+- `EAS_PROJECT_MEMORY_MAX_CHARS`：本文件字符上限（默认 20000）
+- `EAS_PROJECT_MEMORY_MAX_ENTRIES`：本文件保留条数（默认 60）
+- `EAS_PROJECT_MEMORY_ARCHIVE_MAX_CHARS`：归档字符上限（默认 200000）
+- `EAS_PROJECT_MEMORY_ARCHIVE_MAX_ENTRIES`：归档保留条数（默认 2000）
+例如只想保留最近 20 条：`EAS_PROJECT_MEMORY_MAX_ENTRIES=20`。
 """
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -27,10 +36,21 @@ logger = get_logger(__name__)
 MEMORY_FILENAME = "PROJECT_MEMORY.md"
 ARCHIVE_FILENAME = "PROJECT_MEMORY-archive.md"
 _ENTRY_PREFIX = "## ["
-_MAX_FILE_CHARS = 20000
+
+# 单条上限（防止单条记忆撑爆上下文）。
 _MAX_ENTRY_CHARS = 2000
+
+# 默认容量：条数与字符数双限（环境变量可覆盖，见 _limits()）。
+_MAX_FILE_CHARS = 20000
+_MAX_FILE_ENTRIES = 60
 _MAX_ARCHIVE_CHARS = 200000
+_MAX_ARCHIVE_ENTRIES = 2000
 _ARCHIVE_KEEP_MARGIN = 400
+
+ENV_MAX_FILE_CHARS = "EAS_PROJECT_MEMORY_MAX_CHARS"
+ENV_MAX_FILE_ENTRIES = "EAS_PROJECT_MEMORY_MAX_ENTRIES"
+ENV_MAX_ARCHIVE_CHARS = "EAS_PROJECT_MEMORY_ARCHIVE_MAX_CHARS"
+ENV_MAX_ARCHIVE_ENTRIES = "EAS_PROJECT_MEMORY_ARCHIVE_MAX_ENTRIES"
 
 
 def _memory_path():
@@ -45,6 +65,32 @@ def _read_text(path: Path) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _int_env(name: str, default: int) -> int:
+    """读正整数环境变量；缺失/非法/非正数一律回落默认值并告警。"""
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        logger.warning("忽略非法环境变量 {}={!r}，使用默认 {}", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("忽略非正数环境变量 {}={}，使用默认 {}", name, value, default)
+        return default
+    return value
+
+
+def _limits() -> Dict[str, int]:
+    """每次调用现读，测试与运维都可在运行期调整（环境变量优先于模块常量）。"""
+    return {
+        "file_chars": _int_env(ENV_MAX_FILE_CHARS, _MAX_FILE_CHARS),
+        "file_entries": _int_env(ENV_MAX_FILE_ENTRIES, _MAX_FILE_ENTRIES),
+        "archive_chars": _int_env(ENV_MAX_ARCHIVE_CHARS, _MAX_ARCHIVE_CHARS),
+        "archive_entries": _int_env(ENV_MAX_ARCHIVE_ENTRIES, _MAX_ARCHIVE_ENTRIES),
+    }
 
 
 def _split_entries(text: str) -> Tuple[str, List[str]]:
@@ -64,11 +110,22 @@ def _split_entries(text: str) -> Tuple[str, List[str]]:
     return "".join(preamble), ["".join(block) for block in entries]
 
 
-def _preamble(dropped: int, when: str) -> str:
+def _preamble(dropped: int, when: str, limits: Dict[str, int]) -> str:
     return (
         "# 项目工作记忆（PROJECT_MEMORY.md）\n\n"
         f"> 更早的记忆已按整条边界滚动归档到 {ARCHIVE_FILENAME}"
-        f"（最近归档 {when}，本次 {dropped} 条）；本文件保留最近的条目，读取方取尾部。\n\n"
+        f"（最近归档 {when}，本次 {dropped} 条）；本文件保留最近 "
+        f"{limits['file_entries']} 条 / {limits['file_chars']} 字符以内的条目，读取方取尾部。\n\n"
+    )
+
+
+def _archive_preamble(kept: int, when: str, limits: Dict[str, int]) -> str:
+    return (
+        f"# 项目记忆归档（{ARCHIVE_FILENAME}）\n\n"
+        f"> 归档同样按整条边界滚动：超过容量上限时丢弃最旧的条目"
+        f"（当前上限 {limits['archive_entries']} 条 / {limits['archive_chars']} 字符，"
+        f"可用 {ENV_MAX_ARCHIVE_ENTRIES} / {ENV_MAX_ARCHIVE_CHARS} 调整）。\n"
+        f"> 最近归档 {when}；当前保留 {kept} 条。\n\n"
     )
 
 
@@ -100,12 +157,13 @@ def _matches(block: str, title: str, dedupe_key: str, first_line: str) -> bool:
     return bool(first_line) and _first_body_line(block) == first_line
 
 
-def _keep_newest(entries: List[str], budget: int) -> List[str]:
-    """从最新往回保留尽量多的整条（最新一条无论多大都保留，否则会丢现场）。"""
+def _keep_newest(entries: List[str], budget: int, max_entries: int) -> List[str]:
+    """从最新往回保留：条数与字符数双限；最新一条无论多大都保留（否则会丢现场）。"""
+    max_entries = max(1, int(max_entries))
     keep: List[str] = []
     used = 0
     for block in reversed(entries):
-        if keep and used + len(block) > budget:
+        if keep and (len(keep) >= max_entries or used + len(block) > budget):
             break
         keep.append(block)
         used += len(block)
@@ -114,20 +172,19 @@ def _keep_newest(entries: List[str], budget: int) -> List[str]:
 
 
 def _append_archive(blocks: List[str], when: str) -> int:
-    """把整条记忆滚动进归档文件（同目录）；归档本身也按整条边界限量。"""
+    """把整条记忆滚动进归档文件（同目录）；归档本身也按整条 + 双限滚动。"""
     if not blocks:
         return 0
+    limits = _limits()
     path = _archive_path()
-    text = _read_text(path) + "".join(blocks)
-    if len(text) > _MAX_ARCHIVE_CHARS:
-        _, entries = _split_entries(text)
-        keep = _keep_newest(entries, _MAX_ARCHIVE_CHARS - _ARCHIVE_KEEP_MARGIN)
-        text = (
-            f"# 项目记忆归档（{ARCHIVE_FILENAME}）\n\n"
-            f"> 归档文件按整条边界滚动：超过 {_MAX_ARCHIVE_CHARS} 字符时丢弃最旧的条目。\n"
-            f"> 最近归档 {when}；当前保留 {len(keep)} 条。\n\n"
-        ) + "".join(keep)
-    path.write_text(text, encoding="utf-8")
+    combined = _read_text(path) + "".join(blocks)
+    _, entries = _split_entries(combined)
+    keep = _keep_newest(
+        entries,
+        max(1, limits["archive_chars"] - _ARCHIVE_KEEP_MARGIN),
+        limits["archive_entries"],
+    )
+    path.write_text(_archive_preamble(len(keep), when, limits) + "".join(keep), encoding="utf-8")
     return len(blocks)
 
 
@@ -143,6 +200,7 @@ def save_entry(
     - 给了 dedupe_key：匹配「同标题 + 同键」的条目（键会写进标题，如
       `执行摘要（计划 3f7fd751）`）；
     - 没给 key：退化为匹配「同标题 + 同首行」。
+    容量双限（条数 / 字符数）超限时，最旧的整条滚动进归档文件。
     """
     title = str(title or "").strip() or "执行记录"
     content = str(content or "").strip()
@@ -154,6 +212,7 @@ def save_entry(
     header_title = f"{title}（{dedupe_key}）" if dedupe_key else title
     entry = f"\n## [{ts}] {header_title}\n{content}\n"
 
+    limits = _limits()
     path = _memory_path()
     preamble, entries = _split_entries(_read_text(path))
 
@@ -170,15 +229,24 @@ def save_entry(
 
     archived = 0
     text = preamble + "".join(entries)
-    if len(text) > _MAX_FILE_CHARS:
-        keep = _keep_newest(entries, _MAX_FILE_CHARS - len(_preamble(len(entries), ts)))
+    too_big = len(text) > limits["file_chars"]
+    too_many = len(entries) > limits["file_entries"]
+    if too_big or too_many:
+        budget = max(1, limits["file_chars"] - len(_preamble(len(entries), ts, limits)))
+        keep = _keep_newest(entries, budget, limits["file_entries"])
         dropped = entries[: len(entries) - len(keep)]
         archived = _append_archive(dropped, ts)
-        text = _preamble(len(dropped), ts) + "".join(keep)
+        text = _preamble(len(dropped), ts, limits) + "".join(keep)
+        entries = keep
     path.write_text(text, encoding="utf-8")
 
     logger.info("项目记忆已记录: {}{}", header_title, "（覆盖旧条目）" if replaced else "")
-    result: Dict[str, Any] = {"success": True, "message": f"已记录: {header_title}", "path": str(path)}
+    result: Dict[str, Any] = {
+        "success": True,
+        "message": f"已记录: {header_title}",
+        "path": str(path),
+        "retained": len(entries),
+    }
     if replaced:
         result["replaced"] = True
     if archived:
@@ -207,12 +275,12 @@ class ProjectMemory:
             "name": "项目工作记忆",
             "description": "记录/读取项目执行状态（工作区 PROJECT_MEMORY.md），让后续任务能接着干，而不是从零开始",
             "category": "other",
-            "version": "1.1.0",
+            "version": "1.2.0",
             "capabilities": {
                 "instructions": [
                     {
                         "name": "save",
-                        "description": "追加一条工作记忆（标题 + 内容）；超限时按整条滚动归档",
+                        "description": "追加一条工作记忆（标题 + 内容）；超限时按整条滚动归档（条数/字符双限，环境变量可调）",
                         "parameters": {
                             "title": "条目标题（如：重构进度）",
                             "content": "工作状态/结论/下一步（必填）",
