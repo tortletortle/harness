@@ -6,6 +6,7 @@
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -209,3 +210,45 @@ def test_workspace_flag_overrides_env(ws, tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["workspace_root"] == str(other)
     assert payload["files"][0]["entries"] == 1
+
+# ===== 自检报告 =====
+
+def test_stats_report_dry_run_does_not_write(ws, capsys):
+    _write(ws, "memory", [_entry("2026-09-19 10:00:00", "r1")])
+    assert memory_admin.main(["stats", "--report"]) == 0
+    out = capsys.readouterr().out
+    assert "dry-run" in out
+    assert "memory-stats-" in out
+    assert "项目记忆自检报告" in out, "dry-run 也要把报告内容打出来供审阅"
+    assert not (ws / "data" / "reports").exists(), "dry-run 不得创建目录或文件"
+
+
+def test_stats_report_apply_writes_markdown(ws, capsys):
+    _write(ws, "memory", [_entry("2026-09-19 10:00:00", "r1"),
+                          _entry("2026-09-19 11:00:00", "r2")])
+    _write(ws, "archive", [_entry("2026-09-18 10:00:00", "a1")])
+    assert memory_admin.main(["stats", "--report", "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "[report] 已写入" in out
+
+    saved = list((ws / "data" / "reports").glob("memory-stats-*.md"))
+    assert len(saved) == 1
+    assert re.fullmatch(r"memory-stats-\d{8}-\d{4}\.md", saved[0].name), saved[0].name
+
+    text = saved[0].read_text(encoding="utf-8")
+    assert text.startswith("# 项目记忆自检报告")
+    assert str(ws) in text
+    assert f"{pm._MAX_FILE_ENTRIES} 条" in text, "报告要带容量上限，便于判断余量"
+    assert "| `memory` | 2 |" in text
+    assert "| `archive` | 1 |" in text
+    assert "未发现重复或异常条目" in text
+
+
+def test_stats_report_flags_duplicates(ws, capsys):
+    body = _entry("2026-09-19 10:00:00", "dup9")
+    _write(ws, "memory", [body, body])
+    assert memory_admin.main(["stats", "--report", "--apply"]) == 0
+    saved = next((ws / "data" / "reports").glob("memory-stats-*.md"))
+    text = saved.read_text(encoding="utf-8")
+    assert "存在重复或异常条目" in text
+    assert "dedupe" in text

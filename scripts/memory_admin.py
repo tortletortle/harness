@@ -6,6 +6,8 @@
 用法（任意目录执行均可；工作区根同运行时规则：EAS_WORKSPACE_ROOT 优先，否则仓库根）：
     python scripts/memory_admin.py stats                     # 统计（只读）
     python scripts/memory_admin.py stats --json               # 机器可读
+    python scripts/memory_admin.py stats --report             # 预览自检报告（dry-run）
+    python scripts/memory_admin.py stats --report --apply     # 落盘 data/reports/memory-stats-<时间戳>.md
     python scripts/memory_admin.py keep --entries 200         # dry-run：归档只保留最新 200 条
     python scripts/memory_admin.py keep --entries 200 --apply # 真正执行
     python scripts/memory_admin.py dedupe --target both --apply
@@ -107,6 +109,49 @@ def _describe(root: Path, target: str) -> dict:
     }
 
 
+def _render_report(payload: dict) -> str:
+    """把 stats 结果渲染成 Markdown 自检报告（落盘到 data/reports/）。"""
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    limits = payload["limits"]
+    lines = [
+        f"# 项目记忆自检报告（{now}）",
+        "",
+        f"- 工作区根：`{payload['workspace_root']}`",
+        f"- 容量上限：主文件 {limits['file_entries']} 条 / {limits['file_chars']} 字符；"
+        f"归档 {limits['archive_entries']} 条 / {limits['archive_chars']} 字符",
+        "",
+        "| 文件 | 条数 | 字节 | 字符 | 最旧 | 最新 | 重复 | 异常 |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for row in payload["files"]:
+        if not row["exists"]:
+            lines.append(f"| `{row['target']}` | - | - | - | - | - | - | 文件不存在 |")
+            continue
+        lines.append(
+            f"| `{row['target']}` | {row['entries']} | {row['bytes']} | {row['chars']} | "
+            f"{row['oldest'] or '-'} | {row['newest'] or '-'} | "
+            f"{row['duplicates']} | {row['half_entries']} |"
+        )
+
+    lines += ["", "## 明细", ""]
+    for row in payload["files"]:
+        state = "" if row["exists"] else "（文件不存在）"
+        lines.append(f"- `{row['path']}`：{row['entries']} 条 / {row['bytes']} 字节 / "
+                     f"{row['chars']} 字符{state}")
+
+    flagged = [r for r in payload["files"] if r["exists"] and (r["duplicates"] or r["half_entries"])]
+    lines += ["", "## 建议", ""]
+    if flagged:
+        names = "、".join(f"`{r['target']}`" for r in flagged)
+        lines.append(f"{names} 存在重复或异常条目：先 `python scripts/memory_admin.py dedupe` 预览，"
+                     "确认后加 `--apply` 合并；超限条目可用 `keep` 裁剪（`--target archive` 真删，"
+                     "`--target memory` 移入归档）。")
+    else:
+        lines.append("未发现重复或异常条目，无需处理。")
+    lines += ["", f"> 生成命令：`python scripts/memory_admin.py stats --report --apply`", ""]
+    return "\n".join(lines)
+
+
 def cmd_stats(args) -> int:
     root = _workspace_root(args.workspace)
     limits = pm._limits()
@@ -139,6 +184,18 @@ def cmd_stats(args) -> int:
             print(f"  异常条目 {row['half_entries']} 条（不以 '## [' 开头，建议人工检查）")
     print("\n提示：环境变量可调上限 —— EAS_PROJECT_MEMORY_MAX_ENTRIES / _MAX_CHARS / "
           "EAS_PROJECT_MEMORY_ARCHIVE_MAX_ENTRIES / _MAX_CHARS")
+
+    if getattr(args, "report", False):
+        report = _render_report(payload)
+        dest = root / "data" / "reports" / f"memory-stats-{time.strftime('%Y%m%d-%H%M')}.md"
+        if not args.apply:
+            print(f"\n[report] dry-run：将写入 {dest}")
+            print(report)
+            print("确认无误后加 --apply 写入。")
+            return 0
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(report, encoding="utf-8")
+        print(f"\n[report] 已写入 {dest}")
     return 0
 
 
@@ -271,6 +328,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_stats = sub.add_parser("stats", help="显示两个记忆文件的统计（只读）")
     p_stats.add_argument("--json", action="store_true", help="输出 JSON")
+    p_stats.add_argument("--report", action="store_true",
+                         help="生成自检报告（默认只预览，--apply 才写 data/reports/）")
+    p_stats.add_argument("--apply", action="store_true", help="与 --report 连用：真正写入报告文件")
     p_stats.set_defaults(func=cmd_stats)
 
     p_keep = sub.add_parser("keep", help="按条数/字符裁剪（默认只裁归档）")

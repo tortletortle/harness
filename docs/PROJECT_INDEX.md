@@ -131,7 +131,7 @@ workspace crates：`common`（error/traits/types）、`dispatcher`、`db`、`log
 
 启动：`start_api.py`（后端 8000）、`dev_server.py`、`cli.py`（CLI 设计助手）、`harness.py`、`daily_ready.py`、`dev.bat/.sh`、`init.bat/.sh`
 验收/基准：`live_checkpoint_acceptance.py`、`real_llm_acceptance_a.py`、`performance_benchmark.py`（结果 `artifacts/`）
-运维：`prune_data.py`（数据保留清理）、`memory_admin.py`（项目记忆运维：stats / keep / dedupe，默认 dry-run，`--apply` 才写入并在写入前自动备份）
+运维：`prune_data.py`（数据保留清理）、`memory_admin.py`（项目记忆运维：`stats` / `keep` / `dedupe`；`stats --report --apply` 落盘 `data/reports/memory-stats-<时间戳>.md` 自检报告；默认 dry-run，`--apply` 才写入并在写入前自动备份）；`一键测试.bat` 末尾会跑一次 `memory_admin.py stats` 只读自检
 `test_*.py` 系列：连通性/E2E/覆盖率/专项的独立手动验证脚本（不属于 pytest 套件）
 Windows 根目录一键批处理：`启动完整系统.bat`、`一键启动.bat`、`启动后端.bat` 等
 
