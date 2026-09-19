@@ -141,7 +141,7 @@ Windows 根目录一键批处理：`启动完整系统.bat`、`一键启动.bat`
 | `data/eas.db` | 主 SQLite 库；`data/knowledge/` 知识笔记；`data/usage/` 用量；`data/notifications.jsonl` 通知审计；`data/reports/` 报告；SQLite `artifacts` 表登记产物 URI/哈希/元数据；`steps.depends_on` 存显式依赖；资源声明随步骤 `inputs.resources` 持久化 |
 | `out/` | 真实验收/每日任务的产物与服务器日志 |
 | `logs/eas.log`、`htmlcov/`、`.coverage` | 运行日志、覆盖率报告 |
-| `PROJECT_MEMORY.md` | project_memory 工具的落地记忆（当前被执行摘要大量追加，早期内容已截断） |
+| `PROJECT_MEMORY.md`、`PROJECT_MEMORY-archive.md` | project_memory 工具的落地记忆；超过 20000 字符时按**整条边界**把最旧条目滚动进归档文件（同一工作区根）。2026-09-19 人工整理：清除 105 条测试噪声（94 条确定性测试写入 + 11 条合成 fixture 验收），原文备份 `docs/archive/PROJECT_MEMORY-20260919-pre-cleanup.md` |
 
 ## 历史/独立子项目（不在主链路内）
 

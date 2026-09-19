@@ -438,7 +438,10 @@ async def execute_plan_background(
                         if _s.get('description'):
                             _line += f" —— {_s.get('description')}"
                         _mem_lines.append(_line)
-                    _pm_save("执行摘要", chr(10).join(_mem_lines))
+                    # 同一计划重跑（Failed 重跑 / resume）不应在记忆里留下多条互相矛盾的
+                    # 陈旧摘要：按稳定的计划键折叠覆盖（首行含最终状态，不能拿首行当键）。
+                    _pm_save("执行摘要", chr(10).join(_mem_lines), collapse_duplicates=True,
+                          dedupe_key=f"计划 {str(plan.plan_id)[:8]}")
                     debug_log(f"项目记忆已更新: {plan.plan_id}")
                 except Exception as _mem_err:
                     debug_log(f"项目记忆写入失败: {_mem_err}")

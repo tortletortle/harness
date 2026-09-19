@@ -1,14 +1,14 @@
 # 模型配置界面与保存契约
 
-更新：2026-09-13
+更新：2026-09-19（模型工作台 v2，主从布局）
 
 ## 使用方式
 
-1. 打开“模型配置”，切换“模型分配”或“服务提供商”。搜索支持角色名、模型 ID、提供商与端点。
-2. 为实际存在的角色选择主模型和已有的备用模型。模型 ID 可自由填写，不受硬编码列表限制；输入建议仅来自现有配置，不表示已验证可用。
-3. 在提供商分类修改 Base URL，或新增提供商。API Key 直接在提供商卡片的密码输入框填写并单独保存：后台用 Windows DPAPI 加密写入 `config/keys.enc.json`（账户绑定、已 gitignore，不回显）。环境变量 `EAS_LLM_API_KEY_<提供商大写标识>` 仍优先，可用“清除”删除本地保存的密钥。
-4. 点击“保存配置”。保存只写本地覆盖文件，不调用模型、不自动重启，也不修改当前任务使用的运行时配置。
-5. 当页面提示待重启时，确认所有任务结束后，通过项目实际使用的启动方式受控重启后台。旧的 `/api/restart` 只请求退出，不能保证外部管理器会重新启动，因此新版页面不调用它。
+1. 打开“模型配置”。左栏是提供商列表（状态点 = 密钥已注入 / 未检测到密钥，副信息 = 被多少角色使用、已缓存多少模型），右栏是选中提供商的详情，下方是“角色路由”表。顶部搜索同时过滤提供商列表与角色表（角色名、模型 ID、提供商、端点）。
+2. 新增提供商：点“+ 添加提供商”，从内置预设（OpenAI、DeepSeek、Moonshot、智谱、阿里云百炼、硅基流动、阶跃星辰、火山方舟、MiniMax、OpenRouter、Groq、Ollama、LM Studio、vLLM 等 20 个 OpenAI 兼容端点）一键带入标识与 Base URL，或选“自定义”手填；标识规则不变（字母开头，最多 64 位，不允许大小写重复）。
+3. 在详情面板填 API Key 并点“保存密钥”（仍只走 `POST /api/config/key`，DPAPI 加密、不回显；环境变量 `EAS_LLM_API_KEY_<提供商大写标识>` 优先），修改 Base URL 后点“保存并检测 / 获取模型列表”：页面先保存配置草稿，再保存待提交密钥，最后才对**已保存**端点发起连通性检测，成功后模型目录缓存在后台。无草稿时按钮显示“检测连通性 / 获取模型列表”。
+4. 目录里的每个模型都可以直接“分配到角色 ▾”（写入草稿，不立即保存）或“测试模型”（需费用确认）。角色路由表中的模型 ID 输入框也会列出该提供商目录里的候选；模型 ID 依旧可以自由填写，候选只表示“曾被上游列出”，不表示已验证可用。
+5. 点击底部“保存配置”。保存只写本地覆盖文件，不调用模型、不自动重启，也不修改当前任务使用的运行时配置。页面提示待重启时，确认所有任务结束后通过项目实际使用的启动方式受控重启后台；旧的 `/api/restart` 只请求退出，页面不调用它。
 
 ## 交互与保护
 
@@ -120,3 +120,45 @@
 
 - 后续全量回归完成：**1077 passed / 9 skipped / 2 deselected**，证据 `out/model-probes-verification-full-20260913-200034/`。
 - 额外只读检查 Windows 用户/系统环境及维护进程，五个提供商均未发现对应密钥变量；这不等同于后台进程环境。后台仍报告 STEPFUN 已注入，其他四家未注入，因此应以后台状态为准。检查仅记录布尔值，不保存或回显密钥，证据 `out/model-probes-20260913/key-presence-only.json`。
+
+## 模型工作台 v2：主从布局与模型目录（2026-09-19）
+
+### 设计来源
+
+参考 Cherry Studio“模型服务”与 LobeChat“Provider Settings”的共同做法：左侧提供商列表 + 右侧单提供商详情；Key / 地址 / 获取模型列表 / 连通性检测集中在一张卡片；获取到的模型可直接启用或分配；内置常见服务商的地址预设。旧版把“模型分配”“服务提供商”“上游检测”分在三个区域，新增一个提供商并投入使用需要来回切换约 8 步，且检测得到的模型列表无法用于角色分配；本轮以此为主要优化目标。
+
+### 页面结构（`frontend/src/components/ConfigView.tsx` + `config/`）
+
+- `ConfigView.tsx`：状态编排（草稿 / 基线 / 待保存密钥 / 目录 / 选中提供商）、统一保存栏、重新加载确认、离开页面保护。
+- `config/ProviderPanel.tsx`：单提供商详情，含密钥输入（显示/隐藏、保存、撤回新增）、Base URL、“保存并检测”、状态徽标、模型目录列表（分配到角色、测试模型、清除目录）。
+- `config/RoleRoutingTable.tsx`：角色 × 主/备用模型的紧凑表格；提供商为下拉，模型 ID 为可搜索组合框（`config/ModelPicker.tsx`），候选 = 该提供商目录 ∪ 配置中已用 ID，允许自由输入。
+- `config/AddProviderDialog.tsx` + `config/providerPresets.ts`：新增提供商对话框与地址预设（只含公开的 Base URL 与获取密钥链接，不含任何凭据）。
+- `config/ConfirmDialog.tsx`、`config/shared.ts`：确认对话框、校验/规范化工具（URL 规则与标识规则与旧版一致）。
+- 样式 `ConfigView.css` 全部重写，仍跟随 `data-theme`，用容器查询在 960px / 560px 折叠为单列。
+
+### 后端：模型目录缓存
+
+- `python/api/model_catalog.py`：连通性检测成功后，把去重后的模型 ID（最多 200 个）、抓取时间与当时端点写入 `data/model_catalog.json`；写入使用临时文件 + 原子替换，只存模型 ID，不存密钥或上游错误体。
+- `GET /api/config/catalog`：返回 `{success, catalog: {provider: {models, fetched_at, base_url, stale}}}`；`stale` 表示当时抓取的端点与现在生效的端点不同（含环境变量覆盖），页面提示“列表可能过期”。读取不会联系上游。
+- `DELETE /api/config/catalog/{provider}`：清除单个提供商的缓存；标识校验与检测接口一致。
+- `POST /api/config/probe` 连通性成功响应新增 `catalog` 字段（本次写入的目录条目）；`GET /api/config` 新增 `catalog_version: 1`，缺少该字段的旧后台前端不显示目录功能。
+- 未放宽的边界：检测仍只针对已保存提供商，不接受浏览器提交的 URL / 密钥 / 提示词；模型推理测试仍需 `acknowledge_cost: true`；密钥仍只经 `POST /api/config/key`；配置保存仍需 revision，冲突 409；不自动重启。
+
+### “保存并检测”的顺序与失败处理
+
+1. 草稿有改动 → `POST /api/config`（携带 revision，不含密钥）；失败则停止，草稿保留，密钥不提交。
+2. 当前提供商有待保存密钥 → `POST /api/config/key`；失败则停止，已保存的配置不回滚，密钥输入框内容保留。
+3. 以保存后的 revision 调用 `POST /api/config/probe`（`mode: connectivity`）；配置刷新或切换提供商时取消等待，迟到结果不写入界面。
+
+### 测试
+
+- `ConfigView.test.tsx`（18 项）：保留原 14 项行为契约（版本携带、密钥不回显、无效 URL/空模型禁保存、重复标识、只读旧后台、409 保留草稿、重新加载确认、离开保护、中文提供商不重命名等），新增 4 项：预设一键填入且新提供商保存前不能单独存密钥；已缓存目录进入角色路由候选并显示在提供商列表；修改端点后目录标记可能过期、“清除目录”调用后台；从模型列表“分配到角色”只改草稿。
+- `config/ProviderPanel.test.tsx`（11 项）：移植原 ModelProbePanel 7 项（不自动检测、费用确认、401 不算通过、旧后台禁请求、选模型不自动推理、网络失败可重试、刷新取消等待），新增 4 项：“保存并检测”顺序（配置 → 密钥 → 检测已保存端点）；保存失败或草稿无效时不发出检测；切换提供商丢弃上一个的结果与输入；“保存并检测”返回的新版本不会取消刚发起的检测。
+- 后端 `tests/python/test_model_catalog.py`（5 项）：损坏/缺失缓存按空处理；写入时过滤、裁剪并标记 stale；环境变量端点覆盖参与 stale 判定；检测路由写入目录且 `GET /api/config/catalog` 可读回；缓存写入失败不影响检测结果。
+
+### 验证结果
+
+- 前端 `npx vitest run`：**95 passed / 15 files**（原 85 + 本轮净增 10）；`npm run build`（`tsc && vite build`）通过。
+- `npx tsc -p tsconfig.app.json --noEmit` 对本轮改动的文件无报错；该命令另报出 5 处**既有**错误（`AuditView.test.tsx`、`ExecutionView(.test).tsx`、`PlanView.tsx`、`Sidebar.tsx`，均未在本轮改动），根 `tsconfig.json` 为 `files: []` 的引用配置，因此 `npm run build` 中的 `tsc` 不会检查它们。建议后续单独处理。
+- 后端定向用例 **78 passed**；全量 `tests/python` **1133 passed / 10 skipped**，`test_exec_e2e.py` 的 2 项在全量运行中报 setup error，但单独运行 **2 passed**，属既有的顺序/环境相关问题，与配置或目录改动无关。
+- 本轮没有向真实上游发送任何请求，没有保存真实配置或密钥；`data/model_catalog.json` 只会在用户主动点击检测并成功后产生。
