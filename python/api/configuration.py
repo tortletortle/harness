@@ -103,7 +103,7 @@ def _snapshot(merged, revision, runtime, directory: Path):
     except secret_store.SecretStoreError:
         persisted = set()
     return {
-        "schema_version": 2, "probe_version": 1, "revision": revision,
+        "schema_version": 2, "probe_version": 1, "catalog_version": 1, "revision": revision,
         "base_urls": urls, "models": models, "agents": models,
         "api_keys_configured": {p: env_configured[p] or p in persisted for p in urls},
         "api_keys_persisted": {p: p in persisted and not env_configured[p] for p in urls},

@@ -11,6 +11,8 @@ export interface ModelRole {
 export interface ModelConfiguration {
   schema_version?: number;
   probe_version?: number;
+  /** Present when GET /api/config/catalog is available. */
+  catalog_version?: number;
   revision?: string;
   base_urls: Record<string, string>;
   models?: Record<string, ModelRole>;
@@ -52,3 +54,13 @@ export interface ModelProbeResult {
   latency_ms: number;
   models: string[];
 }
+
+/** Server-side cache of one provider's fetched model IDs (never secrets). */
+export interface ModelCatalogEntry {
+  models: string[];
+  fetched_at: string | null;
+  base_url: string | null;
+  /** Fetched against a different endpoint than the one now in effect. */
+  stale: boolean;
+}
+export type ModelCatalog = Record<string, ModelCatalogEntry>;

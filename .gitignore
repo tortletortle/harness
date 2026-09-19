@@ -123,6 +123,7 @@ config/desktop_access.json
 
 # 加密保存的模型 API Key（DPAPI 账户绑定，绝不入库）
 config/keys.enc.json
+config/model_catalog.json
 
 # 工作区执行摘要（project_memory 工具自动追加，不入库）
 PROJECT_MEMORY.md

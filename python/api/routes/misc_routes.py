@@ -27,6 +27,7 @@ router = APIRouter()
 
 
 from api.model_probe import ProbeRequest, probe_configuration
+from api import model_catalog
 from api.configuration import (
     ConfigUpdateRequest, ConfigProblem, KeyUpdateRequest, read_configuration,
     save_configuration, save_api_key,
@@ -220,9 +221,53 @@ async def get_capabilities():
 async def probe_models(request: "ProbeRequest"):
     """Explicit non-persistent connectivity / minimal inference check."""
     try:
-        return {"success": True, "result": await probe_configuration(_config_dir(), state.config, request)}
+        result = await probe_configuration(_config_dir(), state.config, request)
     except ConfigProblem as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+    catalog = None
+    if request.mode == "connectivity" and result.get("ok") and result.get("models"):
+        # Remember the fetched IDs so the routing table can offer them after a
+        # reload. Cache failures must never turn a successful probe into an error.
+        try:
+            directory = _config_dir()
+            urls = model_catalog.effective_base_urls(
+                read_configuration(directory, state.config)["base_urls"]
+            )
+            catalog = model_catalog.remember_catalog(
+                directory, request.provider, urls.get(request.provider, ""),
+                result["models"], known_providers=set(urls),
+            )
+        except (ConfigProblem, OSError):
+            logger.warning("模型目录缓存写入失败（不影响本次检测结果）")
+    return {"success": True, "result": result, "catalog": catalog}
+
+
+@router.get("/api/config/catalog", dependencies=[Depends(require_token)])
+async def get_model_catalog():
+    """Cached model IDs from earlier explicit fetches; never contacts upstream."""
+    try:
+        directory = _config_dir()
+        urls = read_configuration(directory, state.config)["base_urls"]
+    except ConfigProblem as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+    return {"success": True, "catalog": model_catalog.load_catalog(directory, urls)}
+
+
+@router.delete("/api/config/catalog/{provider}", dependencies=[Depends(require_token)])
+async def delete_model_catalog(provider: str):
+    """Forget one provider's cached list; no upstream request, no config change."""
+    try:
+        directory = _config_dir()
+        urls = read_configuration(directory, state.config)["base_urls"]
+    except ConfigProblem as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+    if provider not in urls:
+        raise HTTPException(status_code=404, detail="未知的提供商")
+    try:
+        removed = model_catalog.forget_catalog(directory, provider)
+    except OSError:
+        raise HTTPException(status_code=500, detail="无法更新模型目录缓存文件") from None
+    return {"success": True, "removed": removed}
 
 
 @router.get("/api/config", dependencies=[Depends(require_token)])

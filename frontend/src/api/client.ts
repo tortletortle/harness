@@ -1,4 +1,4 @@
-import type { ModelProbeRequest, ModelProbeResult } from '../types/modelConfig';
+import type { ModelCatalog, ModelProbeRequest, ModelProbeResult } from '../types/modelConfig';
 import type { ModelConfiguration, ModelConfigUpdate } from '../types/modelConfig';
 /**
  * API 客户端
@@ -431,7 +431,10 @@ export class ApiClient {
    * 保存单个提供商的 API Key（后台加密落盘，不回显）。
    * 空字符串表示清除已保存的密钥。
    */
-  async setConfigKey(provider: string, value: string): Promise<{ configured: boolean }> {
+  async setConfigKey(
+    provider: string,
+    value: string,
+  ): Promise<{ configured: boolean; persisted?: boolean; cleared?: boolean; provider?: string }> {
     const response = await authFetch(`${API_BASE}/api/config/key`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -441,6 +444,26 @@ export class ApiClient {
     const data = await response.json();
     if (!data.success || !data.key) throw new Error('后台尚不支持密钥保存');
     return data.key;
+  }
+
+  /** Cached model IDs from earlier explicit fetches; never contacts upstream. */
+  async getModelCatalog(): Promise<ModelCatalog> {
+    const response = await authFetch(`${API_BASE}/api/config/catalog`);
+    if (!response.ok) await throwResponseError(response, '模型目录不可用');
+    const data = await response.json();
+    if (!data.success || !data.catalog || typeof data.catalog !== 'object') {
+      throw new Error('模型目录接口返回无效响应');
+    }
+    return data.catalog;
+  }
+
+  /** Forget one provider's cached model list; no upstream request. */
+  async deleteModelCatalog(provider: string): Promise<void> {
+    const response = await authFetch(
+      `${API_BASE}/api/config/catalog/${encodeURIComponent(provider)}`,
+      { method: 'DELETE' },
+    );
+    if (!response.ok) await throwResponseError(response, '清除模型目录失败');
   }
 
   /**
