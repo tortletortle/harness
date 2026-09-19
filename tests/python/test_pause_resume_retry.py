@@ -132,6 +132,9 @@ def plans_fixture(server_root, workdir):
 def server(server_root, plans_fixture):
     env = dict(os.environ)
     env["EAS_API_TOKEN"] = TOKEN
+    # 数据库必须显式绑定到隔离目录：服务端路径解析（paths.resolve_db_path）不再跟随 cwd，
+    # 否则会打开仓库根的真实 data/eas.db，而计划是种在这里的临时库中。
+    env["EAS_DB_PATH"] = str(server_root / "data" / "eas.db")
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONPATH"] = str(PYTHON_DIR) + os.pathsep + env.get("PYTHONPATH", "")

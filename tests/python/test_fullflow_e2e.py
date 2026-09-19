@@ -66,6 +66,8 @@ def server():
     # 工作区根必须显式绑定到隔离目录，否则相对路径会落到仓库根
     # （tools/workspace.py 的回退语义是仓库根，历史 E2E 用绝对路径从未暴露）。
     env["EAS_WORKSPACE_ROOT"] = str(root)
+    # 数据库同理：服务端路径解析（paths.resolve_db_path）不再跟随 cwd，必须显式指到隔离目录。
+    env["EAS_DB_PATH"] = str(root / "data" / "eas.db")
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONPATH"] = str(PYTHON_DIR) + os.pathsep + env.get("PYTHONPATH", "")
