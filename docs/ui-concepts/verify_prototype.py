@@ -1,0 +1,115 @@
+"""Offline smoke tests for the HTML concept, not native egui tests."""
+from pathlib import Path
+import json
+from playwright.sync_api import sync_playwright, expect
+
+ROOT = Path(__file__).resolve().parent
+OUTPUT = ROOT / "previews"
+OUTPUT.mkdir(exist_ok=True)
+checks = []
+
+def ok(name):
+    checks.append(name)
+    print("PASS", name, flush=True)
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page(viewport={"width": 1440, "height": 1050}, device_scale_factor=1)
+    errors, network = [], []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("request", lambda r: network.append(r.url) if r.url.startswith(("http:", "https:")) else None)
+    page.goto((ROOT / "harness-desktop.html").as_uri())
+    expect(page.locator(".step")).to_have_count(5)
+    ok("Initial render: five steps")
+    for mode in ("focus", "workbench", "timeline"):
+        page.locator('[data-mode="' + mode + '"]').click()
+        expect(page.locator("#app")).to_have_attribute("data-direction", mode)
+        if mode == "workbench":
+            expect(page.locator(".workbench-details")).to_be_visible()
+            expect(page.locator(".activity-rail")).to_be_visible()
+        if mode == "timeline":
+            expect(page.locator(".timeline-map")).to_be_visible()
+        page.screenshot(path=str(OUTPUT / (mode + "-light.png")), full_page=True)
+        page.locator("#theme").click()
+        expect(page.locator("#app")).to_have_attribute("data-theme", "dark")
+        page.screenshot(path=str(OUTPUT / (mode + "-dark.png")), full_page=True)
+        page.locator("#theme").click()
+        ok("Distinct layout and independent themes: " + mode)
+    page.locator('[data-mode="focus"]').click()
+    page.locator("#density").click()
+    expect(page.locator("#app")).to_have_attribute("data-density", "compact")
+    page.locator("#density").click()
+    ok("Density toggle")
+    page.locator('[data-step="0"]').click()
+    expect(page.locator("#detail-title")).to_have_text("读取项目结构")
+    page.locator('[data-step="2"]').click()
+    ok("Step details follow selection")
+    page.locator('[data-tab="design"]').click()
+    expect(page.locator("#design-view")).to_be_visible()
+    page.keyboard.press("ArrowRight")
+    expect(page.locator("#artifacts-view")).to_be_visible()
+    page.keyboard.press("Home")
+    expect(page.locator("#execution-view")).to_be_visible()
+    ok("Content tabs and keyboard navigation")
+    page.keyboard.press("Control+k")
+    expect(page.locator("#command-dialog")).to_be_visible()
+    page.locator("#command-query").fill("不存在的命令")
+    expect(page.locator("#command-results")).to_contain_text("没有匹配")
+    page.locator("#command-query").fill("时间线")
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Enter")
+    expect(page.locator("#app")).to_have_attribute("data-direction", "timeline")
+    expect(page.locator("#command-dialog")).not_to_be_visible()
+    page.keyboard.press("Control+k")
+    page.keyboard.press("Escape")
+    expect(page.locator("#command-dialog")).not_to_be_visible()
+    ok("Command search, empty state, keyboard execution and Escape")
+    page.locator('[data-mode="focus"]').click()
+    page.locator("#approve").click()
+    expect(page.locator("#approval-dialog")).to_be_visible()
+    page.locator('[data-close="approval-dialog"]').last.click()
+    expect(page.locator("#approval-count")).to_have_text("1")
+    page.locator("#approve").click()
+    page.locator("#confirm-approval").click()
+    expect(page.locator("#approval-count")).to_have_text("0")
+    expect(page.locator("#run-state")).to_contain_text("未执行")
+    expect(page.locator("#progress-copy")).to_have_text("02 / 05")
+    ok("Approval cancellation and confirmation never imply completed execution")
+    page.locator("#reset").click()
+    page.locator("#reject").click()
+    expect(page.locator("#run-state")).to_contain_text("已拒绝")
+    expect(page.locator("#progress-copy")).to_have_text("02 / 05")
+    ok("Reject preserves blocked execution")
+    page.locator('[data-filter="warn"]').click()
+    expect(page.locator("#logs .log-line")).to_have_count(2)
+    page.locator('[data-filter="info"]').click()
+    expect(page.locator("#logs .log-line")).to_have_count(2)
+    page.locator("#toggle-output").click()
+    expect(page.locator("#console")).not_to_be_visible()
+    page.locator("#toggle-output").click()
+    expect(page.locator("#console")).to_be_visible()
+    ok("Log level filters and output visibility")
+    page.locator("#reset").click()
+    expect(page.locator("#approval-count")).to_have_text("1")
+    expect(page.locator("#logs .log-line")).to_have_count(3)
+    ok("Reset restores the initial demo state")
+    page.locator("#show-notes").click()
+    expect(page.locator("#notes-dialog")).to_be_visible()
+    page.keyboard.press("Escape")
+    for width, height in ((1280, 800), (900, 900), (768, 1024), (390, 844)):
+        page.set_viewport_size({"width": width, "height": height})
+        for mode in ("focus", "workbench", "timeline"):
+            page.locator('[data-mode="' + mode + '"]').click()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), (width, mode, "page overflow")
+            expect(page.locator("#approve")).to_be_visible()
+        page.locator('[data-mode="focus"]').click()
+        page.screenshot(path=str(OUTPUT / ("focus-" + str(width) + ".png")), full_page=True)
+        ok("No page-level overflow; approval reachable at " + str(width))
+    assert not errors, errors
+    assert not network, network
+    ok("No JavaScript errors or external network requests")
+    report = {"checks_passed": len(checks), "checks": checks, "javascript_errors": errors,
+              "external_requests": network, "scope": "Offline HTML prototype only; native egui not tested"}
+    (OUTPUT / "verification.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    browser.close()
+print("All", len(checks), "checks passed. Screenshots:", OUTPUT)

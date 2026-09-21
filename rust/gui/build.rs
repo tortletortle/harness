@@ -30,4 +30,3 @@ fn main() {
     println!("cargo:rerun-if-changed=../../.git/refs/tags");
     println!("cargo:rerun-if-changed=../../.git/packed-refs");
 }
-

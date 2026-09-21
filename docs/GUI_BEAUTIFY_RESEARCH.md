@@ -12,6 +12,14 @@
 > payload（LogLine 增加单调 seq 标识展开状态，环形裁剪后不串行）与设计书列表
 > ↑/↓/Enter 键盘导航（与项目列表同一 typing 守卫语义）。rustfmt / clippy
 > -D warnings / workspace 测试 37 passed（GUI 32，含新增 log_seq 回归）全部通过。
+>
+> **P6 增量（2026-09-19）**：新增可选布局模式（Focus / Workbench / Timeline），与
+> GuiMode 及执行权限解耦；顶栏布局条、设置页外观区、Ctrl+K 均可切换，每种布局
+> 独立记住项目栏/输出/助手开合并持久化（`eas.layout.v1`），旧偏好缺省回退经典
+> 工作台。Timeline 只串联后端已有步骤状态，不编造时间与历史。rustfmt 通过；
+> 本机无 MSVC/Windows SDK，改用 GNU 工具链 + cargo-zigbuild（zig 0.16）验证：
+> eas-gui 编译链接通过，GUI 37/37 测试通过（含 5 项布局回归）；workspace 级
+> clippy 与 msvc 链接待 CI 覆盖。
 
 ## 0. 现状结论
 

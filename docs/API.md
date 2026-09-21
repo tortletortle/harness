@@ -42,6 +42,7 @@ token 来源优先级：环境变量 `EAS_API_TOKEN` → `config/api_token` 文�
 | POST | `/api/plan/{id}/pause` | 请求暂停（当前步骤完成后生效），同时原子写入恢复断点 |
 | POST | `/api/plan/{id}/resume` | 从断点恢复，仅限 Paused 状态 |
 | POST | `/api/plan/{id}/skip-step/{step_id}` | 跳过步骤；终态计划或非 Pending/Retry 步骤返回 409 |
+| POST | `/api/plan/{id}/steps/{step_id}/input` | 向等待补充输入的步骤写回 `user_input`（仅 Paused 计划 + Pending 步骤，否则 409） |
 | POST | `/api/plan/{id}/rollback` | 回滚到指定步骤，body: `{"step_id": "...", "strategy": "retry"}`；克隆出新分支并废弃旧分支步骤 |
 | GET | `/api/audit-logs?limit=100&plan_id=` | 审计日志（工具调用记录，含被安全拦截的调用） |
 | GET | `/api/tools` | 工具列表（10 个内置工具及能力） |
@@ -74,3 +75,30 @@ curl -X POST http://127.0.0.1:8000/api/plan/<plan_id>/execute \
 ```
 
 执行进度通过 `GET /api/plan/{id}` 轮询或前端页面查看；日志事件由 `/ws/logs` 推送。
+
+## 智能体任务交接（handoff）
+
+依赖步骤之间由运行时自动交接，不靠计划里预先写死的 inputs：
+
+- **交接内容**：取当前分支上「本步骤直接依赖」的落库结果——`compressed_context`
+  摘要优先，其次 `outputs` / `state_snapshot` 里的实际输出、`agent_facts`、
+  `file://` 产物引用与错误。注入到 agent 步骤的 `inputs["upstream_context"]`，
+  并同步填进 `CapabilityRequest.artifact_refs`。只给 `kind=agent_tool` 的步骤注入，
+  普通工具的 inputs 保持原契约；交接只传引用，不会因此扩大 Grant 的资源面。
+  交接过程落 `step_event`：`handoff_context`。
+- **产物登记**：agent 结果被 executor 包了一层（`result["output"]["agent_artifacts"]`、
+  `result["output"]["output"]["path"]`），登记器按 `result → output → output.output`
+  逐层收集，避免 agent 产物永远登记不到。
+- **等待补充输入**：agent 返回 `needs_input` 时不判 Failed、不自动重试；步骤回到
+  `Pending`，计划转 `Paused` 并写入 `resume_from_step_id`，`step_event` 记
+  `needs_input`。用户补充输入：
+
+  ```bash
+  curl -X POST http://127.0.0.1:8000/api/plan/<plan_id>/steps/<step_id>/input \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d '{"input": {"repo_url": "https://example.invalid/repo"}}'
+  ```
+
+  再 `POST /api/plan/{plan_id}/resume`，调度器从同一步继续（提交输入本身不启动执行）。
+- **最终交付报告**：`_generate_final_report` 生成前重新读取数据库中的计划与各步骤
+  结果，不使用认领执行时的计划快照，避免报告里出现 Pending / 空 outputs。

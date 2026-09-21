@@ -352,7 +352,15 @@ async def execute_plan_background(
                         ),
                         "前置步骤停止时保留原恢复目标",
                     )
-                await broadcast_log(f"[ERROR] 批内步骤 {stop_step_id} 失败，终止执行", "error")
+                # needs_input 引起的停止不是失败：步骤已回到 Pending、计划已 Paused，
+                # 再报「失败」会把用户引向重跑/回滚，而实际只差一次补充输入。
+                if state.database.get_plan_status(str(plan.plan_id)) == PlanStatus.PAUSED.value:
+                    await broadcast_log(
+                        f"[WAIT] 步骤 {stop_step_id} 等待补充输入，计划已暂停；补输入后 /resume 从该步骤继续",
+                        "warning",
+                    )
+                else:
+                    await broadcast_log(f"[ERROR] 批内步骤 {stop_step_id} 失败，终止执行", "error")
                 break
 
         # 最后一个步骤可能在本轮循环末尾完成，下一轮通常会完成状态收敛；

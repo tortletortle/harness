@@ -1,4 +1,4 @@
-# EAS 2.0 Harness
+# 星舵 Helm
 
 AI 任务编排与执行系统：用户提出需求 → Designer（LLM）生成技术设计书 → 用户审批 → 生成执行计划 → Executor 按步骤调用工具执行 → 全程 SQLite 持久化 + React 仪表盘可视化。
 

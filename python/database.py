@@ -1470,6 +1470,25 @@ class Database:
             logger.exception("更新步骤上下文摘要失败: {}", e)
             raise DatabaseError(f"更新步骤上下文摘要失败: {e}") from e
 
+    def update_step_inputs(self, step_id: str, inputs: Dict[str, Any]) -> bool:
+        """覆盖 steps.inputs（当前用于用户补充 agent 步骤缺失的输入）。
+
+        只写 steps 行，不回写 plans.segments 里的计划期快照：执行期取步读的是
+        steps.inputs，segments JSON 保持设计原样，回滚与重规划仍可复现。
+        命中返回 True，step_id 不存在返回 False，SQL 失败抛 DatabaseError。
+        """
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE steps SET inputs = ? WHERE step_id = ?",
+                    (json.dumps(inputs, ensure_ascii=False), str(step_id)),
+                )
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.exception("更新步骤输入失败: {}", e)
+            raise DatabaseError(f"更新步骤输入失败: {e}") from e
+
     def add_step_event(self, step_id: str, plan_id: str, event_type: str, event_data: Dict[str, Any] = None, branch_version: int = 1) -> bool:
         """
         记录步骤事件，用于状态机回放与时间旅行。

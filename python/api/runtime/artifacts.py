@@ -27,6 +27,11 @@ async def _generate_final_report(plan, run_id: str = None) -> None:
     try:
         if state.designer is None or state.llm_client is None:
             return
+        # 入口传入的 plan 是认领执行时的快照，执行期间各步骤只更新数据库。
+        # 报告前必须重新读取，否则会把 Pending / 空 outputs 当成最终交付事实写进报告。
+        latest_plan = state.database.get_plan(str(plan.plan_id))
+        if latest_plan is not None:
+            plan = latest_plan
         results = [step for segment in plan.segments for step in segment.steps]
         summary = await state.designer.generate_summary(plan, results)
         if not summary or not str(summary).strip():
@@ -44,6 +49,23 @@ async def _generate_final_report(plan, run_id: str = None) -> None:
         logger.warning("最终交付报告生成失败（忽略）: {}", report_exc)
 
 
+def _artifact_result_layers(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """返回可能被 executor 逐层包裹的结果字典（result → output → output.output）。
+
+    普通工具结果是 {path, ...}；agent 结果是
+    {success, output: {agent_status, ...}, agent_artifacts: [...]}，executor 再把
+    整个结果塞进外层 output。只读最外层会永远登记不到 agent 产物。
+    """
+    layers: List[Dict[str, Any]] = []
+    node: Any = result
+    for _ in range(3):
+        if not isinstance(node, dict):
+            break
+        layers.append(node)
+        node = node.get("output")
+    return layers
+
+
 def _register_step_artifacts(plan_id: str, step_id: str, result: Dict[str, Any]) -> None:
     """步骤成功后把产物引用登记进 artifacts 表（仅元数据，不拷贝内容）。
 
@@ -55,14 +77,14 @@ def _register_step_artifacts(plan_id: str, step_id: str, result: Dict[str, Any])
         if store_desktop_screenshot(state, plan_id, step_id, result):
             return
         candidates: List[str] = []
-        output = result.get("output")
-        if isinstance(output, dict):
-            p = output.get("path")
+        for source in _artifact_result_layers(result):
+            p = source.get("path")
             if isinstance(p, str) and p.strip():
                 candidates.append(p.strip())
-        for ref in (result.get("agent_artifacts") or []):
-            if isinstance(ref, str) and ref.startswith("file://"):
-                candidates.append(ref[len("file://"):])
+            for bag in (source.get("agent_artifacts"), source.get("artifacts")):
+                for ref in (bag or []):
+                    if isinstance(ref, str) and ref.startswith("file://"):
+                        candidates.append(ref[len("file://"):])
         seen = set()
         for path_text in candidates:
             normalized = path_text.replace("\\", "/")

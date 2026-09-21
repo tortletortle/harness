@@ -5,6 +5,7 @@
 
 mod api;
 mod app;
+mod layout;
 mod state;
 mod theme;
 mod types;
@@ -654,7 +655,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 720.0])
             .with_min_inner_size([900.0, 600.0])
-            .with_title("EAS 2.0 桌面控制台"),
+            .with_title("星舵控制台"),
         ..Default::default()
     };
 
@@ -698,7 +699,13 @@ fn main() -> eframe::Result<()> {
                 ));
             });
 
-            Ok(Box::new(app::EasApp::new(initial_state, events_rx, cmd_tx)))
+            let mut app = app::EasApp::new(initial_state, events_rx, cmd_tx);
+            if let Some(storage) = cc.storage {
+                app.restore_layout(
+                    eframe::get_value(storage, layout::STORAGE_KEY).unwrap_or_default(),
+                );
+            }
+            Ok(Box::new(app))
         }),
     )
 }

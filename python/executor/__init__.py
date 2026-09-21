@@ -7,7 +7,7 @@ Executor - 执行器
 3. 处理错误
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import asyncio
 
 from version import __version__ as EAS_VERSION
@@ -42,6 +42,31 @@ def _is_blocked_result(result: Dict[str, Any]) -> bool:
     if result.get("blocked") is True:
         return True
     return result.get("error") in LEGACY_BLOCKED_ERROR_CODES
+
+
+def _handoff_artifact_refs(inputs: Dict[str, Any]) -> List[str]:
+    """把交接上下文里的产物引用提升为 CapabilityRequest.artifact_refs。
+
+    Runtime 会把上游步骤的实际产出写进 inputs["upstream_context"]；步骤也可以
+    显式声明 inputs["artifact_refs"]（用户补充输入时走这条）。此前
+    CapabilityRequest.artifact_refs 恒为空列表，agent 的 prompt 永远看不到任何
+    上游产物引用。这里只传引用，不据此扩大 Grant 的资源面。
+    """
+    refs: List[str] = []
+
+    def _add(value: Any) -> None:
+        if isinstance(value, str) and value.strip() and value not in refs:
+            refs.append(value.strip())
+
+    for item in (inputs.get("artifact_refs") or []):
+        _add(item)
+    context = inputs.get("upstream_context")
+    if isinstance(context, list):
+        for entry in context:
+            if isinstance(entry, dict):
+                for item in (entry.get("artifacts") or []):
+                    _add(item)
+    return refs
 
 
 class DefaultExecutor(ExecutorAI):
@@ -369,7 +394,7 @@ class DefaultExecutor(ExecutorAI):
                 }
             else:
                 logger.error("失败: {}", result.get("message") or result.get("error") or "Unknown error")
-                return {
+                failure = {
                     "success": False,
                     "output": result,
                     "check_status": self.CHECK_UNVERIFIED,
@@ -383,6 +408,12 @@ class DefaultExecutor(ExecutorAI):
                     "retry_policy": retry_policy,
                     "manual_retry_required": not retry_policy["eligible"],
                 }
+                # agent 的「需要补充输入」必须原样上抛，Runtime 才能区分
+                # 「等用户」与「真失败」，否则计划被误判 Failed 还得人工重跑。
+                if result.get("needs_input"):
+                    failure["needs_input"] = True
+                    failure["retryable"] = False
+                return failure
 
         except Exception as e:
             logger.exception("异常: {}", e)
@@ -447,7 +478,7 @@ class DefaultExecutor(ExecutorAI):
             work_item_id=str(step.step_id),
             goal=step.description,
             inputs=inputs,
-            artifact_refs=[],
+            artifact_refs=_handoff_artifact_refs(inputs),
             allowed_tools=list(inputs.get("allowed_tools") or []),
             acceptance=list(step.acceptance or []),
             grant_id=grant_id,
@@ -486,6 +517,11 @@ class DefaultExecutor(ExecutorAI):
             "agent_facts": cap_result.facts,
             "agent_artifacts": cap_result.artifacts,
         }
+        if cap_result.status == "needs_input":
+            # needs_input 是「等用户补充输入」的中间态，不是执行失败。
+            # 显式打标并禁止自动重试：重试只会拿到同样的提问，还会把计划钉成 Failed。
+            result["needs_input"] = True
+            result["retryable"] = False
         if cap_result.usage:
             result["grant_usage"] = cap_result.usage
         return result

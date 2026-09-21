@@ -115,7 +115,7 @@ workspace crates：`common`（error/traits/types）、`dispatcher`、`db`、`log
 ## API 端点索引（`/api/*` 均需 token）
 
 设计书：`POST /api/design`、`GET /api/designs`、`GET/DELETE /api/design/{id}`、`POST /api/design/{id}/approve`
-计划：`GET /api/plans`、`GET /api/plan/{id}`、`POST /api/plan/{id}/execute|pause|resume|archive|rename|rollback`、`DELETE /api/plan/{id}`、`POST .../skip-step/{step_id}`、`POST/GET .../approval/.../approve|reject`
+计划：`GET /api/plans`、`GET /api/plan/{id}`、`POST /api/plan/{id}/execute|pause|resume|archive|rename|rollback`、`DELETE /api/plan/{id}`、`POST .../skip-step/{step_id}`、`POST .../steps/{step_id}/input`（补输入后 /resume）、`POST/GET .../approval/.../approve|reject`
 运行：`GET /api/run/{id}`、`GET /api/plan/{id}/runs`、`GET /api/run/{id}/attempts`
 其他：`/api/status`、`/api/tools`、`/api/capabilities`、`/api/audit-logs`、`/api/usage`、`/api/chat`、`/api/skills`、`/api/notify/test`、`/api/config` GET/POST、`/api/restart`、WS `/ws/logs`
 详细参考：[API.md](API.md)；错误契约（改错误路径前必读）：[ERROR_HANDLING.md](ERROR_HANDLING.md)

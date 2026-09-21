@@ -1,0 +1,25 @@
+{
+  "checks_passed": 17,
+  "checks": [
+    "Initial render: five steps",
+    "Distinct layout and independent themes: focus",
+    "Distinct layout and independent themes: workbench",
+    "Distinct layout and independent themes: timeline",
+    "Density toggle",
+    "Step details follow selection",
+    "Content tabs and keyboard navigation",
+    "Command search, empty state, keyboard execution and Escape",
+    "Approval cancellation and confirmation never imply completed execution",
+    "Reject preserves blocked execution",
+    "Log level filters and output visibility",
+    "Reset restores the initial demo state",
+    "No page-level overflow; approval reachable at 1280",
+    "No page-level overflow; approval reachable at 900",
+    "No page-level overflow; approval reachable at 768",
+    "No page-level overflow; approval reachable at 390",
+    "No JavaScript errors or external network requests"
+  ],
+  "javascript_errors": [],
+  "external_requests": [],
+  "scope": "Offline HTML prototype only; native egui not tested"
+}

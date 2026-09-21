@@ -311,6 +311,71 @@ async def skip_step(plan_id: str, step_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/api/plan/{plan_id}/steps/{step_id}/input", dependencies=[Depends(require_token)])
+async def supply_step_input(plan_id: str, step_id: str, request: Optional[Dict[str, Any]] = None):
+    """把用户补充的输入写回等待中的步骤（agent 返回 needs_input 时的补充通道）。
+
+    只接受 Paused 计划 + Pending 步骤——正是 needs_input 的落库形态。内容合并进
+    steps.inputs 的 user_input 键（可同时给 artifact_refs），计划保持 Paused：
+    补输入不等于授权执行，是否继续由调用方显式 /resume 决定。
+    """
+    try:
+        body = request or {}
+        plan = state.database.get_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="执行计划不存在")
+        current_status = state.database.get_plan_status(plan_id)
+        if current_status != PlanStatus.PAUSED.value:
+            raise HTTPException(
+                status_code=409,
+                detail=f"只有等待补充输入（Paused）的计划可以提交步骤输入，当前状态: {current_status}",
+            )
+        branch_version = getattr(plan, 'current_branch', 1) or 1
+        effective_status = state.database.get_effective_step_status(plan_id, step_id, branch_version)
+        if effective_status is None:
+            raise HTTPException(status_code=404, detail="步骤不存在")
+        if effective_status != StepStatus.PENDING.value:
+            raise HTTPException(
+                status_code=409,
+                detail=f"只有等待补充输入（Pending）的步骤可以提交输入，当前状态: {effective_status}",
+            )
+        row = next(
+            (s for s in state.database.get_steps(plan_id) if str(s["step_id"]) == str(step_id)),
+            None,
+        )
+        inputs = row.get("inputs") if row else {}
+        if isinstance(inputs, str):
+            try:
+                inputs = json.loads(inputs)
+            except (ValueError, TypeError):
+                inputs = {}
+        if not isinstance(inputs, dict):
+            inputs = {}
+        inputs["user_input"] = body.get("input") if "input" in body else body
+        if isinstance(body.get("artifact_refs"), list):
+            refs = [str(item) for item in body["artifact_refs"] if isinstance(item, (str, int))]
+            if refs:
+                inputs["artifact_refs"] = refs
+        if not state.database.update_step_inputs(step_id, inputs):
+            raise HTTPException(status_code=409, detail="步骤输入写入失败（步骤未命中）")
+        supplied = inputs.get("user_input")
+        keys = sorted(str(key) for key in supplied)[:20] if isinstance(supplied, dict) else ["input"]
+        state.database.add_step_event(
+            step_id, plan_id, "input_supplied",
+            {"keys": keys, "artifact_refs": len(inputs.get("artifact_refs") or [])},
+            branch_version=branch_version,
+        )
+        await broadcast_plan_update(plan_id)
+        await broadcast_log(f"步骤 {step_id} 已收到补充输入，/resume 后从该步骤继续", "info")
+        return {"success": True, "plan_id": plan_id, "step_id": step_id,
+                "message": f"补充输入已写入；调用 /api/plan/{plan_id}/resume 继续执行"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("提交步骤输入失败: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ===== P0-a 工具级审批端点 =====
 
 @router.post("/api/plan/{plan_id}/archive", dependencies=[Depends(require_token)])

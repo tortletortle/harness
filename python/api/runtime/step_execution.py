@@ -33,7 +33,8 @@ from api.runtime.artifacts import _register_step_artifacts
 from authorization import agent_step_grant_params
 from retry_policy import automatic_retry_policy, annotate_retry_failure
 from executor.acceptance_feedback import build_acceptance_feedback as _build_acceptance_feedback
-from models import AttemptStatus, Step, StepStatus
+from domain.work_graph import normalize_dependencies
+from models import AttemptStatus, PlanStatus, Step, StepStatus
 
 from logging_config import get_logger
 
@@ -50,6 +51,122 @@ def _is_retryable_exit_code_acceptance(step: Dict[str, Any], result: Dict[str, A
     checks = acceptance.get("checks", []) if isinstance(acceptance, dict) else []
     failed = [check for check in checks if not check.get("passed")]
     return bool(failed) and all(check.get("type") == "exit_code" for check in failed)
+
+
+# 交接上下文的体积闸门：下游 prompt 只需要上游的结论与引用，不需要全量输出。
+HANDOFF_MAX_OUTPUT_CHARS = 2000
+HANDOFF_MAX_ENTRIES = 8
+
+
+def _handoff_json_object(value: Any) -> Dict[str, Any]:
+    """宽松解析步骤行里的 JSON 列（str/dict 都接受），非对象视为空。"""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except (ValueError, TypeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _handoff_text(value: Any) -> Optional[str]:
+    """把上游产出压成有界文本，避免整段输出灌进下游 prompt。"""
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    text = text.strip()
+    if not text or text in ("{}", "[]", "null", "None"):
+        return None
+    if len(text) <= HANDOFF_MAX_OUTPUT_CHARS:
+        return text
+    return text[:HANDOFF_MAX_OUTPUT_CHARS] + "…(截断)"
+
+
+def _agent_capability_for(tool_value: Any):
+    """tool → kind=agent_tool 的 Capability；普通工具/未注册返回 None。"""
+    registry = getattr(state, "capability_registry", None)
+    if registry is None:
+        return None
+    capability = registry.get(str(tool_value or "").split(":")[0])
+    if capability is None:
+        return None
+    try:
+        kind = capability.spec().kind
+    except Exception:
+        return None
+    return capability if kind == "agent_tool" else None
+
+
+def build_handoff_context(step: Dict[str, Any], rows: List[Dict[str, Any]], branch_version: int) -> List[Dict[str, Any]]:
+    """收集「本步骤直接依赖」在当前分支上的实际交接内容。
+
+    数据源是已落库的上游结果（outputs / state_snapshot / compressed_context），
+    不是计划期的 inputs 快照：上游到底产出了什么、留下哪些 facts 与产物引用，
+    下游才看得到什么。上游未成功（非 Success/Skipped）时不交接，依赖阻塞由调度器
+    负责。回滚克隆按 parent_step_id 别名解析，与 checkpoint_frontier 同一套血缘规则。
+    """
+    deps = normalize_dependencies(step.get("depends_on"))
+    if not deps:
+        return []
+    effective: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        if row.get("is_obsolete") or int(row.get("branch_version") or 1) != int(branch_version):
+            continue
+        row_id = str(row.get("step_id"))
+        if not row_id or row_id == "None":
+            continue
+        effective[row_id] = row
+        parent = row.get("parent_step_id")
+        if parent and str(parent) not in effective:
+            effective[str(parent)] = row
+    context: List[Dict[str, Any]] = []
+    for dep in deps[:HANDOFF_MAX_ENTRIES]:
+        row = effective.get(str(dep))
+        if row is None or str(row.get("status")) not in ("Success", "Skipped"):
+            continue
+        outputs = _handoff_json_object(row.get("outputs"))
+        snapshot = _handoff_json_object(row.get("state_snapshot"))
+        inner = _handoff_json_object(snapshot.get("output"))
+        # agent 结果被 executor 包了一层：真正的模型输出在 output.output。
+        agent_output = inner.get("output") if isinstance(inner.get("output"), dict) else {}
+        entry: Dict[str, Any] = {
+            "step_id": str(row.get("step_id")),
+            "tool": row.get("tool"),
+            "description": str(row.get("description") or "")[:200],
+            "status": str(row.get("status")),
+        }
+        summary = (
+            _handoff_text(row.get("compressed_context"))
+            or _handoff_text(outputs.get("value"))
+            or _handoff_text(outputs or agent_output or inner)
+        )
+        if summary:
+            entry["summary"] = summary
+        facts = snapshot.get("agent_facts") or agent_output.get("facts") or []
+        facts = [item for item in facts if isinstance(item, dict)][:20] if isinstance(facts, list) else []
+        if facts:
+            entry["facts"] = facts
+        artifacts = snapshot.get("agent_artifacts") or agent_output.get("artifacts") or []
+        refs = (
+            [item.strip() for item in artifacts if isinstance(item, str) and item.strip()]
+            if isinstance(artifacts, list) else []
+        )
+        path = agent_output.get("path") or outputs.get("path")
+        if isinstance(path, str) and path.strip():
+            candidate = path.strip()
+            if not candidate.startswith(("file://", "http://", "https://")):
+                candidate = "file://" + candidate.replace("\\", "/")
+            if candidate not in refs:
+                refs.append(candidate)
+        if refs:
+            entry["artifacts"] = refs
+        error = snapshot.get("error") or outputs.get("error")
+        if error:
+            entry["error"] = str(error)[:500]
+        context.append(entry)
+    return context
 
 
 
@@ -130,12 +247,26 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
     step_id = str(step.get("step_id"))
     plan_id = str(plan.plan_id)
 
+    inputs = json.loads(step["inputs"]) if isinstance(step.get("inputs"), str) else (step.get("inputs") or {})
+    # ===== 智能体交接上下文 =====
+    # 只给 kind=agent_tool 的步骤注入：普通工具的 inputs 有各自契约，不能顺手塞键。
+    # 注入内容只来自当前分支上直接依赖步骤的落库结果（见 build_handoff_context）。
+    if isinstance(inputs, dict) and _agent_capability_for(step.get("tool")) is not None:
+        handoff_branch = int(step.get("branch_version", 1) or 1)
+        handoff = build_handoff_context(
+            step,
+            state.database.get_active_steps_snapshot(plan_id, handoff_branch),
+            handoff_branch,
+        )
+        if handoff:
+            inputs = {**inputs, "upstream_context": handoff}
+
     step_model = Step(
         step_id=UUID(step["step_id"]),
         order=step.get("step_order", step.get("order", 0)),
         description=step.get("description", ""),
         tool=step.get("tool", ""),
-        inputs=json.loads(step["inputs"]) if isinstance(step.get("inputs"), str) else step.get("inputs", {}),
+        inputs=inputs,
         check_criteria=step.get("check_criteria", ""),
         acceptance=json.loads(step["acceptance_json"]) if isinstance(step.get("acceptance_json"), str) and step.get("acceptance_json") else (step.get("acceptance") or []),
         outputs=json.loads(step["outputs"]) if isinstance(step.get("outputs"), str) and step.get("outputs") else step.get("outputs"),
@@ -153,6 +284,20 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
 
     if not state.database.add_step_event(step_id, plan_id, "running", branch_version=step_model.branch_version):
         logger.warning("step_event running 写入失败: {}", step_id)
+
+    upstream_context = (step_model.inputs or {}).get("upstream_context")
+    if isinstance(upstream_context, list) and upstream_context:
+        # 交接本身要可审计：回放时能看出这一步实际收到了哪些上游步骤与几个产物引用。
+        state.database.add_step_event(
+            step_id, plan_id, "handoff_context",
+            {
+                "from_steps": [str(e.get("step_id")) for e in upstream_context if isinstance(e, dict)],
+                "artifact_refs": sum(
+                    len(e.get("artifacts") or []) for e in upstream_context if isinstance(e, dict)
+                ),
+            },
+            branch_version=step_model.branch_version,
+        )
 
     # ===== P0-a 工具级审批闸门 =====
     # 高风险工具在执行前挂起等待人工批准（Cline 式 asyncio.Event 挂起，非轮询）。
@@ -358,14 +503,17 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
         compressed = await _compress_step_context(
             plan_id, step_id, result, branch_version=step_model.branch_version
         )
-        state.database.update_step_state_machine(
+        if not state.database.update_step_state_machine(
             step_id=str(step_id),
             status=status,
             outputs=outputs,
             duration_ms=duration_ms,
             compressed_context=compressed,
             state_snapshot=result,
-        )
+        ):
+            # 成功结果写不进去（步骤行未命中/被并发删除）必须可见，否则下游交接
+            # 只能读到空 outputs，故障点在别处，极难定位。
+            logger.warning("步骤 {} 成功状态写入未命中数据行（outputs/交接上下文会缺失）", step_id)
         event_data = {"duration_ms": duration_ms}
         if acceptance_result is not None:
             event_data.update({
@@ -381,8 +529,14 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
         result["duration_ms"] = duration_ms
         return result
 
-    # 仅记录 failed 事件，不写入 Failed 状态，留给调用方在最终重试耗尽后统一写入
-    failure_reason = error or check_status or "unknown"
+    # 仅记录终态事件，不写入 Failed 状态，留给调用方在最终重试耗尽后统一写入。
+    # needs_input 是「等用户补输入」而不是失败，事件类型必须区分开（审计与回放靠它）。
+    if result.get("needs_input"):
+        event_type = "needs_input"
+        failure_reason = "needs_input"
+    else:
+        event_type = "failed"
+        failure_reason = error or check_status or "unknown"
     event_data = {"reason": failure_reason, "blocked": blocked, "duration_ms": duration_ms}
     if acceptance_result is not None:
         event_data.update({
@@ -391,10 +545,10 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
             "reward": result.get("reward"),
         })
     if not state.database.add_step_event(
-        step_id, plan_id, "failed", event_data,
+        step_id, plan_id, event_type, event_data,
         branch_version=step_model.branch_version,
     ):
-        logger.warning("step_event failed 写入失败: {}", step_id)
+        logger.warning("step_event {} 写入失败: {}", event_type, step_id)
     result["duration_ms"] = duration_ms
     return result
 
@@ -496,7 +650,7 @@ async def _execute_step_to_completion(
                 attempt_id = None
             raise
         result = annotate_retry_failure(result, retry_policy)
-        if not result.get("success") and not retry_policy["eligible"]:
+        if not result.get("success") and not result.get("needs_input") and not retry_policy["eligible"]:
             state.database.add_step_event(
                 step_id, str(plan.plan_id), "retry_suppressed",
                 {"policy": retry_policy, "manual_retry_required": True}, branch_version=branch_version,
@@ -521,6 +675,47 @@ async def _execute_step_to_completion(
             f"Step {step_id} attempt {attempt} result: success={result.get('success')} "
             f"check={result.get('check_status')} blocked={result.get('blocked')}"
         )
+        if result.get("needs_input"):
+            # Agent 明确回答「缺输入」：既不是完成也不是失败。步骤回到 Pending，
+            # 计划置 Paused 并记下恢复断点；用户 POST
+            # /api/plan/{plan_id}/steps/{step_id}/input 补输入后 /resume，
+            # 调度器会从同一步继续，而不是把整个计划钉成 Failed 要求重跑。
+            needs_output = _handoff_json_object(result.get("output"))
+            question = (
+                _handoff_text(needs_output.get("output"))
+                or _handoff_text(needs_output)
+                or str(result.get("message") or "")
+                or "agent 需要补充输入"
+            )
+            if not state.database.update_step_state_machine(
+                step_id=step_id,
+                status=StepStatus.PENDING.value,
+                outputs={"needs_input": True, "question": question},
+                duration_ms=result.get("duration_ms"),
+                state_snapshot=result,
+            ):
+                logger.warning("needs_input 步骤状态写回未命中: {}", step_id)
+            state.database.add_step_event(
+                step_id, str(plan.plan_id), "needs_input",
+                {"question": question[:1000], "duration_ms": result.get("duration_ms")},
+                branch_version=branch_version,
+            )
+            _require_write(
+                state.database.update_plan_state_machine(
+                    str(plan.plan_id), PlanStatus.PAUSED.value,
+                    resume_from_step_id=step_id,
+                    current_branch=branch_version,
+                ),
+                f"计划 {plan.plan_id} 状态 → Paused（步骤 {step_id} 等待补充输入）",
+            )
+            await broadcast_plan_update(str(plan.plan_id))
+            await broadcast_log(
+                f"[NEEDS_INPUT] 步骤 {step_id} 需要补充输入：{question[:300]}；"
+                f"提交 /api/plan/{plan.plan_id}/steps/{step_id}/input 后 /resume 继续",
+                "warning",
+            )
+            return "stop", step_id
+
         if result.get("blocked"):
             error = result.get("error", "blocked")
             failure_reason = error
