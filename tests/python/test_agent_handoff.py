@@ -449,6 +449,57 @@ def test_supplied_input_is_persisted_and_step_stays_resumable(tmp_path, monkeypa
         reset_token_cache()
 
 
+def test_coding_agent_needs_input_is_not_a_failure(tmp_path, monkeypatch):
+    """多轮 coding_agent 同样要保留 needs_input，不能退化成「输出缺少 content」失败。"""
+    from authorization import GrantLimits
+    from capabilities import CapabilityRegistry
+    from coding_agent import CodingAgentTool
+    from llm_client import DeterministicProvider, LLMClient
+    from tools import get_registry
+
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    original = "def greet():\n    return 1\n"
+    (tmp_path / "src" / "app.py").write_text(original, encoding="utf-8")
+    monkeypatch.setenv("EAS_WORKSPACE_ROOT", str(tmp_path))
+
+    payload = json.dumps(
+        {"status": "needs_input", "output": {"question": "要改哪个函数？"},
+         "artifacts": [], "facts": [], "error": None},
+        ensure_ascii=False,
+    )
+    llm = LLMClient()
+    llm.register_provider(DeterministicProvider(payload))
+    manager = AuthorizationManager(workspace_root=tmp_path)
+    registry = CapabilityRegistry()
+    registry.register(CodingAgentTool(
+        llm_client=llm, authorization_manager=manager, tool_registry=get_registry(),
+        provider_name="deterministic", model="test-model", database=None,
+    ))
+    executor = DefaultExecutor(
+        llm_client=llm,
+        model_config={"primary": {"provider": "deterministic", "model": "test-model"}},
+        tool_registry=get_registry(), authorization_manager=manager, capability_registry=registry,
+    )
+    step = Step(
+        step_id=uuid4(), order=1, description="修改 greet 返回值", tool="coding_agent",
+        inputs={"path": "src/app.py", "instruction": "改返回值", "allowed_tools": ["text_editor"]},
+        check_criteria="", acceptance=[],
+    )
+    grant = manager.issue_for_step(
+        "plan-needs", step, extra_allowed_tools=["text_editor"],
+        limits=GrantLimits(max_tool_calls=3, max_model_calls=1),
+    )
+    result = asyncio.run(executor.execute_step(step, grant_id=grant.grant_id, plan_id="plan-needs"))
+
+    assert result.get("needs_input") is True, result
+    assert result["success"] is False
+    assert result["retryable"] is False
+    assert result["output"]["output"]["agent_status"] == "needs_input"
+    assert "要改哪个函数" in json.dumps(result["output"]["output"], ensure_ascii=False)
+    # 缺信息阶段绝不写文件
+    assert (tmp_path / "src" / "app.py").read_text(encoding="utf-8") == original
+
+
 def test_final_report_reads_authoritative_database_results(tmp_path, monkeypatch):
     """报告必须用数据库最新结果，而不是认领执行时的计划快照。"""
     from api import server as server_mod

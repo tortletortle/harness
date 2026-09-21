@@ -481,6 +481,28 @@ class CodingAgentTool(BaseAgentTool):
                         facts=facts,
                     )
 
+                # 模型显式回答 needs_input 时不能按「输出缺少 content」判成失败：
+                # 它是等用户补输入的中间态，交给 Runtime 走 Paused + 补充通道，
+                # 补完 /resume 仍从同一步继续（与单轮 agent 同一契约）。
+                if str(parsed.get("status") or "").strip() == "needs_input":
+                    needs_output = parsed.get("output") if isinstance(parsed.get("output"), dict) else {}
+                    question = (
+                        parsed.get("error")
+                        or needs_output.get("question")
+                        or needs_output.get("missing")
+                        or ""
+                    )
+                    question = str(question).strip()
+                    _turn_outcome(turn_row, "needs_input", {"question": question[:500]})
+                    _finish_session("needs_input", turns_used)
+                    facts.append({"key": "coding_agent_turns_used", "value": turns_used})
+                    return CapabilityResult(
+                        status="needs_input",
+                        output=needs_output,
+                        error=question or None,
+                        facts=facts,
+                    )
+
                 output = parsed.get("output")
                 if isinstance(output, dict):
                     proposed_path = output.get("path")
