@@ -71,11 +71,38 @@ def pytest_addoption(parser):
                      help="Explicitly allow real external model HTTP calls (may incur cost).")
 
 
+def pytest_configure(config):
+    if config.getoption("--live-models"):
+        return
+    keys = [k for k in os.environ if k.startswith("EAS_LLM_API_KEY_") or k in
+            {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY"}]
+    config._offline_environment = {k: os.environ.pop(k) for k in keys}
+    config._offline_environment["DOTENV_LOADED"] = os.environ.get("DOTENV_LOADED")
+    os.environ["DOTENV_LOADED"] = "1"  # before test collection imports api.server
+
+
+def pytest_unconfigure(config):
+    for key, value in getattr(config, "_offline_environment", {}).items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
 @pytest.fixture(autouse=True)
 def no_unintended_live_models(request, monkeypatch):
     """Offline-by-default guard; mocked transports and local API tests still work."""
     if request.config.getoption("--live-models"):
         return
+    from api import secret_store
+    original_keys = secret_store.load_api_keys
+
+    def guarded_keys(config_dir, *args, **kwargs):
+        if Path(config_dir).resolve() == (_REPO_ROOT / "config").resolve():
+            raise AssertionError("Offline pytest must not load real account credentials")
+        return original_keys(config_dir, *args, **kwargs)
+
+    monkeypatch.setattr(secret_store, "load_api_keys", guarded_keys)
     import httpx
     client_class = httpx._client.AsyncClient  # public alias may already be replaced by a test fake
     original = client_class.send

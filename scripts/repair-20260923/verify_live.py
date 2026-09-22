@@ -64,7 +64,7 @@ def inventory():
     data={'roles':CONFIG.get('models',{}),'providers':[{'name':p,'host':urlsplit(u).hostname,'credential_present':bool(CONFIG.get('api_keys',{}).get(p))} for p,u in CONFIG.get('base_urls',{}).items()]}
     save('config-summary.json',data); print(clean(json.dumps(data,ensure_ascii=False,indent=2)),flush=True)
     return data
-async def probe():
+async def probe(prompt='Reply with exactly AUDIT_OK. Do not call tools.', expected='AUDIT_OK'):
     from llm_client import OpenAICompatibleProvider, Message
     results=[]; seen=set()
     profiles=[(role+'.'+tier,spec) for role,group in CONFIG.get('models',{}).items() if role in ('designer','executor','codegen','knowledge','toolmanager','stepfun_chat') for tier,spec in group.items() if isinstance(spec,dict)]
@@ -78,8 +78,8 @@ async def probe():
         else:
             client=OpenAICompatibleProvider(provider,key,CONFIG['base_urls'][provider]); t=time.monotonic()
             try:
-                response=await asyncio.wait_for(client.chat([Message(role='user',content='Reply with exactly AUDIT_OK. Do not call tools.')],model=model,temperature=0,max_tokens=64),timeout=75)
-                row.update(passed=response.content.strip()=='AUDIT_OK',content=response.content,usage=response.usage,finish_reason=response.finish_reason)
+                response=await asyncio.wait_for(client.chat([Message(role='user',content=prompt)],model=model,temperature=0,max_tokens=64),timeout=75)
+                row.update(passed=response.content.strip()==expected,content=response.content,usage=response.usage,finish_reason=response.finish_reason)
             except Exception as exc: row.update(passed=False,error_type=type(exc).__name__,error=clean(exc))
             row['elapsed_s']=round(time.monotonic()-t,3)
         results.append(row); save('probe.json',results); print(clean(json.dumps(row,ensure_ascii=False)),flush=True)
@@ -298,6 +298,7 @@ if __name__=='__main__':
     try:
         inventory()
         if MODE=='probe': result=asyncio.run(probe())
+        elif MODE=='normal-probe': result=asyncio.run(probe('What is two plus two? Please answer with the number only.', '4'))
         elif MODE=='live-b': result=live_b()
         elif MODE=='live-b-fallback':
             import copy

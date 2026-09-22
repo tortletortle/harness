@@ -1,5 +1,6 @@
 """Hermetic child server for lifecycle tests with pre-seeded plans (not live LLM tests)."""
 import copy
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -9,7 +10,16 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "python"))
+os.environ["DOTENV_LOADED"] = "1"  # prevent server import from reading the real .env
+for key in list(os.environ):
+    if key.startswith("EAS_LLM_API_KEY_") or key in {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY"}:
+        os.environ.pop(key, None)
 from api import server
+
+def forbid_secret_store(*args, **kwargs):
+    raise AssertionError("Offline child must not read the account credential store")
+
+server.secret_store.load_api_keys = forbid_secret_store
 
 # Do not call the production loader: no local overrides, encrypted store, environment
 # provider keys, MCP subprocesses, or external notification endpoints are consulted.
