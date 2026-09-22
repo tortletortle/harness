@@ -99,6 +99,35 @@ def _agent_capability_for(tool_value: Any):
     return capability if kind == "agent_tool" else None
 
 
+def _handoff_nested_layers(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """把 state_snapshot 沿 output 键逐层展开，供 facts / artifacts 收集。
+
+    真实运行时 state_snapshot 是 execute_step 的返回值：agent 结果被包了一层
+    output（capability 结果 wrapper），wrapper 内又有一层 output（模型真实输出）；
+    facts / artifacts 落在 wrapper 层，只查顶层会丢。逐层展开后从任一层的
+    agent_facts/facts 与 agent_artifacts/artifacts 里收集，兼容真实链路与
+    直接构造的测试形状。上限 4 层，与登记器的逐层展开同一思路。
+    """
+    layers: List[Dict[str, Any]] = []
+    node: Any = snapshot
+    for _ in range(4):
+        if not isinstance(node, dict):
+            break
+        layers.append(node)
+        node = node.get("output")
+    return layers
+
+
+def _handoff_list_layer(layers: List[Dict[str, Any]], keys: tuple) -> Optional[List[Any]]:
+    """从展开的层里取第一个非空列表字段（agent_facts/facts、agent_artifacts/artifacts）。"""
+    for layer in layers:
+        for key in keys:
+            bag = layer.get(key)
+            if isinstance(bag, list) and bag:
+                return bag
+    return None
+
+
 def build_handoff_context(step: Dict[str, Any], rows: List[Dict[str, Any]], branch_version: int) -> List[Dict[str, Any]]:
     """收集「本步骤直接依赖」在当前分支上的实际交接内容。
 
@@ -137,21 +166,26 @@ def build_handoff_context(step: Dict[str, Any], rows: List[Dict[str, Any]], bran
             "description": str(row.get("description") or "")[:200],
             "status": str(row.get("status")),
         }
+        layers = _handoff_nested_layers(snapshot)
+        wrapper_out = outputs.get("output") if isinstance(outputs.get("output"), dict) else None
         summary = (
             _handoff_text(row.get("compressed_context"))
             or _handoff_text(outputs.get("value"))
-            or _handoff_text(outputs or agent_output or inner)
+            or _handoff_text(wrapper_out)
+            or _handoff_text(outputs)
+            or _handoff_text(agent_output)
+            or _handoff_text(inner)
         )
         if summary:
             entry["summary"] = summary
-        facts = snapshot.get("agent_facts") or agent_output.get("facts") or []
-        facts = [item for item in facts if isinstance(item, dict)][:20] if isinstance(facts, list) else []
+        fact_bag = _handoff_list_layer(layers, ("agent_facts", "facts"))
+        facts = [item for item in fact_bag if isinstance(item, dict)][:20] if fact_bag else []
         if facts:
             entry["facts"] = facts
-        artifacts = snapshot.get("agent_artifacts") or agent_output.get("artifacts") or []
+        artifact_bag = _handoff_list_layer(layers, ("agent_artifacts", "artifacts"))
         refs = (
-            [item.strip() for item in artifacts if isinstance(item, str) and item.strip()]
-            if isinstance(artifacts, list) else []
+            [item.strip() for item in artifact_bag if isinstance(item, str) and item.strip()][:20]
+            if artifact_bag else []
         )
         path = agent_output.get("path") or outputs.get("path")
         if isinstance(path, str) and path.strip():

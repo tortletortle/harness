@@ -1,6 +1,6 @@
 # EAS 2.0 项目状态
 
-> 本文记录当前实现状态（2026-09-17）。历史测试报告以 archive/ 中的日期版本为准。
+> 本文记录当前实现状态（2026-09-21）。历史测试报告以 archive/ 中的日期版本为准。
 
 ## 一句话现状
 
@@ -78,6 +78,15 @@ EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求
 - 新增 `POST /api/config/key`，旧配置接口提交 `api_keys` 仍明确拒绝；配置读取、上游探测和服务启动均使用相同的环境变量优先级。
 - 非 Windows 平台不写明文降级，保存明确失败并继续支持环境变量；加密文件损坏只显示未配置。
 - 验证：Python 离线回归 **1120 passed / 9 skipped / 2 deselected**；前端 **87 passed / 15 files**；TypeScript 与生产构建通过。
+
+## 智能体任务交接修复（2026-09-21）
+
+- 交接内容：`api/runtime/step_execution.py` 新增 `build_handoff_context()`，按 `depends_on` 取当前分支上直接依赖步骤的落库结果（`compressed_context` → `outputs` → `state_snapshot`，含 `agent_facts`、`file://` 产物与 error），注入 `kind=agent_tool` 步骤的 `inputs["upstream_context"]`；`executor._run_agent_capability` 的 `CapabilityRequest.artifact_refs` 由恒空改为携带这些引用。只传引用、不扩大 Grant 资源面；交接落 `step_event: handoff_context`。
+- 产物登记：`api/runtime/artifacts.py` 新增 `_artifact_result_layers()`，按 `result → output → output.output` 逐层收 `path`/`agent_artifacts`/`artifacts`，修复 agent 产物藏在嵌套层导致登记恒为 0 条。
+- `needs_input` 语义：agent 回答「缺输入」不再判 Failed、不再自动重试——步骤回 `Pending`、计划转 `Paused` 并写 `resume_from_step_id`、事件记 `needs_input`；新增补输入端点 `POST /api/plan/{id}/steps/{step_id}/input`（配 `database.update_step_inputs()`，仅 Paused + Pending 可写，提交输入不自动启动执行），`/resume` 从同一步继续；`coding_agent` 多轮路径同样保留 `needs_input`；批内停止日志区分 `[WAIT]` 与 `[ERROR]`。
+- 最终交付报告：`_generate_final_report` 生成前重读 `database.get_plan()`，不再使用认领执行时的计划快照（此前报告可能写 Pending / 空 outputs）；成功状态写入的返回值改为检查并告警。
+- 验证：新增 `tests/python/test_agent_handoff.py` 14 用例全过；同一份测试在修复前提交 `6383f02` 上为 10 failed / 3 passed（通过的 3 条是防回归护栏），coding_agent 用例在其对应改动缺失时单独失败。全量 `tests/python`：**1182 passed / 10 skipped / 2 errors**（两条 error 是 `test_exec_e2e.py` fixture 既有问题，在未修改提交上同样复现）；相关回归 198 passed / 1 skipped，coding_agent 套件 27 passed / 1 skipped。证据 `out/handoff-fix-20260921/VERIFICATION.md`，契约见 `docs/API.md`「智能体任务交接（handoff）」。
+- 未做：未重启后台、未跑真实模型端到端、前端尚无 needs_input 提问与补输入表单（仅 WS 日志与新端点）、未改 `data/eas.db`、未执行历史计划。
 
 ## 已知短板
 

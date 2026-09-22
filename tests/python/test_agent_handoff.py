@@ -561,3 +561,84 @@ def test_missing_plan_does_not_break_report(tmp_path, monkeypatch):
     asyncio.run(_generate_final_report(plan, None))
     assert seen["plan_id"] == str(plan.plan_id)
 
+
+def test_executor_wrapped_snapshot_keeps_facts_and_artifacts(tmp_path):
+    """真实链路：state_snapshot = execute_step 返回（output 包裹 capability 结果），
+    facts/artifacts 落在 wrapper 层而非顶层——交接不得因此丢失。"""
+    from api.runtime.step_execution import build_handoff_context
+
+    db = Database(str(tmp_path / "wrapped.db"))
+    plan, _, ids = _seed_plan(db, [
+        ("上游编码", [], "coding_agent"),
+        ("下游审查", ["上游编码"], "review_agent"),
+    ])
+    report = tmp_path / "out.py"
+    report.write_text("def f(): return 1\n", encoding="utf-8")
+    artifact = f"file://{report.as_posix()}"
+    model_output = {"agent_status": "completed", "path": str(report), "turns": 2}
+    wrapper = {
+        "success": True,
+        "output": model_output,
+        "message": "agent coding_agent -> completed",
+        "error": None,
+        "blocked": False,
+        "agent_facts": [{"key": "coding_agent_turns_used", "value": 2}],
+        "agent_artifacts": [artifact],
+    }
+    db.update_step_state_machine(
+        step_id=ids["上游编码"], status="Success",
+        outputs={**wrapper, "check_status": "unverified"},
+        state_snapshot={"success": True, "output": wrapper, "check_status": "unverified",
+                        "error": None, "blocked": False},
+    )
+    db.update_step_state_machine(step_id=ids["下游审查"], status="Running")
+
+    rows = db.get_active_steps_snapshot(str(plan.plan_id), 1)
+    downstream = next(r for r in rows if str(r["step_id"]) == ids["下游审查"])
+    context = build_handoff_context(downstream, rows, 1)
+
+    assert [e["step_id"] for e in context] == [ids["上游编码"]]
+    entry = context[0]
+    assert entry["facts"] == [{"key": "coding_agent_turns_used", "value": 2}]
+    assert entry["artifacts"] == [artifact]
+    assert "agent_facts" not in entry.get("summary", "")
+    assert "agent_artifacts" not in entry.get("summary", "")
+
+
+def test_handoff_summary_prefers_model_output_over_wrapper(tmp_path):
+    """agent 结果被包两层 output 时，摘要取内层模型输出，而非整包 JSON。"""
+    from api.runtime.step_execution import build_handoff_context
+
+    db = Database(str(tmp_path / "summary.db"))
+    plan, _, ids = _seed_plan(db, [
+        ("上游审查", [], "review_agent"),
+        ("下游", ["上游审查"], "review_agent"),
+    ])
+    db.update_step_state_machine(
+        step_id=ids["上游审查"], status="Success",
+        outputs={
+            "success": True,
+            "output": {"agent_status": "completed", "结论": "改用参数化查询"},
+            "agent_facts": [],
+            "agent_artifacts": [],
+            "error": None,
+            "check_status": "unverified",
+        },
+        state_snapshot={
+            "success": True,
+            "output": {
+                "success": True,
+                "output": {"agent_status": "completed", "结论": "改用参数化查询"},
+                "agent_facts": [],
+                "agent_artifacts": [],
+            },
+            "check_status": "unverified",
+        },
+    )
+    db.update_step_state_machine(step_id=ids["下游"], status="Running")
+    rows = db.get_active_steps_snapshot(str(plan.plan_id), 1)
+    downstream = next(r for r in rows if str(r["step_id"]) == ids["下游"])
+    entry = build_handoff_context(downstream, rows, 1)[0]
+    assert "改用参数化查询" in entry["summary"]
+    assert "agent_facts" not in entry["summary"]
+
