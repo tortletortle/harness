@@ -347,6 +347,18 @@ class Database:
             logger.exception("登记产物失败: {}", e)
             raise DatabaseError(f"登记产物失败: {e}") from e
 
+    def update_artifact_metadata(self, artifact_id: str, metadata: Dict[str, Any]) -> bool:
+        """Update observation/job metadata without replacing artifact identity or content."""
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                result = conn.execute(
+                    "UPDATE artifacts SET metadata_json = ? WHERE artifact_id = ?",
+                    (json.dumps(metadata, ensure_ascii=False), str(artifact_id)),
+                )
+                return result.rowcount > 0
+        except Exception as exc:
+            raise DatabaseError(f"更新产物元数据失败: {exc}") from exc
+
     def get_artifact(self, artifact_id: str) -> Optional[Dict[str, Any]]:
         try:
             with closing(self._get_connection()) as conn:

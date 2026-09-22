@@ -429,15 +429,27 @@ async def lifespan(app: FastAPI):
         logger.exception("启动失败: {}", e)
         raise
 
-    yield
-
-    # 关闭时清理：停掉 MCP 客户端
-    for _client in getattr(state, 'mcp_clients', []) or []:
-        try:
-            await _client.stop()
-        except Exception:
-            pass
-    logger.info("EAS 2.0 API 服务已停止")
+    from api.runtime.artifacts import recover_report_jobs
+    recover_report_jobs()
+    try:
+        yield
+    finally:
+        tasks = [t for t in state.execution_tasks if not t.done()]
+        if tasks:
+            grace = float(state.config.get("reports", {}).get("shutdown_grace_seconds", 15))
+            _, pending = await asyncio.wait(tasks, timeout=max(0, grace))
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        state.execution_tasks.clear()
+        # Models/tools have stopped using MCP before subprocess pipes are closed.
+        for _client in getattr(state, 'mcp_clients', []) or []:
+            try:
+                await _client.stop()
+            except Exception as exc:
+                logger.warning("MCP 关闭失败: {}", type(exc).__name__)
+        state.mcp_clients = []
+        logger.info("EAS 2.0 API 服务已停止")
 
 
 # ===== FastAPI App =====
@@ -509,6 +521,21 @@ async def _database_error_handler(request, exc):
 
 @app.exception_handler(GenerationError)
 async def _generation_error_handler(request, exc):
+    from llm_client import LLMRequestError
+    cause = exc
+    while cause is not None:
+        if isinstance(cause, LLMRequestError):
+            status = 429 if cause.status_code == 429 else 503 if cause.retryable else 502
+            headers = {}
+            if cause.retryable and cause.retry_after is not None:
+                import math
+                headers["Retry-After"] = str(max(1, math.ceil(cause.retry_after)))
+            return JSONResponse(status_code=status, headers=headers, content={
+                "detail": "模型服务暂时不可用，请稍后重试" if cause.retryable else "模型调用被上游拒绝，请检查模型配置与授权",
+                "code": "llm_rate_limited" if status == 429 else "generation_failed",
+                "retryable": cause.retryable, "upstream_status": cause.status_code,
+            })
+        cause = cause.__cause__
     return JSONResponse(status_code=502, content={"detail": str(exc), "code": "generation_failed"})
 
 # ===== 执行运行时已拆分到 python/api/runtime/ =====

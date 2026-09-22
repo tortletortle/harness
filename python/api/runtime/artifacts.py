@@ -19,34 +19,108 @@ from logging_config import get_logger
 logger = get_logger(__name__)
 
 
-async def _generate_final_report(plan, run_id: str = None) -> None:
-    """计划 Completed 后生成最终交付报告（Designer LLM），落 artifacts 表。
+def prepare_final_report(plan, run_id=None, *, database=None, workspace=None):
+    """Durable, per-Run snapshot; optional reports never own execution reservations."""
+    from tools.workspace import resolve_workspace_root
+    from uuid import uuid4
+    db = database or state.database
+    job_id = f"report-job-{run_id or uuid4()}"
+    existing = db.get_artifact(job_id)
+    if existing:
+        return existing
+    metadata = {"status": "pending", "attempts": 0,
+                "snapshot": plan.model_dump(mode="json"),
+                "workspace": str(workspace or resolve_workspace_root())}
+    if not db.create_artifact(job_id, "delivery_report_job", f"job://{job_id}",
+                              plan_id=str(plan.plan_id), run_id=run_id, metadata=metadata):
+        raise RuntimeError("报告任务登记失败")
+    return db.get_artifact(job_id)
 
-    fail-open：Designer 缺失或 LLM 失败只记日志，绝不影响收尾状态。
-    """
+
+async def _run_report_job(job, database, designer, timeout=180):
+    import asyncio
+    from models import ExecutionPlan
+    from tools.workspace import set_workspace_override, reset_workspace_override
+    metadata = dict(job["metadata"])
+    if metadata.get("status") == "completed":
+        return
+    artifact_id = job["artifact_id"].replace("report-job-", "report-", 1)
+    token = set_workspace_override(metadata["workspace"])
+    from utils import usage_tracker
+    usage_token = usage_tracker._context.set({"plan_id": job.get("plan_id"), "phase": "report"})
+    def persist(status, **extra):
+        metadata.update(status=status, updated_at=datetime.now().isoformat(), **extra)
+        if not database.update_artifact_metadata(job["artifact_id"], metadata):
+            raise RuntimeError("报告任务状态写入失败")
+    try:
+        # A crash between content commit and job commit must not duplicate the report.
+        if database.get_artifact(artifact_id):
+            persist("completed", report_artifact_id=artifact_id)
+            return
+        persist("running", attempts=metadata.get("attempts", 0) + 1, error=None)
+        plan = ExecutionPlan(**metadata["snapshot"])
+        results = [step for segment in plan.segments for step in segment.steps]
+        summary = await asyncio.wait_for(designer.generate_summary(plan, results), timeout=timeout)
+        if not summary or not str(summary).strip():
+            raise ValueError("模型返回空交付报告")
+        database.store_artifact_content(
+            artifact_id, str(summary).encode("utf-8"), plan_id=str(plan.plan_id),
+            run_id=job.get("run_id"), kind="delivery_report",
+            metadata={"source": "final_report", "plan_status": "Completed"},
+        )
+        persist("completed", report_artifact_id=artifact_id)
+        await broadcast_log(f"[REPORT] 最终交付报告已生成: {artifact_id}", "success")
+    except asyncio.CancelledError:
+        persist("interrupted", error="报告任务在服务关停时取消，将在下次启动恢复")
+        raise
+    except Exception as exc:
+        # Persist a bounded diagnostic, not a credential-bearing upstream body.
+        persist("failed", error=f"报告生成失败: {type(exc).__name__}")
+        logger.warning("最终交付报告生成失败: {} ({})", job["artifact_id"], type(exc).__name__)
+    finally:
+        usage_tracker._context.reset(usage_token)
+        reset_workspace_override(token)
+
+
+async def _generate_final_report(plan, run_id=None, *, refresh=True):
+    """Fail-open report generation after mandatory Run/ownership finalization."""
     try:
         if state.designer is None or state.llm_client is None:
             return
-        # 入口传入的 plan 是认领执行时的快照，执行期间各步骤只更新数据库。
-        # 报告前必须重新读取，否则会把 Pending / 空 outputs 当成最终交付事实写进报告。
-        latest_plan = state.database.get_plan(str(plan.plan_id))
-        if latest_plan is not None:
-            plan = latest_plan
-        results = [step for segment in plan.segments for step in segment.steps]
-        summary = await state.designer.generate_summary(plan, results)
-        if not summary or not str(summary).strip():
-            return
-        record = state.database.store_artifact_content(
-            artifact_id=f"report-{str(plan.plan_id)[:8]}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
-            content=str(summary).encode("utf-8"),
-            plan_id=str(plan.plan_id),
-            run_id=run_id,
-            kind="delivery_report",
-            metadata={"source": "final_report", "plan_status": "Completed"},
-        )
-        await broadcast_log(f"[REPORT] 最终交付报告已生成: {record['artifact_id']}", "success")
-    except Exception as report_exc:
-        logger.warning("最终交付报告生成失败（忽略）: {}", report_exc)
+        db, designer = state.database, state.designer
+        if refresh:
+            plan = db.get_plan(str(plan.plan_id)) or plan
+        job = prepare_final_report(plan, run_id, database=db)
+        timeout = float(state.config.get("reports", {}).get("timeout_seconds", 180))
+        await _run_report_job(job, db, designer, timeout=timeout)
+    except Exception as exc:
+        logger.warning("最终交付报告不可用: {}", type(exc).__name__)
+
+
+def recover_report_jobs():
+    """Restart interrupted jobs once, from their frozen Run snapshot, not a newer plan."""
+    import asyncio
+    if state.designer is None or state.llm_client is None:
+        return
+    for job in state.database.list_artifacts():
+        metadata = job.get("metadata", {})
+        if job.get("kind") != "delivery_report_job" or metadata.get("status") not in {"pending", "running", "interrupted"}:
+            continue
+        run = state.database.get_execution_run(job["run_id"]) if job.get("run_id") else None
+        if (job.get("run_id") and (not run or run["status"] != "Completed")) or metadata.get("attempts", 0) >= 2:
+            metadata.update(status="failed", error="原Run未完成或报告恢复次数已耗尽")
+            state.database.update_artifact_metadata(job["artifact_id"], metadata)
+            continue
+        task = asyncio.create_task(_run_report_job(
+            job, state.database, state.designer,
+            float(state.config.get("reports", {}).get("timeout_seconds", 180)),
+        ), name=job["artifact_id"])
+        state.execution_tasks.add(task)
+        def finished(task, tasks=state.execution_tasks):
+            tasks.discard(task)
+            if not task.cancelled() and task.exception() is not None:
+                logger.warning("报告恢复任务异常: {}", type(task.exception()).__name__)
+        task.add_done_callback(finished)
 
 
 def _artifact_result_layers(result: Dict[str, Any]) -> List[Dict[str, Any]]:

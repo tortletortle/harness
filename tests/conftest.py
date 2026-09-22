@@ -64,3 +64,27 @@ def no_repo_project_memory_writes(request):
         "请在该用例 fixture 里 monkeypatch.setenv('EAS_WORKSPACE_ROOT', str(tmp_path))，"
         "或让被测路径使用执行级工作区覆盖（tools.workspace.set_workspace_override）。"
     )
+
+
+def pytest_addoption(parser):
+    parser.addoption("--live-models", action="store_true", default=False,
+                     help="Explicitly allow real external model HTTP calls (may incur cost).")
+
+
+@pytest.fixture(autouse=True)
+def no_unintended_live_models(request, monkeypatch):
+    """Offline-by-default guard; mocked transports and local API tests still work."""
+    if request.config.getoption("--live-models"):
+        return
+    import httpx
+    original = httpx.AsyncClient.send
+
+    async def guarded(client, req, *args, **kwargs):
+        model_path = any(p in req.url.path for p in ("/chat/completions", "/messages", "/responses"))
+        mocked = isinstance(client._transport, httpx.MockTransport)
+        local = req.url.host in {"localhost", "127.0.0.1", "::1", "testserver"}
+        if model_path and not mocked and not local:
+            raise AssertionError("Real model HTTP disabled in pytest; use --live-models for explicit acceptance runs")
+        return await original(client, req, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", guarded)

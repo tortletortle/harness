@@ -3,7 +3,7 @@ LLM 用量记录与预算检查（P0 强化）
 
 设计（参考 token budget 实践：按 agent/工作流做 token 记账是最直接的成本控制）：
 - llm_client.LLMClient.chat 统一钩子：每个 provider 调用后记一行账；
-- 上下文通过 threading.local 传递（phase / plan_id），由调用方
+- 上下文通过 ContextVar 传递（异步任务隔离）（phase / plan_id），由调用方
   （server 执行循环、设计端点）在进入/退出时 set/clear；
 - 独立 SQLite 库 data/usage/llm_usage.db——不侵入主数据库 schema；
 - 记账绝不抛异常、绝不阻断主链路（观察性副作用）。
@@ -11,6 +11,7 @@ LLM 用量记录与预算检查（P0 强化）
 
 import sqlite3
 import threading
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -21,25 +22,24 @@ from logging_config import get_logger
 logger = get_logger(__name__)
 
 _local = threading.local()
+_context = ContextVar("llm_usage_context", default=None)
 _write_lock = threading.Lock()
 
 
 def set_context(**kwargs: Any) -> None:
     """绑定当前调用的上下文（plan_id / phase 等），直到 clear_context。"""
-    ctx = getattr(_local, "ctx", None)
-    if ctx is None:
-        ctx = {}
-        _local.ctx = ctx
+    ctx = dict(_context.get() or {})
     ctx.update({k: v for k, v in kwargs.items() if v is not None})
+    _context.set(ctx)
 
 
 def clear_context() -> None:
-    """清空上下文（执行循环 finally 中调用）。"""
-    _local.ctx = {}
+    """清空当前任务的上下文，不影响并发执行或报告任务。"""
+    _context.set({})
 
 
 def get_context() -> Dict[str, Any]:
-    return dict(getattr(_local, "ctx", {}) or {})
+    return dict(_context.get() or {})
 
 
 def _db_path() -> Any:

@@ -149,3 +149,38 @@ async def test_stdio_client_large_single_line_tools_list():
     finally:
         await client.stop()
     assert not client.alive
+
+
+@pytest.mark.asyncio
+async def test_failed_send_removes_pending_request(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    client = MCPStdioClient("broken", sys.executable, [])
+    client.process = SimpleNamespace(returncode=None)
+    monkeypatch.setattr(client, "_send", AsyncMock(side_effect=BrokenPipeError("closed")))
+    with pytest.raises(BrokenPipeError):
+        await client._request("tools/list", {})
+    assert not client._pending
+
+
+@pytest.mark.asyncio
+async def test_cancelled_initialize_reaps_process_and_pipe_tasks(tmp_path):
+    import asyncio
+    script = tmp_path / "never_initialize.py"
+    script.write_text("import time\nwhile True: time.sleep(1)\n", encoding="utf-8")
+    client = MCPStdioClient("cancel-start", sys.executable, [str(script)], request_timeout=60)
+    task = asyncio.create_task(client.start())
+    for _ in range(100):
+        if client.process is not None:
+            break
+        await asyncio.sleep(0.02)
+    process = client.process
+    assert process is not None
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 10)
+    assert process.returncode is not None
+    assert client.process is None
+    assert client._reader_task is None and client._stderr_task is None
+    assert not client._pending
+    await client.stop()  # idempotent after cancellation

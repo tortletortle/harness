@@ -75,6 +75,8 @@ async def create_design(request: DesignRequest):
             "design": format_design_for_frontend(design)
         }
         
+    except (GenerationError, HTTPException):
+        raise
     except Exception as e:
         logger.exception("生成设计书端点失败: {}", e)
         await broadcast_log(f"设计书生成失败: {str(e)}", "error")
@@ -185,6 +187,8 @@ async def approve_design(design_id: str, request: ApprovalRequest):
                     "message": "设计书已拒绝"
                 }
             
+    except (GenerationError, HTTPException):
+        raise
     except Exception as e:
         logger.exception("审批设计书端点失败: {}", e)
         await broadcast_log(f"审批失败: {str(e)}", "error")

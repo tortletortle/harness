@@ -24,7 +24,7 @@ from models import (
     ToolRequirement,
 )
 from utils.interfaces import Designer
-from llm_client import LLMClient, Message
+from llm_client import LLMClient, Message, LLMRequestError
 from logging_config import get_logger
 from domain.work_graph import normalize_dependencies, validate_graph
 
@@ -93,6 +93,35 @@ class DefaultDesigner(Designer):
     async def health_check(self) -> bool:
         return True
     
+    async def _chat_design(self, **kwargs):
+        """Bounded retry + configured fallback for *every* design conversation turn."""
+        import asyncio
+        import random
+        routes = [dict(kwargs)]
+        fallback = self.model_config.get("fallback") or {}
+        if fallback.get("provider") and fallback.get("model") and (
+            fallback["provider"], fallback["model"]
+        ) != (kwargs["provider_name"], kwargs["model"]):
+            routes.append({**kwargs, "provider_name": fallback["provider"],
+                           "model": fallback["model"],
+                           "temperature": fallback.get("temperature", kwargs.get("temperature", 0.3))})
+        for index, route in enumerate(routes):
+            for attempt in range(2):
+                try:
+                    return await self.llm_client.chat(**route)
+                except LLMRequestError as exc:
+                    has_fallback = index + 1 < len(routes)
+                    if not exc.retryable and exc.status_code not in {401, 403, 404}:
+                        raise
+                    # Prefer an independent configured provider over hammering a limited key.
+                    if has_fallback:
+                        logger.warning("设计模型不可用，切换配置的备用模型 (HTTP {})", exc.status_code)
+                        break
+                    delay = exc.retry_after if exc.retry_after is not None else 1 + random.random() * 0.25
+                    if attempt or not exc.retryable or delay > 5:
+                        raise
+                    await asyncio.sleep(delay)
+
     async def generate_design(self, user_request: str, search_grant_id: Optional[str] = None) -> DesignDocument:
         """
         Phase 1: 生成设计书
@@ -254,7 +283,7 @@ class DefaultDesigner(Designer):
         temperature = self.model_config["primary"]["temperature"]
         
         try:
-            response = await self.llm_client.chat(
+            response = await self._chat_design(
                 provider_name=provider,
                 messages=messages,
                 model=model,
@@ -283,6 +312,9 @@ class DefaultDesigner(Designer):
                 iteration += 1
                 logger.info("设计器请求搜索信息（第{}次）", iteration)
                 
+                # The assistant tool_calls message must precede its tool results.
+                messages.append(Message(role="assistant", content=response.content or "",
+                                        tool_calls=response.tool_calls))
                 # 处理每个tool call
                 for tool_call in response.tool_calls:
                     func_name = tool_call['function']['name']
@@ -325,7 +357,7 @@ class DefaultDesigner(Designer):
                         ))
                 
                 # 继续对话
-                response = await self.llm_client.chat(
+                response = await self._chat_design(
                     provider_name=provider,
                     messages=messages,
                     model=model,
@@ -341,7 +373,7 @@ class DefaultDesigner(Designer):
                     role="user",
                     content="现在你已经获得了足够的信息。请基于这些信息生成完整的设计书JSON。记住：只返回JSON格式的设计书，不要其他解释或总结。"
                 ))
-                response = await self.llm_client.chat(
+                response = await self._chat_design(
                     provider_name=provider,
                     messages=messages,
                     model=model,
@@ -374,7 +406,7 @@ class DefaultDesigner(Designer):
                     role="user",
                     content="请基于以上信息生成完整的设计书JSON。记住：只返回JSON格式的设计书，不要其他解释或总结。必须严格遵循之前给出的JSON结构。"
                 ))
-                response = await self.llm_client.chat(
+                response = await self._chat_design(
                     provider_name=provider,
                     messages=messages,
                     model=model,
@@ -1162,7 +1194,7 @@ class DefaultDesigner(Designer):
         provider = self.model_config["primary"]["provider"]
         model = self.model_config["primary"]["model"]
         
-        response = await self.llm_client.chat(
+        response = await self._chat_design(
             provider_name=provider,
             messages=messages,
             model=model,

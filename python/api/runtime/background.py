@@ -22,7 +22,7 @@ from api.shared import (
 from api.execution_ownership import (
     ExecutionBusy, reserve_execution, release_execution, owns_reservation,
 )
-from api.runtime.artifacts import _generate_final_report
+from api.runtime.artifacts import _generate_final_report, prepare_final_report
 from api.runtime.step_execution import _execute_step_to_completion
 from models import AttemptStatus, PlanStatus, RunStatus, StepStatus
 
@@ -62,6 +62,7 @@ async def execute_plan_background(
     current_step_id = None
     resume_from_step_id = None
     _scheduling_failed = False
+    _completed_snapshot = None
 
     def still_owns_run():
         if not (_run_claimed and _reservation_owned
@@ -299,10 +300,7 @@ async def execute_plan_background(
                     state.database.update_plan_state_machine(str(plan.plan_id), "Completed"),
                     f"计划 {plan.plan_id} 状态 → Completed",
                 )
-                await broadcast_plan_update(str(plan.plan_id))
-                await broadcast_log(f"计划执行完成: {plan.plan_id}", "success")
                 debug_log(f"Plan {plan.plan_id} execution COMPLETED")
-                await _generate_final_report(plan, run_id)
                 break
 
             # Prerequisite batches do not consume the original recovery goal.
@@ -375,9 +373,6 @@ async def execute_plan_background(
                     state.database.update_plan_state_machine(str(plan.plan_id), PlanStatus.COMPLETED.value),
                     f"计划 {plan.plan_id} 状态 → Completed",
                 )
-                await broadcast_plan_update(str(plan.plan_id))
-                await broadcast_log(f"计划执行完成: {plan.plan_id}", "success")
-                await _generate_final_report(plan, run_id)
 
     except ExecutionBusy as e:
         await broadcast_log(f"跳过重复执行: {e}", "info")
@@ -475,7 +470,6 @@ async def execute_plan_background(
                                 str(plan.plan_id), PlanStatus.COMPLETED.value,
                             )
                             state.database.clear_plan_checkpoint(str(plan.plan_id))
-                            await broadcast_plan_update(str(plan.plan_id))
                 except Exception as _status_cleanup_exc:
                     debug_log(f"final plan status convergence failed: {_status_cleanup_exc}")
                 # Run 收尾：按计划最终状态映射 Run 终态，owner_token fencing 保证只本任务可收尾。
@@ -493,6 +487,17 @@ async def execute_plan_background(
                             failure_reason="interrupted by service shutdown" if _run_status == RunStatus.FAILED.value else None,
                         ):
                             debug_log(f"finish_execution_run fenced or missing: run={run_id}")
+                        elif _final_status == PlanStatus.COMPLETED.value:
+                            _completed_snapshot = state.database.get_plan(str(plan.plan_id))
+                            if state.designer is not None and state.llm_client is not None:
+                                # Register the immutable job before yielding/releasing this task.
+                                try:
+                                    prepare_final_report(
+                                        _completed_snapshot, run_id,
+                                        workspace=_bound_worktree["worktree_path"] if _bound_worktree else None,
+                                    )
+                                except Exception as report_error:
+                                    logger.warning("报告任务登记失败: {}", type(report_error).__name__)
                     except Exception as run_close_exc:
                         debug_log(f"finish_execution_run failed: {run_close_exc}")
                 # 收尾前未结束的 Running Attempt 一并补齐（如异常路径残留）。
@@ -509,7 +514,7 @@ async def execute_plan_background(
             if _usage_context_bound:
                 try:
                     from utils import usage_tracker as tracker
-                    # The tracker is currently thread-local: do not clear a sibling's context.
+                    # Only clear context which was bound by this execution.
                     if tracker.get_context().get("plan_id") == str(plan.plan_id):
                         tracker.clear_context()
                 except Exception:
@@ -517,3 +522,9 @@ async def execute_plan_background(
             if _reservation_owned:
                 release_execution(state, str(plan.plan_id), reservation_token)
             debug_log(f"execute_plan_background FINISHED for plan {plan.plan_id}")
+
+    if _completed_snapshot is not None:
+        # Run is terminal and the workspace has been released before any optional LLM I/O.
+        await broadcast_plan_update(str(plan.plan_id))
+        await broadcast_log(f"计划执行完成: {plan.plan_id}", "success")
+        await _generate_final_report(_completed_snapshot, run_id, refresh=False)

@@ -143,8 +143,7 @@ def server(server_root, plans_fixture):
     log_path = server_root / "p3_server.log"
     log = open(log_path, "w", encoding="utf-8")
     proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "api.server:app",
-         "--host", "127.0.0.1", "--port", "8014"],
+        [sys.executable, str(PYTHON_DIR.parent / "tests" / "fixtures" / "offline_api_server.py"), "8014"],
         stdout=log, stderr=subprocess.STDOUT, env=env, cwd=str(server_root),
     )
 

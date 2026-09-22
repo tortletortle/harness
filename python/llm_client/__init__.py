@@ -12,6 +12,59 @@ import httpx
 import json
 
 
+class LLMRequestError(RuntimeError):
+    """Structured upstream error; status/retry semantics survive generation wrapping."""
+    def __init__(self, message, *, status_code=None, retry_after=None, retryable=False):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+        self.retryable = retryable
+
+
+def _retry_after(response):
+    from datetime import datetime, timezone
+    from email.utils import parsedate_to_datetime
+    raw = getattr(response, "headers", {}).get("retry-after")
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        try:
+            return max(0.0, (parsedate_to_datetime(raw) - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+
+# A threading semaphore is deliberately used: providers also run in worker event
+# loops. No asyncio primitive/client is shared across loops, and cancellation never
+# leaves an acquire blocked in a worker thread. Scope is this process, not a quota
+# shared by unrelated applications/processes using the same API key.
+import threading as _threading
+_provider_slots = {}
+_provider_slots_lock = _threading.Lock()
+
+
+def _provider_slot(base_url, api_key):
+    import hashlib
+    import os
+    key = (base_url, hashlib.sha256(api_key.encode()).hexdigest())
+    with _provider_slots_lock:
+        if key not in _provider_slots:
+            limit = max(1, int(os.getenv("EAS_LLM_MAX_CONCURRENCY", "2")))
+            _provider_slots[key] = _threading.BoundedSemaphore(limit)
+        return _provider_slots[key]
+
+
+async def _acquire_provider_slot(slot):
+    import asyncio
+    import time
+    deadline = time.monotonic() + 180
+    while not slot.acquire(blocking=False):
+        if time.monotonic() >= deadline:
+            raise LLMRequestError("本进程模型并发队列等待超时", status_code=429,
+                                  retry_after=1, retryable=True)
+        await asyncio.sleep(0.05)
+
+
 class Message(BaseModel):
     """消息"""
     role: str  # "user", "assistant", "system", "tool"
@@ -274,6 +327,7 @@ class OpenAICompatibleProvider(LLMProvider):
         self._name = name
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
+        self._slot = _provider_slot(self.base_url, api_key)
 
     @property
     def name(self) -> str:
@@ -322,8 +376,12 @@ class OpenAICompatibleProvider(LLMProvider):
             # 每次调用现开现关：httpx 连接池会绑定首次使用的事件循环，
             # 复用长命 client 在跨 asyncio.run()/多循环（脚本、worker 线程）场景
             # 会报 "Event loop is closed"。LLM 调用以秒计，建连开销可忽略。
-            async with httpx.AsyncClient(timeout=180.0, proxy=None, trust_env=False) as client:
-                response = await client.post(url, json=payload, headers=headers)
+            await _acquire_provider_slot(self._slot)
+            try:
+                async with httpx.AsyncClient(timeout=180.0, proxy=None, trust_env=False) as client:
+                    response = await client.post(url, json=payload, headers=headers)
+            finally:
+                self._slot.release()
             response.raise_for_status()
             data = response.json()
             
@@ -345,7 +403,14 @@ class OpenAICompatibleProvider(LLMProvider):
                     error_msg += f"\n响应内容: {response.text[:500]}"
             except:
                 pass
-            raise Exception(error_msg)
+            if isinstance(e, LLMRequestError):
+                raise
+            error_msg = error_msg.replace(self.api_key, "[REDACTED]") if self.api_key else error_msg
+            status = getattr(locals().get("response"), "status_code", None)
+            raise LLMRequestError(
+                error_msg, status_code=status, retry_after=_retry_after(locals().get("response")),
+                retryable=status in {408, 429, 500, 502, 503, 504} or isinstance(e, httpx.TransportError),
+            ) from e
     
     async def health_check(self) -> bool:
         try:

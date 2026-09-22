@@ -86,7 +86,11 @@ class MCPStdioClient:
         )
         self._reader_task = asyncio.create_task(self._read_loop())
         self._stderr_task = asyncio.create_task(self._drain_stderr())
-        await self.initialize()
+        try:
+            await self.initialize()
+        except BaseException:
+            await self.stop()
+            raise
         # 某些 server（如 @notionhq/notion-mcp-server）在 initialize 后需要短暂
         # 稳定期：立即跟随的请求会被对端关闭连接（真实观察，第 2 期续作验证）。
         await asyncio.sleep(self.startup_settle)
@@ -135,19 +139,54 @@ class MCPStdioClient:
             if not fut.done():
                 fut.set_exception(RuntimeError(f"MCP server {self.name} 已停止"))
         self._pending.clear()
-        if self.process and self.process.returncode is None:
-            try:
-                self.process.terminate()
-                await asyncio.wait_for(self.process.wait(), timeout=5)
-            except Exception:
+        process = self.process
+        try:
+            if process is not None:
+                # EOF gives cooperative stdio servers a chance to exit cleanly.
+                if process.stdin:
+                    process.stdin.close()
+                    try:
+                        await asyncio.wait_for(process.stdin.wait_closed(), 1)
+                    except (OSError, RuntimeError, asyncio.TimeoutError):
+                        pass
                 try:
-                    self.process.kill()
-                except Exception:
-                    pass
-        for task in (self._reader_task, self._stderr_task):
-            if task:
+                    await asyncio.wait_for(process.wait(), 1)
+                except asyncio.TimeoutError:
+                    if process.returncode is None:
+                        if sys.platform == "win32":
+                            # npx/cmd wrappers own child processes which inherit the pipes.
+                            # Terminate this owned tree, not arbitrary node processes.
+                            killer = await asyncio.create_subprocess_exec(
+                                "taskkill", "/PID", str(process.pid), "/T", "/F",
+                                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                            )
+                            await killer.wait()
+                        else:
+                            process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), 3)
+                    except asyncio.TimeoutError:
+                        if process.returncode is None:
+                            process.kill()
+                        # A descendant can keep stdout open after the direct child exits.
+                        transport = getattr(process, "_transport", None)
+                        if transport is not None:
+                            transport.close()
+                        await asyncio.wait_for(process.wait(), 3)
+        finally:
+            tasks = [t for t in (self._reader_task, self._stderr_task) if t is not None]
+            for task in tasks:
                 task.cancel()
-        self.process = None
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            # CPython exposes no public Process.close(); close remaining pipe transports
+            # while the Proactor loop is alive, rather than relying on __del__.
+            transport = getattr(process, "_transport", None)
+            if transport is not None:
+                transport.close()
+                await asyncio.sleep(0)
+            self._reader_task = self._stderr_task = None
+            self.process = None
 
     @property
     def alive(self) -> bool:
@@ -226,14 +265,16 @@ class MCPStdioClient:
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[msg_id] = fut
         message = {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params}
-        await self._send(message)
         try:
+            await self._send(message)
             return await asyncio.wait_for(fut, timeout=self.request_timeout)
         except asyncio.TimeoutError:
             self._pending.pop(msg_id, None)
             raise TimeoutError(f"MCP {self.name}.{method} 超时（{self.request_timeout}s）")
         finally:
             self._pending.pop(msg_id, None)
+            if not fut.done():
+                fut.cancel()
 
     async def _send(self, message: Dict[str, Any]) -> None:
         assert self.process and self.process.stdin

@@ -300,30 +300,32 @@ async def test_paused_but_still_executing_task_cannot_be_replaced(env, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_completed_plan_still_holds_slot_until_report_and_cleanup_finish(env, monkeypatch):
+async def test_completed_plan_releases_slot_before_optional_report(env, monkeypatch):
     item, other = env.make(), env.make()
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def report(*args):
+    async def report(*args, **kwargs):
         entered.set()
         await release.wait()
 
     monkeypatch.setattr(env.background, "_generate_final_report", report)
     task = await env.routes._schedule_plan_execution(item.plan)
+    next_task = None
     try:
         await asyncio.wait_for(entered.wait(), 3)
         assert env.db.get_plan_status(item.pid) == "Completed"
-        for pid in (item.pid, other.pid):
-            with pytest.raises(HTTPException) as exc:
-                await env.routes.execute_plan(pid)
-            assert exc.value.status_code == 409
-        assert not item.grant.revoked
+        assert env.db.list_execution_runs(item.pid)[0]["status"] == "Completed"
+        assert env.state.current_execution is None
+        assert item.grant.revoked and item.approval.resolved
+        assert (await env.routes.execute_plan(other.pid))["success"]
+        next_task = next(t for t in env.state.execution_tasks if t is not task)
     finally:
         release.set()
         await _join(task)
-    assert item.grant.revoked and item.approval.resolved
+        if next_task is not None:
+            await _join(next_task)
     assert env.state.current_execution is None
-    assert env.db.list_execution_runs(item.pid)[0]["status"] == "Completed"
+    assert env.db.list_execution_runs(other.pid)[0]["status"] == "Completed"
 
 
 @pytest.mark.asyncio
@@ -500,3 +502,87 @@ async def test_cancelled_parallel_batch_can_rerun_every_interrupted_step(env, mo
     await env.run(env.db.get_plan(item.pid))
     assert set(executed) == set(ids)
     assert env.db.get_plan_status(item.pid) == "Completed"
+
+
+@pytest.mark.asyncio
+async def test_report_job_snapshot_survives_new_plan_state_and_is_idempotent(env):
+    from api.runtime import artifacts
+    item = env.make()
+    job = artifacts.prepare_final_report(item.plan, database=env.db)
+    env.db.update_step(item.sid, "Success")
+    env.db.update_plan_state_machine(item.pid, "Completed")
+    designer = SimpleNamespace(generate_summary=AsyncMock(return_value="frozen report"))
+    await artifacts._run_report_job(job, env.db, designer)
+    frozen = designer.generate_summary.call_args.args[0]
+    assert frozen.segments[0].steps[0].status.value == "Pending"
+    finished = env.db.get_artifact(job["artifact_id"])
+    assert finished["metadata"]["status"] == "completed"
+    await artifacts._run_report_job(finished, env.db, designer)
+    designer.generate_summary.assert_awaited_once()
+    assert len([a for a in env.db.list_artifacts(item.pid) if a["kind"] == "delivery_report"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_report_cancel_is_durable_and_restart_recovers_once(env):
+    from api.runtime import artifacts
+    item = env.make()
+    job = artifacts.prepare_final_report(item.plan, database=env.db)
+    entered = asyncio.Event()
+
+    async def blocked(*args):
+        entered.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(artifacts._run_report_job(job, env.db, SimpleNamespace(generate_summary=blocked)))
+    await asyncio.wait_for(entered.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert env.db.get_artifact(job["artifact_id"])["metadata"]["status"] == "interrupted"
+    env.state.designer = SimpleNamespace(generate_summary=AsyncMock(return_value="recovered"))
+    env.state.llm_client = object()
+    artifacts.recover_report_jobs()
+    await asyncio.gather(*env.state.execution_tasks)
+    finished = env.db.get_artifact(job["artifact_id"])["metadata"]
+    assert finished["status"] == "completed"
+    assert finished["attempts"] == 2
+    artifacts.recover_report_jobs()
+    env.state.designer.generate_summary.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_report_timeout_is_terminal_without_affecting_run(env):
+    from api.runtime import artifacts
+    item = env.make()
+    await env.run(item.plan)
+    run = env.db.list_execution_runs(item.pid)[0]
+    job = artifacts.prepare_final_report(env.db.get_plan(item.pid), run["run_id"], database=env.db)
+
+    async def slow(*args):
+        await asyncio.Event().wait()
+
+    await artifacts._run_report_job(job, env.db, SimpleNamespace(generate_summary=slow), timeout=0.01)
+    assert env.db.get_artifact(job["artifact_id"])["metadata"]["status"] == "failed"
+    assert env.db.get_execution_run(run["run_id"])["status"] == "Completed"
+    assert env.state.current_execution is None
+
+
+@pytest.mark.asyncio
+async def test_usage_context_isolated_between_report_and_next_execution():
+    from utils import usage_tracker as tracker
+    ready, release = asyncio.Event(), asyncio.Event()
+
+    async def report():
+        tracker.set_context(plan_id="old-plan", phase="report")
+        ready.set()
+        await release.wait()
+        assert tracker.get_context() == {"plan_id": "old-plan", "phase": "report"}
+        tracker.clear_context()
+
+    task = asyncio.create_task(report())
+    await ready.wait()
+    tracker.set_context(plan_id="new-plan", phase="executor")
+    release.set()
+    await task
+    assert tracker.get_context() == {"plan_id": "new-plan", "phase": "executor"}
+    tracker.clear_context()
