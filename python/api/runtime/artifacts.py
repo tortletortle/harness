@@ -30,7 +30,8 @@ def prepare_final_report(plan, run_id=None, *, database=None, workspace=None):
         return existing
     metadata = {"status": "pending", "attempts": 0,
                 "snapshot": plan.model_dump(mode="json"),
-                "workspace": str(workspace or resolve_workspace_root())}
+                "workspace": str(workspace or resolve_workspace_root()),
+                "report_workspace": str(resolve_workspace_root())}
     if not db.create_artifact(job_id, "delivery_report_job", f"job://{job_id}",
                               plan_id=str(plan.plan_id), run_id=run_id, metadata=metadata):
         raise RuntimeError("报告任务登记失败")
@@ -40,12 +41,14 @@ def prepare_final_report(plan, run_id=None, *, database=None, workspace=None):
 async def _run_report_job(job, database, designer, timeout=180):
     import asyncio
     from models import ExecutionPlan
-    from tools.workspace import set_workspace_override, reset_workspace_override
+    from tools.workspace import set_workspace_override, reset_workspace_override, resolve_workspace_root
     metadata = dict(job["metadata"])
     if metadata.get("status") == "completed":
         return
     artifact_id = job["artifact_id"].replace("report-job-", "report-", 1)
-    token = set_workspace_override(metadata["workspace"])
+    # The execution worktree may already have been merged/discarded after release.
+    # Reports use only their frozen snapshot; accounting must not recreate that tree.
+    token = set_workspace_override(metadata.get("report_workspace") or resolve_workspace_root())
     from utils import usage_tracker
     usage_token = usage_tracker._context.set({"plan_id": job.get("plan_id"), "phase": "report"})
     def persist(status, **extra):

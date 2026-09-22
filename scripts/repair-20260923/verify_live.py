@@ -64,7 +64,7 @@ def inventory():
     data={'roles':CONFIG.get('models',{}),'providers':[{'name':p,'host':urlsplit(u).hostname,'credential_present':bool(CONFIG.get('api_keys',{}).get(p))} for p,u in CONFIG.get('base_urls',{}).items()]}
     save('config-summary.json',data); print(clean(json.dumps(data,ensure_ascii=False,indent=2)),flush=True)
     return data
-async def probe(prompt='Reply with exactly AUDIT_OK. Do not call tools.', expected='AUDIT_OK'):
+async def probe(prompt='Reply with exactly AUDIT_OK. Do not call tools.', expected='AUDIT_OK', request_timeout=75):
     from llm_client import OpenAICompatibleProvider, Message
     results=[]; seen=set()
     profiles=[(role+'.'+tier,spec) for role,group in CONFIG.get('models',{}).items() if role in ('designer','executor','codegen','knowledge','toolmanager','stepfun_chat') for tier,spec in group.items() if isinstance(spec,dict)]
@@ -78,7 +78,7 @@ async def probe(prompt='Reply with exactly AUDIT_OK. Do not call tools.', expect
         else:
             client=OpenAICompatibleProvider(provider,key,CONFIG['base_urls'][provider]); t=time.monotonic()
             try:
-                response=await asyncio.wait_for(client.chat([Message(role='user',content=prompt)],model=model,temperature=0,max_tokens=64),timeout=75)
+                response=await asyncio.wait_for(client.chat([Message(role='user',content=prompt)],model=model,temperature=0,max_tokens=64),timeout=request_timeout)
                 row.update(passed=response.content.strip()==expected,content=response.content,usage=response.usage,finish_reason=response.finish_reason)
             except Exception as exc: row.update(passed=False,error_type=type(exc).__name__,error=clean(exc))
             row['elapsed_s']=round(time.monotonic()-t,3)
@@ -293,12 +293,42 @@ def shutdown_recovery():
         save('shutdown.json',result)
     return result
 
+
+async def detached_report():
+    setup_git()
+    from database import Database
+    from llm_client import LLMClient, OpenAICompatibleProvider
+    from designer import DefaultDesigner
+    from api.runtime import artifacts
+    sys.path.insert(0,str(ROOT/'tests'/'python'))
+    from test_pause_resume_retry import _new_plan_with_steps
+    retired=WS.parent/'retired-worktree'
+    subprocess.run(['git','worktree','add','-b','report-isolation',str(retired)],cwd=WS,check=True,capture_output=True)
+    (retired/'proof.txt').write_text('report isolation proof',encoding='utf-8')
+    db=Database(str(RUN/'eas.db'))
+    pid, steps=_new_plan_with_steps(db,retired,[('file_creator',{'path':str(retired/'proof.txt'),'content':'report isolation proof'},'manual')])
+    db.update_step(steps[0],'Success')
+    db.update_plan_state_machine(str(pid),'Completed')
+    job=artifacts.prepare_final_report(db.get_plan(str(pid)),database=db,workspace=retired)
+    subprocess.run(['git','worktree','remove','--force',str(retired)],cwd=WS,check=True,capture_output=True)
+    spec=CONFIG['models']['designer']['fallback']
+    client=LLMClient()
+    client.register_provider(OpenAICompatibleProvider(spec['provider'],CONFIG['api_keys'][spec['provider']],CONFIG['base_urls'][spec['provider']]))
+    designer=DefaultDesigner(client,{'primary':spec})
+    await artifacts._run_report_job(job,db,designer)
+    status=db.get_artifact(job['artifact_id'])['metadata']['status']
+    result={'passed':status=='completed' and not retired.exists(), 'report_status':status,
+            'deleted_worktree_recreated':retired.exists(), 'provider':spec['provider'],'model':spec['model'],
+            'scope':'Isolated report accounting probe using actual configured fallback; no HTTP mocks'}
+    save('detached-report.json',result)
+    return result
+
 if __name__=='__main__':
     started=time.monotonic()
     try:
         inventory()
         if MODE=='probe': result=asyncio.run(probe())
-        elif MODE=='normal-probe': result=asyncio.run(probe('What is two plus two? Please answer with the number only.', '4'))
+        elif MODE=='normal-probe': result=asyncio.run(probe('What is two plus two? Please answer with the number only.', '4', request_timeout=180))
         elif MODE=='live-b': result=live_b()
         elif MODE=='live-b-fallback':
             import copy
@@ -314,6 +344,7 @@ if __name__=='__main__':
         elif MODE=='ownership': result=ownership_check()
         elif MODE=='fallback': result=asyncio.run(live_fallback())
         elif MODE=='shutdown': result=shutdown_recovery()
+        elif MODE=='detached-report': result=asyncio.run(detached_report())
         elif MODE=='contracts': result=asyncio.run(contracts())
         elif MODE=='checkpoint':
             import live_checkpoint_acceptance as cp

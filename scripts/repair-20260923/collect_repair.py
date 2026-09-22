@@ -36,7 +36,7 @@ for name in ('frontend-test', 'frontend-build', 'rust', 'extra-regressions', 'pr
     if p.exists(): summary['tests'][name] = {'tail': a.clean(text(p)[-5500:])}
 
 results = ['probe/probe.json', 'normal-probe/probe.json', 'fallback/fallback.json',
-           'ownership/ownership.json', 'shutdown/shutdown.json', 'live-b/api-smoke.json',
+           'ownership/ownership.json', 'shutdown/shutdown.json', 'detached-report/detached-report.json', 'live-b/api-smoke.json',
            'live-b/acceptance-b.json', 'live-c/out/real-llm-acceptance-c.json', 'live-exits.json']
 for name in results:
     p = base / name

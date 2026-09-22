@@ -130,6 +130,9 @@ def plans_fixture(server_root, workdir):
 
 @pytest.fixture(scope="module")
 def server(server_root, plans_fixture):
+    global BASE
+    original_base = BASE
+    port_file = server_root / "server-port.txt"
     env = dict(os.environ)
     env["EAS_API_TOKEN"] = TOKEN
     # 数据库必须显式绑定到隔离目录：服务端路径解析（paths.resolve_db_path）不再跟随 cwd，
@@ -143,14 +146,19 @@ def server(server_root, plans_fixture):
     log_path = server_root / "p3_server.log"
     log = open(log_path, "w", encoding="utf-8")
     proc = subprocess.Popen(
-        [sys.executable, str(PYTHON_DIR.parent / "tests" / "fixtures" / "offline_api_server.py"), "8014"],
+        [sys.executable, str(PYTHON_DIR.parent / "tests" / "fixtures" / "offline_api_server.py"), "0", str(port_file)],
         stdout=log, stderr=subprocess.STDOUT, env=env, cwd=str(server_root),
     )
 
     ready = False
     try:
         for _ in range(60):
+            if proc.poll() is not None:
+                break
             try:
+                # Read this child’s actual kernel-assigned port; never probe a fixed
+                # port that might belong to another pytest run or the user's service.
+                BASE = "http://127.0.0.1:" + port_file.read_text(encoding="ascii").strip()
                 urllib.request.urlopen(BASE + "/", timeout=5)
                 ready = True
                 break
@@ -158,22 +166,19 @@ def server(server_root, plans_fixture):
                 time.sleep(1)
 
         if not ready:
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            log.close()
             pytest.fail("服务启动失败，详见 p3_server.log")
 
         yield
     finally:
-        proc.terminate()
+        if proc.poll() is None:
+            proc.terminate()
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
+            proc.wait(timeout=10)
         log.close()
+        BASE = original_base
 
 
 def _wait_idle(timeout_s=40):

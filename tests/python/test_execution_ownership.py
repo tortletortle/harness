@@ -602,3 +602,23 @@ async def test_report_jobs_are_status_not_downloadable_artifacts(env, monkeypatc
     with pytest.raises(HTTPException) as exc:
         await artifact_routes.create_artifact({"artifact_id": job["artifact_id"], "content": "overwrite"})
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_report_does_not_recreate_discarded_execution_worktree(env):
+    from pathlib import Path
+    from api.runtime import artifacts
+    from utils import usage_tracker
+    item = env.make(isolated=True)
+    worktree = Path(env.db.get_active_worktree(item.pid)["worktree_path"])
+    job = artifacts.prepare_final_report(item.plan, database=env.db, workspace=worktree)
+    worktree.rmdir()  # user merges/discards immediately after execution release
+
+    async def report(*args):
+        usage_tracker.record_usage("test", "test", {"total_tokens": 1})
+        return "safe detached report"
+
+    await artifacts._run_report_job(job, env.db, SimpleNamespace(generate_summary=report))
+    assert env.db.get_artifact(job["artifact_id"])["metadata"]["status"] == "completed"
+    assert not worktree.exists()
+    usage_tracker.close_thread_conn()

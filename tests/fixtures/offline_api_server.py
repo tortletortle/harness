@@ -40,5 +40,13 @@ async def offline_lifespan(app):
         yield
 
 server.app.router.lifespan_context = offline_lifespan
+class ReadyServer(uvicorn.Server):
+    async def startup(self, sockets=None):
+        await super().startup(sockets=sockets)
+        if len(sys.argv) > 2 and getattr(self, "servers", None):
+            port = self.servers[0].sockets[0].getsockname()[1]
+            Path(sys.argv[2]).write_text(str(port), encoding="ascii")
+
+
 if __name__ == "__main__":
-    uvicorn.run(server.app, host="127.0.0.1", port=int(sys.argv[1]))
+    ReadyServer(uvicorn.Config(server.app, host="127.0.0.1", port=int(sys.argv[1]))).run()
