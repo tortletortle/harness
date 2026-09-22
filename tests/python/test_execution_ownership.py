@@ -586,3 +586,19 @@ async def test_usage_context_isolated_between_report_and_next_execution():
     await task
     assert tracker.get_context() == {"plan_id": "new-plan", "phase": "executor"}
     tracker.clear_context()
+
+
+@pytest.mark.asyncio
+async def test_report_jobs_are_status_not_downloadable_artifacts(env, monkeypatch):
+    from api.runtime import artifacts
+    from api.routes import artifact_routes
+    monkeypatch.setattr(artifact_routes, "state", env.state)
+    item = env.make()
+    job = artifacts.prepare_final_report(item.plan, database=env.db)
+    result = await artifact_routes.list_artifacts(plan_id=item.pid)
+    assert not result["artifacts"]
+    assert result["report_jobs"][0]["status"] == "pending"
+    assert "snapshot" not in str(result)
+    with pytest.raises(HTTPException) as exc:
+        await artifact_routes.create_artifact({"artifact_id": job["artifact_id"], "content": "overwrite"})
+    assert exc.value.status_code == 400

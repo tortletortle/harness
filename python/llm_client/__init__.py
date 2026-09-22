@@ -26,7 +26,9 @@ def _retry_after(response):
     from email.utils import parsedate_to_datetime
     raw = getattr(response, "headers", {}).get("retry-after")
     try:
-        return max(0.0, float(raw))
+        import math
+        seconds = float(raw)
+        return max(0.0, seconds) if math.isfinite(seconds) else None
     except (TypeError, ValueError):
         try:
             return max(0.0, (parsedate_to_datetime(raw) - datetime.now(timezone.utc)).total_seconds())
@@ -400,7 +402,9 @@ class OpenAICompatibleProvider(LLMProvider):
             try:
                 if 'response' in locals():
                     error_msg += f"\n响应状态码: {response.status_code}"
-                    error_msg += f"\n响应内容: {response.text[:500]}"
+                    # Do not copy untrusted upstream bodies into logs/API exceptions:
+                    # gateways may echo credentials or private prompt content.
+
             except:
                 pass
             if isinstance(e, LLMRequestError):

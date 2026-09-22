@@ -13,10 +13,20 @@ from api.shared import state
 router = APIRouter()
 
 
+def _report_job_status(record):
+    metadata = record.get("metadata") or {}
+    return {**{k: record.get(k) for k in ("artifact_id", "plan_id", "run_id")},
+            **{k: metadata.get(k) for k in ("status", "attempts", "error", "updated_at", "report_artifact_id")}}
+
+
 @router.get("/api/artifacts", dependencies=[Depends(require_token)])
 async def list_artifacts(plan_id: Optional[str] = None, step_id: Optional[str] = None):
     """产物元数据列表（内容通过 /api/artifacts/{id}/content 拉取）。"""
-    return {"success": True, "artifacts": state.database.list_artifacts(plan_id=plan_id, step_id=step_id)}
+    records = state.database.list_artifacts(plan_id=plan_id, step_id=step_id)
+    # Internal durable jobs are status records, not downloadable deliverables.
+    return {"success": True,
+            "artifacts": [a for a in records if a.get("kind") != "delivery_report_job"],
+            "report_jobs": [_report_job_status(a) for a in records if a.get("kind") == "delivery_report_job"]}
 
 
 @router.get("/api/artifacts/{artifact_id}", dependencies=[Depends(require_token)])
@@ -24,6 +34,8 @@ async def get_artifact(artifact_id: str):
     artifact = state.database.get_artifact(artifact_id)
     if not artifact:
         raise HTTPException(status_code=404, detail="产物不存在")
+    if artifact.get("kind") == "delivery_report_job":
+        return {"success": True, "report_job": _report_job_status(artifact)}
     return {"success": True, "artifact": artifact}
 
 
@@ -55,6 +67,8 @@ async def create_artifact(request: Dict[str, Any]):
     body = request or {}
     kind = str(body.get("kind") or "file")
     artifact_id = str(body.get("artifact_id") or uuid4())
+    if kind == "delivery_report_job" or artifact_id.startswith("report-job-"):
+        raise HTTPException(status_code=400, detail="报告任务由服务端内部管理，不能通过产物接口创建或覆盖")
     content = body.get("content")
     if content is not None:
         if isinstance(content, str):

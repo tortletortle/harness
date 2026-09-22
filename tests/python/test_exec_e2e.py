@@ -20,6 +20,9 @@ from pathlib import Path
 
 import pytest
 
+# This is intentionally a real-model integration test, never part of offline pytest.
+pytestmark = pytest.mark.integration
+
 PYTHON_DIR = Path(__file__).resolve().parent.parent.parent / "python"
 TOKEN = "p1-exec-token-4455"
 BASE = "http://127.0.0.1:8013"
@@ -33,7 +36,7 @@ def _req(path, method="GET", body=None):
         data = json.dumps(body).encode()
         r.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(r, data=data, timeout=30) as resp:
+        with urllib.request.urlopen(r, data=data, timeout=180) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", "replace")
@@ -51,17 +54,16 @@ def workdir(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def server():
+def server(request, tmp_path_factory):
     """
     启动真实服务，走最小隔离 cwd，但不再依赖测试手写 DB。
     通过 API 创建设计书/计划，避免 DB 路径不一致问题。
     """
     import shutil
 
-    root = Path(PYTHON_DIR.parent / ".tmp_exec_e2e_root")
-    if root.exists():
-        shutil.rmtree(root)
-    root.mkdir(parents=True)
+    if not request.config.getoption("--live-models"):
+        pytest.skip("Real-model subprocess requires explicit --live-models")
+    root = tmp_path_factory.mktemp("exec_e2e_live_server")
     (root / "config").mkdir()
     (root / "data").mkdir()
     shutil.copy(PYTHON_DIR.parent / "config" / "models.yaml", root / "config" / "models.yaml")

@@ -343,7 +343,7 @@ async def test_compat_chat_http_error_enriched(monkeypatch):
     message = str(exc_info.value)
     assert "t API error" in message
     assert "500" in message
-    assert "server exploded" in message
+    assert "server exploded" not in message  # upstream body is deliberately excluded
 
 
 async def test_compat_chat_connection_error_without_response(monkeypatch):

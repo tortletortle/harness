@@ -42,7 +42,9 @@
 - 可预期业务冲突：`HTTPException(409, detail="中文原因")`；资源不存在：404；参数问题：400。
 - 全局异常处理器：
   - `DatabaseError` → 500，`{"detail": ..., "code": "database_error"}`
-  - `GenerationError` → 502，`{"detail": ..., "code": "generation_failed"}`
+  - `GenerationError` → 默认 502，`{"detail": ..., "code": "generation_failed"}`。
+  - 原因链为结构化 `LLMRequestError` 时：上游限流 → 429 / `llm_rate_limited`；其他暂时性网络/服务故障 → 503；上游权限或模型不可用 → 502（不是本 API 的鉴权失败）。可用时传递 `Retry-After`，响应不回显上游原文或密钥。
+  - 设计/审批端点不得用 catch-all 把 `GenerationError` 或现有 `HTTPException` 重包装成 500。
 - 其余未预期异常：端点 catch-all 中先 `logger.exception` 再 `HTTPException(500, detail=str(e))`，保证服务端日志有堆栈。
 - 响应格式约定：成功 `{"success": true, ...}`；失败 `{"detail": "...", "code": "..."}`（HTTP 4xx/5xx）。前端两套都要解析。
 
@@ -74,3 +76,34 @@
 | 跳过只改原 id，活动克隆照常执行且无报错 | 总原则 3 |
 | LLM 生成失败返回"待定"假设计书，HTTP 200 | 生成器层 |
 | 恢复后 UI 永远停在"已暂停" | 前端层（状态无属主） |
+
+
+## 2026-09-23 执行、交付报告与模型恢复
+
+- 执行成功必须先完成 Run、清理授权/审批并释放所属 reservation，之后才广播完成并进行可选 LLM 报告 I/O。报告耗时不再阻塞下一计划；旧任务的回调不得释放新任务的 token。
+- 报告任务按 Run 保存不可变计划快照；`pending → running → completed / failed / interrupted`。取消要记录 `interrupted` 并继续抛出 `CancelledError`，不能伪装成成功。
+- 服务启动只恢复已完成 Run 的未完成报告（最多总计两次尝试）；确定失败不无限重试。关停先等待执行/报告任务，超时取消并收拢，再关闭 MCP 子进程及管道。
+- 默认报告超时 180 秒、关停宽限 15 秒，可在模型配置根节点 `reports.timeout_seconds` / `reports.shutdown_grace_seconds` 覆盖。
+- `/api/artifacts` 的 `artifacts` 只包含可交付产物；内部报告任务另列于 `report_jobs`，不暴露完整执行快照，也不能通过产物写接口创建或覆盖。
+- 设计对话和最终报告遇到可恢复调用失败时优先切换已配置备用模型；最后一条路由最多重试一次。遵守数值及 HTTP-date 的 `Retry-After`；超过 5 秒的等待不提前重试，而是返回可重试错误。401/403/404 可尝试另一条配置路由，但不对同一失效权限路由反复重试；400 不重试；取消始终传播。
+- OpenAI-compatible 同 endpoint/key 在本进程内默认最多 2 个并发 HTTP 请求，环境变量 `EAS_LLM_MAX_CONCURRENCY` 可调整。此限制**不覆盖其他进程/应用**，不能保证供应商永不返回 429。
+- 用量上下文使用 ContextVar 隔离并发任务；报告使用独立的 `report` phase，不覆盖下一次执行的 plan_id。
+
+## 验证入口
+
+```powershell
+# 默认离线后端回归；生命周期子服务不读取真实模型密钥或启动外部 MCP。
+python -m pytest tests/python -m "not integration"
+# pytest 中需要真实模型时必须显式 --live-models（可能产生费用）。
+# 本次真实验收工具不属于 pytest，始终调用真实配置的模型：
+python scripts/repair-20260923/verify_live.py ownership
+python scripts/repair-20260923/verify_live.py shutdown
+
+# 仅诊断，不修改全局 PATH 或安装软件：
+powershell -ExecutionPolicy Bypass -File scripts/build-rust.ps1 -Doctor
+# 自动选择 MSVC Developer 环境或 GNU + Zig；运行本次 cargo 返回的测试程序：
+powershell -ExecutionPolicy Bypass -File scripts/build-rust.ps1 -Offline -SkipRelease
+# 发布构建去掉 -SkipRelease；显式选择可用工具链：-Toolchain msvc / gnu。
+```
+
+`config/models.local.yaml` 是 gitignored 本机覆盖；其中 stepfun_chat 暂改为已验证可用的 qwen3.8-max / glm-5.2。此变更没有给 step-* 模型新增供应商权限，也没有变更密钥。其他机器应独立验证权限后配置，不应假定同一账号配额或授权可迁移。

@@ -77,14 +77,16 @@ def no_unintended_live_models(request, monkeypatch):
     if request.config.getoption("--live-models"):
         return
     import httpx
-    original = httpx.AsyncClient.send
+    client_class = httpx._client.AsyncClient  # public alias may already be replaced by a test fake
+    original = client_class.send
 
-    async def guarded(client, req, *args, **kwargs):
+    async def guarded(client, request, *args, **kwargs):
+        req = request  # httpx.stream calls send(request=...) by keyword
         model_path = any(p in req.url.path for p in ("/chat/completions", "/messages", "/responses"))
-        mocked = isinstance(client._transport, httpx.MockTransport)
+        mocked = isinstance(getattr(client, "_transport", None), httpx.MockTransport)
         local = req.url.host in {"localhost", "127.0.0.1", "::1", "testserver"}
         if model_path and not mocked and not local:
             raise AssertionError("Real model HTTP disabled in pytest; use --live-models for explicit acceptance runs")
         return await original(client, req, *args, **kwargs)
 
-    monkeypatch.setattr(httpx.AsyncClient, "send", guarded)
+    monkeypatch.setattr(client_class, "send", guarded)
