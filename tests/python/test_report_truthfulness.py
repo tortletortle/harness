@@ -1,4 +1,5 @@
 """Factual report history, not just Completed and a valid artifact hash."""
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -35,9 +36,20 @@ def test_history_counts_and_unknown_manual_are_frozen(env):
 async def test_false_narrative_is_not_published_as_verified_report(env,claim):
     _,plan,rid=history(env)
     job=artifacts.prepare_final_report(plan,rid,database=env.db)
-    await artifacts._run_report_job(job,env.db,SimpleNamespace(generate_summary=AsyncMock(return_value=claim)))
-    assert env.db.get_artifact(job['artifact_id'])['metadata']['status']=='failed'
-    assert env.db.get_artifact(job['artifact_id'].replace('report-job-','report-',1)) is None
+    designer=SimpleNamespace(generate_summary=AsyncMock(return_value=claim))
+    await artifacts._run_report_job(job,env.db,designer)
+    metadata=env.db.get_artifact(job['artifact_id'])['metadata']
+    assert metadata['status']=='completed' and metadata['narrative_status']=='facts_only'
+    assert metadata['narrative_generation_attempts']==1
+    from api.routes.artifact_routes import _report_job_status
+    assert _report_job_status(env.db.get_artifact(job['artifact_id']))['narrative_status']=='facts_only'
+    report=env.db.get_artifact(metadata['report_artifact_id'])
+    assert report['metadata']['narrative_status']=='facts_only'
+    assert env.db.verify_artifact_hash(metadata['report_artifact_id']) is True
+    text=env.db.read_artifact_content(metadata['report_artifact_id']).decode()
+    assert '历史 Failed Run：3' in text and '模型补充说明未被采用' in text
+    assert claim not in text
+    designer.generate_summary.assert_awaited_once()
     assert env.db.get_execution_run(rid)['status']=='Completed'
 
 
@@ -46,10 +58,80 @@ async def test_honest_report_has_authoritative_history_section(env):
     job=artifacts.prepare_final_report(plan,rid,database=env.db)
     await artifacts._run_report_job(job,env.db,SimpleNamespace(generate_summary=AsyncMock(return_value='当前步骤执行成功。历史失败次数：3。人工干预情况未知。')))
     meta=env.db.get_artifact(job['artifact_id'])['metadata']
-    assert meta['status']=='completed'
+    assert meta['status']=='completed' and meta['narrative_status']=='validated'
+    assert meta['narrative_generation_attempts']==1
     text=env.db.read_artifact_content(meta['report_artifact_id']).decode()
     assert '系统核验事实' in text and '历史 Failed Run：3' in text
     assert '未登记不等于未发生' in text
+
+
+async def test_rejected_narrative_is_rewritten_once_with_only_safe_text_published(env):
+    _,plan,rid=history(env)
+    job=artifacts.prepare_final_report(plan,rid,database=env.db)
+    invalid='无失败、无重试。'
+    corrected='历史失败次数：3。当前步骤状态仅为快照；人工/操作方情况未知。'
+    designer=SimpleNamespace(generate_summary=AsyncMock(return_value=invalid),
+                             generate_summary_retry=AsyncMock(return_value=corrected))
+    await artifacts._run_report_job(job,env.db,designer)
+    metadata=env.db.get_artifact(job['artifact_id'])['metadata']
+    assert metadata['status']=='completed' and metadata['narrative_status']=='validated'
+    assert metadata['narrative_generation_attempts']==2
+    text=env.db.read_artifact_content(metadata['report_artifact_id']).decode()
+    assert corrected in text and invalid not in text
+    assert env.db.verify_artifact_hash(metadata['report_artifact_id']) is True
+    from api.routes.artifact_routes import _report_job_status
+    assert _report_job_status(env.db.get_artifact(job['artifact_id']))['narrative_generation_attempts']==2
+    designer.generate_summary.assert_awaited_once()
+    designer.generate_summary_retry.assert_awaited_once()
+
+
+@pytest.mark.parametrize('revised',['一次成功。','',None])
+async def test_second_invalid_or_empty_narrative_only_delivers_verified_facts(env,revised):
+    _,plan,rid=history(env)
+    job=artifacts.prepare_final_report(plan,rid,database=env.db)
+    designer=SimpleNamespace(generate_summary=AsyncMock(return_value='无失败。'),
+                             generate_summary_retry=AsyncMock(return_value=revised))
+    await artifacts._run_report_job(job,env.db,designer)
+    metadata=env.db.get_artifact(job['artifact_id'])['metadata']
+    assert metadata['status']=='completed' and metadata['narrative_status']=='facts_only'
+    assert metadata['narrative_generation_attempts']==2
+    text=env.db.read_artifact_content(metadata['report_artifact_id']).decode()
+    assert '历史 Failed Run：3' in text and '模型补充说明未被采用' in text
+    assert '无失败。' not in text and (not revised or revised not in text)
+    designer.generate_summary_retry.assert_awaited_once()
+
+
+async def test_rewrite_shares_one_report_deadline_and_falls_back(env):
+    _,plan,rid=history(env)
+    job=artifacts.prepare_final_report(plan,rid,database=env.db)
+    async def slow_retry(*_args):
+        await asyncio.sleep(.2)
+        return '历史失败次数：3。'
+    designer=SimpleNamespace(generate_summary=AsyncMock(return_value='无失败。'),
+                             generate_summary_retry=AsyncMock(side_effect=slow_retry))
+    await asyncio.wait_for(artifacts._run_report_job(job,env.db,designer,timeout=.05),1)
+    metadata=env.db.get_artifact(job['artifact_id'])['metadata']
+    assert metadata['status']=='completed' and metadata['narrative_status']=='facts_only'
+    assert metadata['narrative_generation_attempts']==2
+    assert env.db.get_execution_run(rid)['status']=='Completed'
+
+
+async def test_rewrite_cancellation_does_not_claim_report_complete(env):
+    _,plan,rid=history(env)
+    job=artifacts.prepare_final_report(plan,rid,database=env.db)
+    started=asyncio.Event()
+    async def pending_retry(*_args):
+        started.set()
+        await asyncio.Event().wait()
+    designer=SimpleNamespace(generate_summary=AsyncMock(return_value='无失败。'),
+                             generate_summary_retry=pending_retry)
+    task=asyncio.create_task(artifacts._run_report_job(job,env.db,designer))
+    await asyncio.wait_for(started.wait(),1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert env.db.get_artifact(job['artifact_id'])['metadata']['status']=='interrupted'
+    assert env.db.get_artifact(job['artifact_id'].replace('report-job-','report-',1)) is None
 
 
 def test_revision_preserves_original_and_explicit_intervention(env):
@@ -72,6 +154,33 @@ async def test_direct_designer_prompt_marks_history_unknown(env):
     messages=d._chat_design.await_args.kwargs['messages']
     assert '未登记不等于未发生' in messages[0].content
     assert 'execution_facts' in messages[1].content and 'unknown' in messages[1].content
+    assert '四步成功' not in messages[0].content
+    assert '无失败、无重试' not in messages[0].content
+
+
+async def test_retry_prompt_uses_only_bounded_facts_not_rejected_or_operator_text(env):
+    from designer import DefaultDesigner
+    from domain.report_truth import capture_facts,report_facts
+    plan=env.make().plan
+    facts=capture_facts(env.db,plan)
+    facts['manual_interventions']={'status':'operator_recorded','records':[
+        {'description':'UNTRUSTED_OPERATOR_INJECTION','evidence_sha256':'a'*64}]}
+    d=DefaultDesigner.__new__(DefaultDesigner)
+    d.model_config={'primary':{'provider':'fake','model':'fake'}}
+    d._chat_design=AsyncMock(return_value=SimpleNamespace(content='历史 Failed Run：0。'))
+    token=report_facts.set(facts)
+    try:
+        await d.generate_summary_retry(plan,[s for g in plan.segments for s in g.steps])
+    finally:
+        report_facts.reset(token)
+    kwargs=d._chat_design.await_args.kwargs
+    assert kwargs['max_tokens']==768 and kwargs['temperature']==0.0
+    assert 'UNTRUSTED_OPERATOR_INJECTION' not in kwargs['messages'][1].content
+    assert 'outputs_excerpt' not in kwargs['messages'][1].content
+    payload=json.loads(kwargs['messages'][1].content)
+    assert payload['manual_records_count']==1 and payload['historical_failed_runs']==0
+
+
 
 
 def test_run_totals_not_truncated_at_list_api_limit(env):

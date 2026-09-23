@@ -1,0 +1,163 @@
+{
+  "schema": "isolated-fullflow-stress/v1",
+  "mode": "real",
+  "flows_requested": 3,
+  "concurrency": 2,
+  "model_request_cap": 12,
+  "isolated_db": true,
+  "external_mcp_disabled": true,
+  "notifications_disabled": true,
+  "flows": [
+    {
+      "marker": "ARENA_STRESS_00001",
+      "stage": "done",
+      "success": true,
+      "design_id": "da1e58e1-3810-4874-b4e7-9f94ac66bd17",
+      "plan_id": "7aa25965-1a39-4e4a-9407-69f91144573f",
+      "steps": 1,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true,
+      "report_narrative_status": "validated",
+      "report_content_verified": true
+    },
+    {
+      "marker": "ARENA_STRESS_00002",
+      "stage": "done",
+      "success": true,
+      "design_id": "e99bc1e3-ff8f-4552-bdfa-0b4a3d8ea6ac",
+      "plan_id": "e74c95de-0c42-4c72-b1a0-00102f50b2f9",
+      "steps": 1,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true,
+      "report_narrative_status": "validated",
+      "report_content_verified": true
+    },
+    {
+      "marker": "ARENA_STRESS_00003",
+      "stage": "done",
+      "success": true,
+      "design_id": "3081f780-a2c1-442e-9dad-38841019268a",
+      "plan_id": "25687aff-3271-4b72-8323-47926c79114e",
+      "steps": 1,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true,
+      "report_narrative_status": "validated",
+      "report_content_verified": true
+    }
+  ],
+  "metrics": {
+    "approve": {
+      "count": 3,
+      "statuses": {
+        "200": 3
+      },
+      "p50_ms": 46242.42,
+      "p95_ms": 51041.5,
+      "max_ms": 51041.5
+    },
+    "artifacts": {
+      "count": 46,
+      "statuses": {
+        "200": 46
+      },
+      "p50_ms": 7.93,
+      "p95_ms": 10.63,
+      "max_ms": 474.67
+    },
+    "design": {
+      "count": 3,
+      "statuses": {
+        "200": 3
+      },
+      "p50_ms": 23602.47,
+      "p95_ms": 47601.77,
+      "max_ms": 47601.77
+    },
+    "execute": {
+      "count": 3,
+      "statuses": {
+        "200": 3
+      },
+      "p50_ms": 128.05,
+      "p95_ms": 139.5,
+      "max_ms": 139.5
+    },
+    "plan_get": {
+      "count": 3,
+      "statuses": {
+        "200": 3
+      },
+      "p50_ms": 9.3,
+      "p95_ms": 10.07,
+      "max_ms": 10.07
+    },
+    "plan_poll": {
+      "count": 6,
+      "statuses": {
+        "200": 6
+      },
+      "p50_ms": 20.72,
+      "p95_ms": 512.0,
+      "max_ms": 512.0
+    },
+    "report_content": {
+      "count": 3,
+      "statuses": {
+        "200": 3
+      },
+      "p50_ms": 20.89,
+      "p95_ms": 23.37,
+      "max_ms": 23.37
+    },
+    "runs": {
+      "count": 3,
+      "statuses": {
+        "200": 3
+      },
+      "p50_ms": 14.3,
+      "p95_ms": 17.14,
+      "max_ms": 17.14
+    }
+  },
+  "http_errors": [],
+  "auth_denials_ok": null,
+  "read_burst_ok": null,
+  "duration_s": 175.33,
+  "child_exit_code": 1,
+  "model_usage": {
+    "requests_started": 9,
+    "requests_finished": 9,
+    "ok": 9,
+    "errors": 0,
+    "output_tokens_recorded": 13513
+  },
+  "cumulative_budget": {
+    "cap": 100,
+    "used": 32,
+    "precharged": 20
+  },
+  "db_invariants": {
+    "plans_by_status": {
+      "Completed": 3
+    },
+    "runs_by_status": {
+      "Completed": 3
+    },
+    "attempts_by_status": {
+      "Succeeded": 3
+    }
+  },
+  "temp_root": "C:\\Users\\tortl\\AppData\\Local\\Temp\\arena-eas-stress-l28fsmsc"
+}

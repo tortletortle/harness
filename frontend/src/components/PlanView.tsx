@@ -122,13 +122,20 @@ export function PlanView() {
   const planStatus = currentPlan.status;
   const terminal = isTerminalPlan(currentPlan);
   const allSteps = currentPlan.segments.flatMap((segment) => segment.steps);
-  const waitingInputStep = planStatus === 'Paused'
-    ? allSteps.find((step) => step.step_id === currentPlan.resume_from_step_id &&
-        step.status === 'Pending' && step.outputs?.needs_input === true)
-    : undefined;
+  const inputTargetStepId = currentPlan.resume_from_step_id ?? '';
+  // 回滚后 segments 仍显示逻辑步骤 ID，恢复断点却指向活动分支克隆的物理 ID。
+  // 只有唯一候选时才回退到当前分支的投影，不能猜测要把输入写给哪一步。
+  const inputCandidates = planStatus === 'Paused' && inputTargetStepId
+    ? allSteps.filter((step) => step.status === 'Pending' &&
+        step.outputs?.needs_input === true &&
+        (step.step_id === inputTargetStepId ||
+          step.branch_version === (currentPlan.current_branch ?? 1)))
+    : [];
+  const waitingInputStep = inputCandidates.find((step) => step.step_id === inputTargetStepId)
+    ?? (inputCandidates.length === 1 ? inputCandidates[0] : undefined);
   const inputDraft = waitingInputStep &&
     stepInputDraft.planId === currentPlan.plan_id &&
-    stepInputDraft.stepId === waitingInputStep.step_id
+    stepInputDraft.stepId === inputTargetStepId
       ? stepInputDraft.text : '';
   const totalSteps = allSteps.length;
   const completedSteps = allSteps.filter(
@@ -259,15 +266,15 @@ export function PlanView() {
     }
   };
 
-  const handleSupplyInput = async (step: Step) => {
+  const handleSupplyInput = async () => {
     const input = inputDraft.trim();
-    if (!input) return;
+    if (!input || !inputTargetStepId) return;
     setActionError(null);
     setControlInFlight('input');
     try {
-      await apiClient.supplyStepInput(currentPlan.plan_id, step.step_id, input);
+      await apiClient.supplyStepInput(currentPlan.plan_id, inputTargetStepId, input);
       setStepInputDraft({ planId: '', stepId: '', text: '' });
-      addLog({ type: 'log', level: 'success', message: `步骤 ${step.step_id} 已保存补充信息，等待手动恢复执行` });
+      addLog({ type: 'log', level: 'success', message: `步骤 ${inputTargetStepId} 已保存补充信息，等待手动恢复执行` });
       try {
         setCurrentPlan(await apiClient.getPlan(currentPlan.plan_id));
       } catch {
@@ -496,13 +503,13 @@ export function PlanView() {
               rows={3}
               value={inputDraft}
               onChange={(event) => setStepInputDraft({
-                planId: currentPlan.plan_id, stepId: waitingInputStep.step_id, text: event.target.value,
+                planId: currentPlan.plan_id, stepId: inputTargetStepId, text: event.target.value,
               })}
               disabled={controlInFlight !== null}
               className="mt-2 w-full resize-y rounded-lg border border-white/[0.12] bg-black/25 p-3 text-sm text-white outline-none focus:border-violet-400 disabled:opacity-40"
             />
             <div className="mt-3 flex flex-wrap items-center gap-3">
-              <button type="button" onClick={() => void handleSupplyInput(waitingInputStep)}
+              <button type="button" onClick={() => void handleSupplyInput()}
                 disabled={!inputDraft.trim() || controlInFlight !== null}
                 className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-40">
                 {controlInFlight === 'input' ? '保存中...' : '保存补充信息'}

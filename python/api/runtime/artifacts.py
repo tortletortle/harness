@@ -15,7 +15,7 @@ from weakref import WeakKeyDictionary
 
 from api.shared import broadcast_log, state
 
-from domain.report_truth import capture_facts, unknown_facts, report_facts, render_report
+from domain.report_truth import ReportTruthError, capture_facts, unknown_facts, report_facts, render_report
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -158,15 +158,51 @@ async def _execute_report_job(job, database, designer, timeout):
         timeout = report_options({"reports": {"timeout_seconds": timeout}})["timeout_seconds"]
         facts = metadata.get("execution_facts") or unknown_facts(plan)
         facts_token = report_facts.set(facts)
+        started = asyncio.get_running_loop().time()
         summary = await asyncio.wait_for(designer.generate_summary(plan, results), timeout=timeout)
         if not summary or not str(summary).strip():
             raise ValueError("模型返回空交付报告")
+        narrative_generation_attempts = 1
+        try:
+            report_text = render_report(summary, facts)
+            narrative_status = "validated"
+        except ReportTruthError:
+            # Do not send rejected text back to the model or publish it. Optional
+            # designers may offer one safe rewrite using only frozen fact fields.
+            report_text = None
+            retry = getattr(designer, "generate_summary_retry", None)
+            remaining = timeout - (asyncio.get_running_loop().time() - started)
+            if callable(retry) and remaining > 0.01:
+                narrative_generation_attempts = 2
+                try:
+                    revised = await asyncio.wait_for(retry(plan, results), timeout=remaining)
+                    if revised and str(revised).strip():
+                        report_text = render_report(revised, facts)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning("报告事实校验后的重写未通过: {} ({})",
+                                   job["artifact_id"], type(exc).__name__)
+            if report_text is None:
+                # Never publish either rejected model output. The independently
+                # frozen facts remain useful, with an explicit downgrade label.
+                narrative_status = "facts_only"
+                report_text = render_report(
+                    "模型补充说明未被采用：自动生成文字未通过事实校验。"
+                    "本报告仅保留系统核验事实，不包含模型结论。", facts,
+                )
+                logger.warning("报告补充说明未通过事实校验，仅保存核验事实: {}", job["artifact_id"])
+            else:
+                narrative_status = "validated"
         database.store_artifact_content(
-            artifact_id, render_report(summary, facts).encode("utf-8"), plan_id=str(plan.plan_id),
+            artifact_id, report_text.encode("utf-8"), plan_id=str(plan.plan_id),
             run_id=job.get("run_id"), kind="delivery_report",
-            metadata={"source": "final_report", "plan_status": plan.status.value, "truth_schema_version": 1},
+            metadata={"source": "final_report", "plan_status": plan.status.value,
+                      "truth_schema_version": 1, "narrative_status": narrative_status,
+                      "narrative_generation_attempts": narrative_generation_attempts},
         )
-        persist("completed", report_artifact_id=artifact_id)
+        persist("completed", report_artifact_id=artifact_id, narrative_status=narrative_status,
+                narrative_generation_attempts=narrative_generation_attempts)
     except asyncio.CancelledError:
         note_failure("interrupted", "报告任务已取消，将在下次启动恢复")
         raise

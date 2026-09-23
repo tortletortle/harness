@@ -1,0 +1,125 @@
+{
+  "schema": "isolated-fullflow-stress/v1",
+  "mode": "offline",
+  "flows_requested": 1,
+  "concurrency": 1,
+  "model_request_cap": 0,
+  "isolated_db": true,
+  "external_mcp_disabled": true,
+  "notifications_disabled": true,
+  "flows": [
+    {
+      "marker": "ARENA_STRESS_00001",
+      "stage": "done",
+      "success": true,
+      "design_id": "e7f5a1b4-5794-48d3-99ac-7008e6262ada",
+      "plan_id": "435358d2-dd01-4f1d-83d4-c25a57359bc4",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    }
+  ],
+  "metrics": {
+    "approve": {
+      "count": 1,
+      "statuses": {
+        "200": 1
+      },
+      "p50_ms": 88.48,
+      "p95_ms": 88.48,
+      "max_ms": 88.48
+    },
+    "artifacts": {
+      "count": 1,
+      "statuses": {
+        "200": 1
+      },
+      "p50_ms": 8.11,
+      "p95_ms": 8.11,
+      "max_ms": 8.11
+    },
+    "design": {
+      "count": 1,
+      "statuses": {
+        "200": 1
+      },
+      "p50_ms": 272.35,
+      "p95_ms": 272.35,
+      "max_ms": 272.35
+    },
+    "execute": {
+      "count": 1,
+      "statuses": {
+        "200": 1
+      },
+      "p50_ms": 135.67,
+      "p95_ms": 135.67,
+      "max_ms": 135.67
+    },
+    "plan_get": {
+      "count": 1,
+      "statuses": {
+        "200": 1
+      },
+      "p50_ms": 13.87,
+      "p95_ms": 13.87,
+      "max_ms": 13.87
+    },
+    "plan_poll": {
+      "count": 3,
+      "statuses": {
+        "200": 3
+      },
+      "p50_ms": 74.89,
+      "p95_ms": 152.58,
+      "max_ms": 152.58
+    },
+    "read_burst": {
+      "count": 300,
+      "statuses": {
+        "200": 300
+      },
+      "p50_ms": 163.35,
+      "p95_ms": 184.2,
+      "max_ms": 190.47
+    },
+    "runs": {
+      "count": 1,
+      "statuses": {
+        "200": 1
+      },
+      "p50_ms": 12.94,
+      "p95_ms": 12.94,
+      "max_ms": 12.94
+    }
+  },
+  "http_errors": [],
+  "auth_denials_ok": true,
+  "read_burst_ok": true,
+  "duration_s": 7.28,
+  "child_exit_code": 1,
+  "model_usage": {
+    "requests_started": 0,
+    "requests_finished": 0,
+    "ok": 0,
+    "errors": 0,
+    "output_tokens_recorded": 0
+  },
+  "db_invariants": {
+    "plans_by_status": {
+      "Completed": 1
+    },
+    "runs_by_status": {
+      "Completed": 1
+    },
+    "attempts_by_status": {
+      "Succeeded": 2
+    }
+  },
+  "temp_root": "C:\\Users\\tortl\\AppData\\Local\\Temp\\arena-eas-stress-ecdr98d8"
+}

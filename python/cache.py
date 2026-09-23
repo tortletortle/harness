@@ -5,12 +5,14 @@
 
 import hashlib
 import json
+import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 
 from logging_config import get_logger
-from paths import DATA_DIR
+from paths import DATA_DIR, resolve_db_path
 
 logger = get_logger(__name__)
 
@@ -18,7 +20,7 @@ logger = get_logger(__name__)
 class DesignCache:
     """设计书缓存"""
 
-    # 默认落在仓库根 data/ 下（不依赖当前工作目录）；子类覆盖此属性即可换文件名
+    # 未覆盖数据库路径时，默认仍落在仓库根 data/；子类覆盖此属性换文件名。
     DEFAULT_CACHE_FILE = DATA_DIR / "design_cache.json"
 
     def __init__(self, cache_file: Optional[str] = None, max_size: int = 100, ttl: int = 7 * 24 * 3600):
@@ -26,11 +28,22 @@ class DesignCache:
         初始化缓存
         
         Args:
-            cache_file: 缓存文件路径；省略时为仓库根 data/<默认文件名>
+            cache_file: 缓存文件路径；省略时与当前数据库位于同一目录。
             max_size: 最大缓存数量
             ttl: 缓存有效期（秒），默认 7 天
         """
-        self.cache_file = Path(cache_file) if cache_file else self.DEFAULT_CACHE_FILE
+        if cache_file:
+            self.cache_file = Path(cache_file)
+        else:
+            # 在实例创建时解析：验收脚本常在 import cache 之后才设置 EAS_DB_PATH。
+            # 隔离 DB 不得继续读写仓库根的共享设计/计划缓存。
+            db_path = resolve_db_path()
+            if db_path == ":memory:" or db_path.startswith("file:"):
+                # SQLite 内存库/URI 没有可靠的文件父目录；至少不要污染仓库缓存。
+                cache_dir = Path(tempfile.gettempdir()) / f"eas-cache-{os.getpid()}"
+            else:
+                cache_dir = Path(db_path).resolve().parent
+            self.cache_file = cache_dir / self.DEFAULT_CACHE_FILE.name
         self.max_size = max_size
         self.ttl = ttl
         self.cache: Dict[str, Dict[str, Any]] = self._load_cache()

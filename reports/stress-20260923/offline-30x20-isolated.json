@@ -1,0 +1,561 @@
+{
+  "schema": "isolated-fullflow-stress/v1",
+  "mode": "offline",
+  "flows_requested": 30,
+  "concurrency": 20,
+  "model_request_cap": 0,
+  "isolated_db": true,
+  "external_mcp_disabled": true,
+  "notifications_disabled": true,
+  "flows": [
+    {
+      "marker": "ARENA_STRESS_00001",
+      "stage": "done",
+      "success": true,
+      "design_id": "68bd3f24-3586-46c4-a983-bb9d9bc05235",
+      "plan_id": "fc3ed7a6-e278-4c2c-9484-1b9026b86826",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00002",
+      "stage": "done",
+      "success": true,
+      "design_id": "5af8a627-7426-4aae-8fcb-99a0b32a6e2c",
+      "plan_id": "1fe2a6e1-3e62-4319-84a1-85817ffab0b4",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00003",
+      "stage": "done",
+      "success": true,
+      "design_id": "22615dd8-ab4a-4053-9e48-c9d485b5f925",
+      "plan_id": "5c829952-ef1e-47c4-8f43-81a849678650",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00004",
+      "stage": "done",
+      "success": true,
+      "design_id": "a3d02990-5650-4512-befd-55054c676142",
+      "plan_id": "824a48b7-50d5-4ec5-8d2a-099d960be1a7",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00005",
+      "stage": "done",
+      "success": true,
+      "design_id": "06915ed0-ee9a-4abe-befb-da8324bd2d2e",
+      "plan_id": "f1926b48-ae42-478a-8cd4-b5f60699c02f",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00006",
+      "stage": "done",
+      "success": true,
+      "design_id": "5724e9ac-a707-4766-8304-8f28706024db",
+      "plan_id": "54457bc7-f3e0-43a2-b5b2-5f7bf45167f3",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00007",
+      "stage": "done",
+      "success": true,
+      "design_id": "1f392515-b1f6-4936-b178-b5a6dbae88af",
+      "plan_id": "646bad2c-e78f-4cfc-91c6-18d1003dfa21",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00008",
+      "stage": "done",
+      "success": true,
+      "design_id": "dd3cb97c-7654-42f0-8e23-2d0e7871f8ec",
+      "plan_id": "869558f7-8afe-499f-a010-426a6da348c6",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00009",
+      "stage": "done",
+      "success": true,
+      "design_id": "80e489e7-1206-482d-9811-1d459ab1f2fd",
+      "plan_id": "8ec7a5a6-7855-40c3-8218-b0ed9fa90e53",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00010",
+      "stage": "done",
+      "success": true,
+      "design_id": "351a0905-c82e-4bfa-a707-1305a3b0d876",
+      "plan_id": "007c5fdc-c2b2-4af4-8563-1b9739562ce6",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00011",
+      "stage": "done",
+      "success": true,
+      "design_id": "1ee678e5-3db1-4712-8653-3109d19860a6",
+      "plan_id": "dbfcb0b9-e74b-4ec4-8cdf-1f582508e9e3",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00012",
+      "stage": "done",
+      "success": true,
+      "design_id": "5677e0b6-3747-4052-8e1d-85f1dac064cd",
+      "plan_id": "eef8ddff-338c-4265-84a4-721e6827783a",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00013",
+      "stage": "done",
+      "success": true,
+      "design_id": "18eeaf55-9ab1-4766-af18-f7cfb8be7c3d",
+      "plan_id": "18f88d7b-a7d5-4b15-960a-1646afb5de8e",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00014",
+      "stage": "done",
+      "success": true,
+      "design_id": "3fe7fccf-217a-4cea-93ec-e6cb07d9a16e",
+      "plan_id": "676ca217-7f40-4c95-ae28-e68ad716b288",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00015",
+      "stage": "done",
+      "success": true,
+      "design_id": "6bf775e8-d6b5-4203-8662-b22ce0d18a93",
+      "plan_id": "a53ef589-5d7e-40fa-99f5-c74d481cd219",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00016",
+      "stage": "done",
+      "success": true,
+      "design_id": "3aa0c33b-8eb5-49a9-820f-380ca50a9582",
+      "plan_id": "51cff0a7-1341-4530-b6f2-b4f21f37833b",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00017",
+      "stage": "done",
+      "success": true,
+      "design_id": "8ebc9e6e-41f2-4fc2-9f2e-8046a8d10cb5",
+      "plan_id": "5feb36c7-658a-4815-a2de-4a827227e90d",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00018",
+      "stage": "done",
+      "success": true,
+      "design_id": "5ca62ccb-f625-4edb-a324-d337b5c9fa11",
+      "plan_id": "446118a6-e0be-4d56-9248-f7d6e8a8ba5d",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00019",
+      "stage": "done",
+      "success": true,
+      "design_id": "20bd823f-6782-4b35-a60e-3afdb750f780",
+      "plan_id": "0100ae8f-37ef-4331-a030-82472cbea584",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00020",
+      "stage": "done",
+      "success": true,
+      "design_id": "3113a042-0f76-46b8-8629-ea77d254cc89",
+      "plan_id": "7d1cd654-4bc7-4569-8bfd-4f0be4d9c9fa",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00021",
+      "stage": "done",
+      "success": true,
+      "design_id": "edaf8948-dabd-4ca4-ad0c-b54cc97380f8",
+      "plan_id": "e1c92e99-f085-42b2-b6cb-1c4771cae505",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00022",
+      "stage": "done",
+      "success": true,
+      "design_id": "cd427c95-5513-48cf-8a40-f39117c5fb17",
+      "plan_id": "e91285b4-ae65-4f02-bf04-189d9e3900f0",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00023",
+      "stage": "done",
+      "success": true,
+      "design_id": "ea2cd5df-2284-4d35-9c1e-4083870ef65e",
+      "plan_id": "986da1df-ea3c-422a-b20f-7acb59013ba6",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00024",
+      "stage": "done",
+      "success": true,
+      "design_id": "a3c078f5-c18e-4a27-8a9e-26354600e0e2",
+      "plan_id": "adaec98a-6f4b-44d6-98a4-99da173ac96a",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00025",
+      "stage": "done",
+      "success": true,
+      "design_id": "2449e185-4374-46bf-973c-61b8381e1681",
+      "plan_id": "d0d4dede-8e5e-4910-a406-4c1a4c530f50",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00026",
+      "stage": "done",
+      "success": true,
+      "design_id": "8103a68c-cccd-450e-baef-fa85f1ebe2b3",
+      "plan_id": "b8cfd076-5cad-4d6a-8199-1a6e771592ed",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00027",
+      "stage": "done",
+      "success": true,
+      "design_id": "e3c2588e-d2b1-4e04-9fc5-394bfaa59f5f",
+      "plan_id": "2984fa38-fbe7-4562-8067-bb7161217b2c",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00028",
+      "stage": "done",
+      "success": true,
+      "design_id": "0a2182c9-eadf-47a5-b99f-34aebcf5c5c0",
+      "plan_id": "f02f98da-e7c4-4d62-91fa-374d8af4b22e",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00029",
+      "stage": "done",
+      "success": true,
+      "design_id": "89195623-cc96-4e5a-adde-b7a238643b70",
+      "plan_id": "11a2d3eb-d772-4322-92d8-79c13499153e",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00030",
+      "stage": "done",
+      "success": true,
+      "design_id": "16a710a6-6f86-425b-8ca4-50bfacd19174",
+      "plan_id": "3beb9c21-5baf-4e2f-b706-163e62537de6",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    }
+  ],
+  "metrics": {
+    "approve": {
+      "count": 30,
+      "statuses": {
+        "200": 30
+      },
+      "p50_ms": 740.53,
+      "p95_ms": 1668.74,
+      "max_ms": 1727.64
+    },
+    "artifacts": {
+      "count": 30,
+      "statuses": {
+        "200": 30
+      },
+      "p50_ms": 505.11,
+      "p95_ms": 1809.56,
+      "max_ms": 2111.63
+    },
+    "design": {
+      "count": 30,
+      "statuses": {
+        "200": 30
+      },
+      "p50_ms": 745.92,
+      "p95_ms": 1908.2,
+      "max_ms": 2025.02
+    },
+    "execute": {
+      "count": 202,
+      "statuses": {
+        "200": 30,
+        "409": 172
+      },
+      "p50_ms": 827.27,
+      "p95_ms": 1653.23,
+      "max_ms": 2152.49
+    },
+    "plan_get": {
+      "count": 30,
+      "statuses": {
+        "200": 30
+      },
+      "p50_ms": 938.17,
+      "p95_ms": 1257.46,
+      "max_ms": 1446.06
+    },
+    "plan_poll": {
+      "count": 44,
+      "statuses": {
+        "200": 44
+      },
+      "p50_ms": 325.26,
+      "p95_ms": 1611.33,
+      "max_ms": 1787.85
+    },
+    "read_burst": {
+      "count": 300,
+      "statuses": {
+        "200": 300
+      },
+      "p50_ms": 126.43,
+      "p95_ms": 187.44,
+      "max_ms": 206.43
+    },
+    "runs": {
+      "count": 30,
+      "statuses": {
+        "200": 30
+      },
+      "p50_ms": 645.74,
+      "p95_ms": 1474.57,
+      "max_ms": 1658.47
+    }
+  },
+  "http_errors": [],
+  "auth_denials_ok": true,
+  "read_burst_ok": true,
+  "duration_s": 27.86,
+  "child_exit_code": 1,
+  "model_usage": {
+    "requests_started": 0,
+    "requests_finished": 0,
+    "ok": 0,
+    "errors": 0,
+    "output_tokens_recorded": 0
+  },
+  "db_invariants": {
+    "plans_by_status": {
+      "Completed": 30
+    },
+    "runs_by_status": {
+      "Completed": 30
+    },
+    "attempts_by_status": {
+      "Succeeded": 60
+    }
+  },
+  "temp_root": "C:\\Users\\tortl\\AppData\\Local\\Temp\\arena-eas-stress-_w41eua3"
+}

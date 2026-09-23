@@ -1,0 +1,291 @@
+{
+  "schema": "isolated-fullflow-stress/v1",
+  "mode": "offline",
+  "flows_requested": 12,
+  "concurrency": 8,
+  "model_request_cap": 0,
+  "isolated_db": true,
+  "external_mcp_disabled": true,
+  "notifications_disabled": true,
+  "flows": [
+    {
+      "marker": "ARENA_STRESS_00001",
+      "stage": "done",
+      "success": true,
+      "design_id": "0f7fcf09-fcde-4320-887a-955eb718becb",
+      "plan_id": "a683ca53-761c-49a9-abda-6a96653cb9c2",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00002",
+      "stage": "done",
+      "success": true,
+      "design_id": "9ea6b80f-fdf5-4b6d-8eae-df5dd5754186",
+      "plan_id": "94addec5-06f9-4f7d-b2a7-faee6e915150",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00003",
+      "stage": "done",
+      "success": true,
+      "design_id": "068f4baf-a2a7-473a-8ac4-054087e91d78",
+      "plan_id": "4d5fe398-52d1-440f-b38b-8c2cafaaa88e",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00004",
+      "stage": "done",
+      "success": true,
+      "design_id": "c7819fa4-b30c-4a64-9cae-7ee5bf1e23a9",
+      "plan_id": "780b721c-7f9b-4e1c-b4d9-8a0d4f3d732f",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00005",
+      "stage": "done",
+      "success": true,
+      "design_id": "0555c685-21c3-4716-bc39-bedba1130486",
+      "plan_id": "04c36d9b-081c-432a-95e9-8facef33e1d0",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00006",
+      "stage": "done",
+      "success": true,
+      "design_id": "5f0a4e43-ee10-43f3-9176-af683f7a75f1",
+      "plan_id": "8ee10c5a-7eda-4b7b-a992-755994126a64",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00007",
+      "stage": "done",
+      "success": true,
+      "design_id": "7c411b18-80bc-4177-979e-dd7691e643fb",
+      "plan_id": "ec789727-5eca-4eb7-92e9-5f229fe10922",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00008",
+      "stage": "done",
+      "success": true,
+      "design_id": "eff61cbe-8d14-40cf-8c2d-078f6d697364",
+      "plan_id": "ec2e2049-86ab-4b45-a986-7877f9e62f24",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00009",
+      "stage": "done",
+      "success": true,
+      "design_id": "20c28919-4495-40f3-a79a-f9bda2909133",
+      "plan_id": "4864680c-f6d1-42fa-975a-1d3a89195c8b",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00010",
+      "stage": "done",
+      "success": true,
+      "design_id": "4e0d3262-14d8-4e85-b963-6d3fe9b5f2cb",
+      "plan_id": "8d4246c8-b04b-40a4-b7c9-b121e2102638",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00011",
+      "stage": "done",
+      "success": true,
+      "design_id": "71aabb2b-4657-40fc-88fc-e6a7c4cc4051",
+      "plan_id": "9973510a-2184-49ca-83d2-51522a88f61e",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    },
+    {
+      "marker": "ARENA_STRESS_00012",
+      "stage": "done",
+      "success": true,
+      "design_id": "e4800d37-199d-4764-8205-68d78223dbe6",
+      "plan_id": "fdf17204-dd56-475d-af68-040bd675f712",
+      "steps": 2,
+      "plan_status": "Completed",
+      "step_statuses": [
+        "Success",
+        "Success"
+      ],
+      "runs": 1,
+      "report_registered": true
+    }
+  ],
+  "metrics": {
+    "approve": {
+      "count": 12,
+      "statuses": {
+        "200": 12
+      },
+      "p50_ms": 470.56,
+      "p95_ms": 1071.57,
+      "max_ms": 1071.57
+    },
+    "artifacts": {
+      "count": 12,
+      "statuses": {
+        "200": 12
+      },
+      "p50_ms": 216.48,
+      "p95_ms": 843.61,
+      "max_ms": 843.61
+    },
+    "design": {
+      "count": 12,
+      "statuses": {
+        "200": 12
+      },
+      "p50_ms": 652.14,
+      "p95_ms": 712.52,
+      "max_ms": 712.52
+    },
+    "execute": {
+      "count": 62,
+      "statuses": {
+        "200": 12,
+        "409": 50
+      },
+      "p50_ms": 226.82,
+      "p95_ms": 718.26,
+      "max_ms": 720.09
+    },
+    "plan_get": {
+      "count": 12,
+      "statuses": {
+        "200": 12
+      },
+      "p50_ms": 162.28,
+      "p95_ms": 332.9,
+      "max_ms": 332.9
+    },
+    "plan_poll": {
+      "count": 25,
+      "statuses": {
+        "200": 25
+      },
+      "p50_ms": 237.24,
+      "p95_ms": 626.39,
+      "max_ms": 721.35
+    },
+    "read_burst": {
+      "count": 300,
+      "statuses": {
+        "200": 300
+      },
+      "p50_ms": 135.79,
+      "p95_ms": 151.47,
+      "max_ms": 230.84
+    },
+    "runs": {
+      "count": 12,
+      "statuses": {
+        "200": 12
+      },
+      "p50_ms": 188.82,
+      "p95_ms": 237.3,
+      "max_ms": 237.3
+    }
+  },
+  "http_errors": [],
+  "auth_denials_ok": true,
+  "read_burst_ok": true,
+  "duration_s": 14.17,
+  "child_exit_code": 1,
+  "model_usage": {
+    "requests_started": 0,
+    "requests_finished": 0,
+    "ok": 0,
+    "errors": 0,
+    "output_tokens_recorded": 0
+  },
+  "db_invariants": {
+    "plans_by_status": {
+      "Completed": 12
+    },
+    "runs_by_status": {
+      "Completed": 12
+    },
+    "attempts_by_status": {
+      "Succeeded": 24
+    }
+  },
+  "temp_root": "C:\\Users\\tortl\\AppData\\Local\\Temp\\arena-eas-stress-5132r0br"
+}

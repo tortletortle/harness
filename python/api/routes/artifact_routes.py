@@ -16,7 +16,9 @@ router = APIRouter()
 def _report_job_status(record):
     metadata = record.get("metadata") or {}
     return {**{k: record.get(k) for k in ("artifact_id", "plan_id", "run_id")},
-            **{k: metadata.get(k) for k in ("status", "attempts", "error", "updated_at", "report_artifact_id")}}
+            **{k: metadata.get(k) for k in ("status", "attempts", "error", "updated_at",
+                                            "report_artifact_id", "narrative_status",
+                                            "narrative_generation_attempts")}}
 
 
 @router.get("/api/artifacts", dependencies=[Depends(require_token)])

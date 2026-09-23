@@ -1,0 +1,60 @@
+{
+  "schema": "isolated-agent-handoff/v1",
+  "success": true,
+  "isolated_db": true,
+  "external_mcp_disabled": true,
+  "auth_status": 401,
+  "plan_id": "1d39813a-fe31-47c3-ba8b-e3944088b9ed",
+  "first_status": "Paused",
+  "resume_from_step_id": "d8dc3c91-2203-4bbd-b400-5c1dc0af6736",
+  "needs_input_visible": true,
+  "wrong_target_http": 409,
+  "input_projected": true,
+  "status_after_save": "Paused",
+  "resume_http_statuses": {
+    "200": 1,
+    "409": 7
+  },
+  "final_status": "Completed",
+  "final_step_statuses": [
+    "Success",
+    "Success"
+  ],
+  "artifact_ok": true,
+  "run_statuses": [
+    "Completed",
+    "Paused"
+  ],
+  "agent_events": [
+    "running",
+    "grant_issued",
+    "grant_allowed",
+    "grant_revoked",
+    "needs_input",
+    "needs_input",
+    "input_supplied",
+    "running",
+    "grant_issued",
+    "grant_allowed",
+    "grant_revoked",
+    "success"
+  ],
+  "input_after_complete_http": 409,
+  "stage": "done",
+  "timings_ms": {
+    "POST design": {
+      "count": 2,
+      "max": 118.79
+    },
+    "GET plan": {
+      "count": 5,
+      "max": 281.15
+    },
+    "POST plan": {
+      "count": 12,
+      "max": 410.17
+    }
+  },
+  "real_model_requests": 0,
+  "temp_root": "C:\\Users\\tortl\\AppData\\Local\\Temp\\arena-eas-stress-v6mdvapm"
+}

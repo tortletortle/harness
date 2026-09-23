@@ -1,0 +1,8 @@
+{
+  "source": "real-smoke-isolated.json",
+  "status": "failed",
+  "error": "报告生成或完整性验证失败: ReportTruthError",
+  "attempts": 1,
+  "model_requests_started": 3,
+  "plan_status": "Completed"
+}

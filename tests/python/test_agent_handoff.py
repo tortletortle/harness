@@ -389,6 +389,39 @@ def test_needs_input_pauses_plan_and_keeps_resume_target(tmp_path, monkeypatch):
     assert db.get_active_failed_steps(str(plan.plan_id), 1) == []
 
 
+def test_real_agent_step_emits_one_needs_input_event(tmp_path, monkeypatch):
+    """真实 Agent→executor→调度器调用链一次提问只能生成一条同名事件。"""
+    from api.runtime import step_execution
+
+    db = Database(str(tmp_path / "single-event.db"))
+    plan, _, ids = _seed_plan(db, [("等待回答", [], "review_agent")])
+    registry = CapabilityRegistry()
+    registry.register(FakeAgentTool(
+        agent_id="review_agent",
+        result=CapabilityResult(status="needs_input", output={"questions": ["目标仓库？"]}),
+    ))
+    auth = AuthorizationManager(workspace_root=str(tmp_path))
+    monkeypatch.setenv("EAS_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(state, "database", db)
+    monkeypatch.setattr(state, "authorization_manager", auth)
+    monkeypatch.setattr(state, "capability_registry", registry)
+    monkeypatch.setattr(state, "executor", DefaultExecutor(
+        llm_client=None, model_config={"primary": {"provider": "fake", "model": "fake"}},
+        authorization_manager=auth, capability_registry=registry,
+    ))
+    run = db.start_execution_run(str(plan.plan_id),
+                                 from_statuses=(PlanStatus.PENDING.value,), trigger="execute")
+    assert run is not None
+    row = db.get_steps(str(plan.plan_id))[0]
+    outcome, step_id = asyncio.run(step_execution._execute_step_to_completion(
+        plan, row, run["run_id"], run["owner_token"], 1, False, set(), lambda msg: None,
+    ))
+    events = db.get_step_events(str(plan.plan_id), ids["等待回答"])
+    assert (outcome, step_id) == ("stop", ids["等待回答"])
+    assert [event["event_type"] for event in events].count("needs_input") == 1
+    assert db.get_plan_status(str(plan.plan_id)) == PlanStatus.PAUSED.value
+
+
 def test_supplied_input_is_persisted_and_step_stays_resumable(tmp_path, monkeypatch):
     """补充输入端点写回 steps.inputs，并保留恢复目标；提交输入不等于授权执行。"""
     from fastapi.testclient import TestClient
@@ -440,6 +473,9 @@ def test_supplied_input_is_persisted_and_step_stays_resumable(tmp_path, monkeypa
         selection = db.select_next_batch(str(plan.plan_id), branch_version=1,
                                          resume_from_step_id=step_id, max_concurrency=1)
         assert [s["step_id"] for s in selection["steps"]] == [step_id]
+        assert json.loads(selection["steps"][0]["inputs"])["user_input"] == {
+            "repo_url": "https://example.invalid/repo"
+        }
         events = [e["event_type"] for e in db.get_step_events(str(plan.plan_id), step_id)]
         assert "input_supplied" in events
 

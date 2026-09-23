@@ -563,14 +563,15 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
         result["duration_ms"] = duration_ms
         return result
 
-    # 仅记录终态事件，不写入 Failed 状态，留给调用方在最终重试耗尽后统一写入。
-    # needs_input 是「等用户补输入」而不是失败，事件类型必须区分开（审计与回放靠它）。
+    # needs_input 不是失败；外层拿到 Agent 提问并写回 Paused 检查点后，
+    # 才能记录带 question 的唯一 needs_input 事件。这里若也记一次，
+    # 一次提问会产生两个同名事件，通知/回放消费方会误认为请求了两次输入。
     if result.get("needs_input"):
-        event_type = "needs_input"
-        failure_reason = "needs_input"
-    else:
-        event_type = "failed"
-        failure_reason = error or check_status or "unknown"
+        result["duration_ms"] = duration_ms
+        return result
+    # 失败只记录尝试结果，不在这里写入 Failed 状态；由外层重试耗尽后收尾。
+    event_type = "failed"
+    failure_reason = error or check_status or "unknown"
     event_data = {"reason": failure_reason, "blocked": blocked, "duration_ms": duration_ms}
     if acceptance_result is not None:
         event_data.update({

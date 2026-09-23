@@ -242,7 +242,36 @@ describe('PlanView Agent 补输入', () => {
     expect(useAppStore.getState().isExecuting).toBe(false);
   });
 
-  it('后端拒绝时显示错误且保留草稿，手动暂停的计划不显示输入框', async () => {
+  it('回滚分支的显示步骤与恢复目标 ID 不同时，提交到真实恢复步骤', async () => {
+    const plan = makePlan([
+      makeStep({ step_id: 'logical-step', description: '克隆步骤', status: 'Pending',
+                 branch_version: 3, outputs: { needs_input: true, question: '需要新地址' } }),
+    ], { status: 'Paused', current_branch: 3, resume_from_step_id: 'physical-clone' });
+    const user = await renderPlan(plan);
+    mockedApi.supplyStepInput.mockResolvedValue(undefined);
+
+    expect(screen.getByText('需要新地址')).toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: '补充信息' }), 'new address');
+    await user.click(screen.getByRole('button', { name: '保存补充信息' }));
+
+    await waitFor(() => expect(mockedApi.supplyStepInput)
+      .toHaveBeenCalledWith('plan-1', 'physical-clone', 'new address'));
+  });
+
+  it('多个克隆候选无法唯一定位时不猜测提交对象', async () => {
+    const plan = makePlan([
+      makeStep({ step_id: 'logical-1', description: '问题一', status: 'Pending',
+                 branch_version: 3, outputs: { needs_input: true, question: '第一个问题' } }),
+      makeStep({ step_id: 'logical-2', description: '问题二', status: 'Pending',
+                 branch_version: 3, outputs: { needs_input: true, question: '第二个问题' } }),
+    ], { status: 'Paused', current_branch: 3, resume_from_step_id: 'physical-clone' });
+    await renderPlan(plan);
+
+    expect(screen.queryByRole('textbox', { name: '补充信息' })).not.toBeInTheDocument();
+    expect(mockedApi.supplyStepInput).not.toHaveBeenCalled();
+  });
+
+  it('后端拒绝时显示错误且保留草稿', async () => {
     const user = await renderPlan(waiting);
     mockedApi.supplyStepInput.mockRejectedValueOnce(new Error('计划状态已变化'));
     const textbox = screen.getByRole('textbox', { name: '补充信息' });

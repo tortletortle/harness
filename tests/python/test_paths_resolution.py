@@ -125,3 +125,19 @@ def test_cache_defaults_live_under_repo_data_dir(monkeypatch, tmp_path):
     assert PlanCache.DEFAULT_CACHE_FILE == DATA_DIR / "plan_cache.json"
     explicit = PlanCache(cache_file=str(tmp_path / "c.json"))
     assert explicit.cache_file == tmp_path / "c.json"
+
+
+def test_default_caches_follow_isolated_db_path_even_when_env_is_set_late(monkeypatch, tmp_path):
+    """隔离 DB 不能读写仓库共享缓存；环境变量可能在 cache 模块导入后设置。"""
+    from cache import DesignCache, PlanCache
+
+    isolated_db = tmp_path / "private" / "eas.db"
+    monkeypatch.setenv(DB_PATH_ENV, str(isolated_db))
+    design = DesignCache()
+    plan = PlanCache()
+    assert design.cache_file == isolated_db.parent / "design_cache.json"
+    assert plan.cache_file == isolated_db.parent / "plan_cache.json"
+    design.set("stress-test", {"design_id": "private"})
+    plan.set("private", {"plan_id": "private"})
+    assert design.cache_file.is_file() and plan.cache_file.is_file()
+    assert PlanCache(cache_file=str(tmp_path / "explicit.json")).cache_file == tmp_path / "explicit.json"
