@@ -562,7 +562,9 @@ async def test_report_timeout_is_terminal_without_affecting_run(env):
         await asyncio.Event().wait()
 
     await artifacts._run_report_job(job, env.db, SimpleNamespace(generate_summary=slow), timeout=0.01)
-    assert env.db.get_artifact(job["artifact_id"])["metadata"]["status"] == "failed"
+    metadata = env.db.get_artifact(job["artifact_id"])["metadata"]
+    assert metadata["status"] == "completed", "报告超时应降级为仅核验事实（facts_only），不丢已核验成果"
+    assert metadata["narrative_status"] == "facts_only"
     assert env.db.get_execution_run(run["run_id"])["status"] == "Completed"
     assert env.state.current_execution is None
 
