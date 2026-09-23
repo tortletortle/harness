@@ -25,7 +25,7 @@ const libraryItems = [
 
 export function Sidebar() {
   const { currentView, setCurrentView, sidebarCollapsed, toggleSidebar, toggleLogPanel, logPanelCollapsed, toggleAiPanel, aiPanelCollapsed, currentPlan, isExecuting } = useAppStore();
-  const renderItem = (item: typeof primaryItems[number]) => {
+  const renderItem = (item: typeof primaryItems[number] | typeof libraryItems[number]) => {
     const Icon = item.icon;
     const active = currentView === item.id;
     return <button key={item.id} onClick={() => setCurrentView(item.id)} title={sidebarCollapsed ? item.label : undefined} aria-current={active ? 'page' : undefined} className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-all ${active ? 'bg-violet-500/15 text-white shadow-[inset_2px_0_0_#8b7cff]' : 'text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-100'}`}>

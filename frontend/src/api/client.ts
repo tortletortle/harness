@@ -256,6 +256,24 @@ export class ApiClient {
     }
   }
 
+  /** 保存 Agent 所请求的补充输入；是否恢复执行由用户单独决定。 */
+  async supplyStepInput(planId: string, stepId: string, input: string): Promise<void> {
+    const response = await authFetch(`${API_BASE}/api/plan/${planId}/steps/${stepId}/input`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input }),
+    });
+
+    if (!response.ok) {
+      await throwResponseError(response, '保存补充信息失败');
+    }
+
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.detail || data.error || '保存补充信息失败');
+    }
+  }
+
   /**
    * 跳过指定步骤
    */

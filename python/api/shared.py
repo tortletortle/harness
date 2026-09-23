@@ -315,6 +315,8 @@ def format_plan_for_frontend(plan) -> dict:
             step_obj = {
                 "step_id": str(step.get('step_id', '')),
                 "order": step.get('order', 0),
+                "depends_on": [str(dep) for dep in (step.get('depends_on') or [])],
+                "branch_version": step.get('branch_version') or 1,
                 "description": step.get('description', ''),
                 "tool": step.get('tool', ''),
                 "inputs": step.get('inputs', {}),
@@ -340,6 +342,10 @@ def format_plan_for_frontend(plan) -> dict:
         "design_id": str(plan_data.get('design_id', '')),
         # 计划级权威状态，前端轮询据此驱动暂停/恢复/进度，而非解析日志文本
         "status": plan_data.get('status') or 'Pending',
+        "current_branch": plan_data.get('current_branch') or 1,
+        "resume_from_step_id": (
+            str(plan_data['resume_from_step_id']) if plan_data.get('resume_from_step_id') else None
+        ),
         "segments": segments,
         "steps": all_steps,  # Flattened list for easy access
         "created_at": str(plan_data.get('created_at', '')),

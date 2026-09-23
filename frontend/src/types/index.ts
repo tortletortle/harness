@@ -65,6 +65,8 @@ export interface ExecutionPlan {
   design_id: string;
   status?: PlanStatus;
   segments: PlanSegment[];
+  current_branch?: number;
+  resume_from_step_id?: string | null;
   created_at?: string;
 }
 
@@ -76,6 +78,7 @@ export interface PlanSegment {
 
 export interface Step {
   step_id: string;
+  order?: number;
   description: string;
   tool: string;
   inputs: Record<string, any>;

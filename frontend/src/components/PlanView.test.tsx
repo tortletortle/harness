@@ -20,6 +20,7 @@ vi.mock('../api/client', () => ({
     executePlan: vi.fn(),
     pausePlan: vi.fn(),
     resumePlan: vi.fn(),
+    supplyStepInput: vi.fn(),
     skipStep: vi.fn(),
     rollbackPlan: vi.fn(),
   },
@@ -68,7 +69,9 @@ async function renderPlan(plan: ExecutionPlan) {
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks();
   vi.clearAllMocks();
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
   useAppStore.setState({ currentPlan: null, isExecuting: false, logs: [] });
 });
 
@@ -133,6 +136,19 @@ describe('PlanView 计划级控制', () => {
 });
 
 describe('PlanView 步骤级控制', () => {
+  it('用户取消跳过确认后不向后端提交跳过', async () => {
+    const user = await renderPlan(makePlan(
+      [makeStep({ step_id: 'step-1', description: '步骤一' })],
+      { status: 'Running' },
+    ));
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+
+    await user.click(screen.getByRole('button', { name: '跳过' }));
+
+    expect(window.confirm).toHaveBeenCalled();
+    expect(mockedApi.skipStep).not.toHaveBeenCalled();
+  });
+
   it('Pending 步骤显示跳过按钮，点击调用 skipStep', async () => {
     const plan = makePlan(
       [makeStep({ step_id: 'step-1', description: '步骤一' })],
@@ -201,6 +217,66 @@ describe('PlanView 步骤级控制', () => {
     await waitFor(() =>
       expect(screen.queryByText('确认回滚到此步骤')).not.toBeInTheDocument()
     );
+  });
+});
+
+describe('PlanView Agent 补输入', () => {
+  const waiting = makePlan([
+    makeStep({ step_id: 'step-wait', description: 'Agent 提问', status: 'Pending',
+               outputs: { needs_input: true, question: '请提供仓库地址' } }),
+  ], { status: 'Paused', resume_from_step_id: 'step-wait' });
+
+  it('展示问题、拒绝空白内容，保存输入但不擅自恢复执行', async () => {
+    const user = await renderPlan(waiting);
+    expect(screen.getByText('请提供仓库地址')).toBeInTheDocument();
+    const submit = screen.getByRole('button', { name: '保存补充信息' });
+    expect(submit).toBeDisabled();
+
+    await user.type(screen.getByRole('textbox', { name: '补充信息' }), '  repo location  ');
+    mockedApi.supplyStepInput.mockResolvedValue(undefined);
+    await user.click(submit);
+
+    await waitFor(() => expect(mockedApi.supplyStepInput)
+      .toHaveBeenCalledWith('plan-1', 'step-wait', 'repo location'));
+    expect(mockedApi.resumePlan).not.toHaveBeenCalled();
+    expect(useAppStore.getState().isExecuting).toBe(false);
+  });
+
+  it('后端拒绝时显示错误且保留草稿，手动暂停的计划不显示输入框', async () => {
+    const user = await renderPlan(waiting);
+    mockedApi.supplyStepInput.mockRejectedValueOnce(new Error('计划状态已变化'));
+    const textbox = screen.getByRole('textbox', { name: '补充信息' });
+    await user.type(textbox, 'keep this draft');
+    await user.click(screen.getByRole('button', { name: '保存补充信息' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('计划状态已变化');
+    expect(textbox).toHaveValue('keep this draft');
+    expect(mockedApi.resumePlan).not.toHaveBeenCalled();
+  });
+
+  it('普通人工暂停不会误显 Agent 补输入表单', async () => {
+    await renderPlan(makePlan([
+      makeStep({ step_id: 'step-1', description: '下一步', status: 'Pending' }),
+    ], { status: 'Paused', resume_from_step_id: 'step-1' }));
+
+    expect(screen.queryByRole('textbox', { name: '补充信息' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '恢复执行' })).toBeInTheDocument();
+  });
+});
+
+describe('PlanView 依赖图', () => {
+  it('按服务端依赖与当前分支展示计划层级', async () => {
+    const plan = makePlan([
+      makeStep({ step_id: 'step-1', description: '前置步骤', order: 1 }),
+      makeStep({ step_id: 'step-2', description: '后续步骤', order: 2,
+                 depends_on: ['step-1'], branch_version: 3 }),
+    ], { status: 'Paused', current_branch: 3 });
+    const user = await renderPlan(plan);
+
+    expect(screen.getByText(/分支 #3/)).toBeInTheDocument();
+    expect(screen.getByText('依赖 1 步')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /依赖分层视图/ }));
+    expect(screen.getByText('层级 2')).toBeInTheDocument();
   });
 });
 

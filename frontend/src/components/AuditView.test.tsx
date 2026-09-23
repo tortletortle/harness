@@ -32,6 +32,7 @@ function makeEntry(overrides: Partial<AuditLogEntry> & Pick<AuditLogEntry, 'audi
     blocked: 0,
     block_reason: null,
     actor: null,
+    grant_id: null,
     ...overrides,
   };
 }

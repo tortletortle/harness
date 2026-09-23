@@ -11,7 +11,7 @@ import { Activity, Loader2, Play } from 'lucide-react';
 import { apiClient } from '../api/client';
 import { useAppStore } from '../stores/appStore';
 import { PlanView } from './PlanView';
-import type { ExecutionPlan, ExecutionRun, ExecutionAttempt } from '../types';
+import type { ExecutionPlan, ExecutionRun } from '../types';
 
 type AttachKind = 'executing' | 'latest';
 

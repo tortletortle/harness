@@ -58,6 +58,27 @@ describe('ApiClient 控制端点', () => {
     expect((init.headers as Headers).get('Authorization')).toBe('Bearer test-token');
   });
 
+  it('supplyStepInput 将补充信息提交至当前步骤且不会自动调用恢复端点', async () => {
+    getFetchMock().mockResolvedValue(jsonResponse(200, { success: true }));
+
+    await apiClient.supplyStepInput('plan-1', 'step-2', 'repo location');
+
+    expect(getFetchMock()).toHaveBeenCalledTimes(1);
+    const [url, init] = getFetchMock().mock.calls[0];
+    expect(url).toBe('/api/plan/plan-1/steps/step-2/input');
+    expect(init.method).toBe('POST');
+    expect((init.headers as Headers).get('Authorization')).toBe('Bearer test-token');
+    expect((init.headers as Headers).get('Content-Type')).toBe('application/json');
+    expect(JSON.parse(init.body)).toEqual({ input: 'repo location' });
+  });
+
+  it('supplyStepInput 的 409 状态冲突会返回后端明确错误', async () => {
+    getFetchMock().mockResolvedValue(jsonResponse(409, { detail: '该步骤没有等待补充输入' }));
+
+    await expect(apiClient.supplyStepInput('plan-1', 'step-2', 'test'))
+      .rejects.toThrow('该步骤没有等待补充输入');
+  });
+
   it('skipStep 发送 POST 到 /api/plan/{id}/skip-step/{stepId}', async () => {
     getFetchMock().mockResolvedValue(jsonResponse(200, { success: true, message: '步骤已标记为跳过' }));
 

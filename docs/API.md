@@ -37,12 +37,12 @@ token 来源优先级：环境变量 `EAS_API_TOKEN` → `config/api_token` 文�
 | GET | `/api/design/{id}` | 设计书详情 |
 | POST | `/api/design/{id}/approve` | 审批，body: `{"approved": bool, "feedback": "..."}`；批准→生成计划，拒绝+反馈→AI 修订设计书 |
 | GET | `/api/plans?limit=10` | 执行计划列表 |
-| GET | `/api/plan/{id}` | 计划详情（含步骤、分支） |
+| GET | `/api/plan/{id}` | 计划详情（含 `current_branch`、`resume_from_step_id`；每个步骤含 `depends_on`、`branch_version` 和 `outputs`） |
 | POST | `/api/plan/{id}/execute` | 开始执行；已有任务在跑返回 409 |
 | POST | `/api/plan/{id}/pause` | 请求暂停（当前步骤完成后生效），同时原子写入恢复断点 |
 | POST | `/api/plan/{id}/resume` | 从断点恢复，仅限 Paused 状态 |
 | POST | `/api/plan/{id}/skip-step/{step_id}` | 跳过步骤；终态计划或非 Pending/Retry 步骤返回 409 |
-| POST | `/api/plan/{id}/steps/{step_id}/input` | 向等待补充输入的步骤写回 `user_input`（仅 Paused 计划 + Pending 步骤，否则 409） |
+| POST | `/api/plan/{id}/steps/{step_id}/input` | 向等待补充输入的步骤写回 `user_input`（仅 Paused 计划中恢复断点对应的 Pending 且 `outputs.needs_input=true` 的步骤，否则 409） |
 | POST | `/api/plan/{id}/rollback` | 回滚到指定步骤，body: `{"step_id": "...", "strategy": "retry"}`；克隆出新分支并废弃旧分支步骤 |
 | GET | `/api/audit-logs?limit=100&plan_id=` | 审计日志（工具调用记录，含被安全拦截的调用） |
 | GET | `/api/tools` | 工具列表（10 个内置工具及能力） |
@@ -99,6 +99,7 @@ curl -X POST http://127.0.0.1:8000/api/plan/<plan_id>/execute \
     -d '{"input": {"repo_url": "https://example.invalid/repo"}}'
   ```
 
-  再 `POST /api/plan/{plan_id}/resume`，调度器从同一步继续（提交输入本身不启动执行）。
+  也可在执行计划页查看提问并填写补充信息。再手动点击「恢复执行」或
+  `POST /api/plan/{plan_id}/resume`，调度器从同一步继续（提交输入本身不启动执行）。
 - **最终交付报告**：`_generate_final_report` 生成前重新读取数据库中的计划与各步骤
   结果，不使用认领执行时的计划快照，避免报告里出现 Pending / 空 outputs。

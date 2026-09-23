@@ -40,7 +40,7 @@ const PLAN_STATUS_LABELS: Record<PlanStatus, string> = {
   RolledBack: '已回滚',
 };
 
-type ControlAction = 'pause' | 'resume' | 'skip' | 'rollback' | 'replan' | null;
+type ControlAction = 'pause' | 'resume' | 'input' | 'skip' | 'rollback' | 'replan' | null;
 
 /** 计算每个步骤的拓扑层级（依赖链长度）：同层步骤无依赖关系，可受控并行。 */
 function computeLevels(steps: Step[]): Map<string, number> {
@@ -98,6 +98,7 @@ export function PlanView() {
   const [controlInFlight, setControlInFlight] = useState<ControlAction>(null);
   const [rollbackTarget, setRollbackTarget] = useState<Step | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [stepInputDraft, setStepInputDraft] = useState({ planId: '', stepId: '', text: '' });
   const [allExpanded, setAllExpanded] = useState(false);
   const [graphView, setGraphView] = useState(false);
   usePlanPolling();
@@ -121,6 +122,14 @@ export function PlanView() {
   const planStatus = currentPlan.status;
   const terminal = isTerminalPlan(currentPlan);
   const allSteps = currentPlan.segments.flatMap((segment) => segment.steps);
+  const waitingInputStep = planStatus === 'Paused'
+    ? allSteps.find((step) => step.step_id === currentPlan.resume_from_step_id &&
+        step.status === 'Pending' && step.outputs?.needs_input === true)
+    : undefined;
+  const inputDraft = waitingInputStep &&
+    stepInputDraft.planId === currentPlan.plan_id &&
+    stepInputDraft.stepId === waitingInputStep.step_id
+      ? stepInputDraft.text : '';
   const totalSteps = allSteps.length;
   const completedSteps = allSteps.filter(
     (step) => step.status === 'Success' || step.status === 'Skipped',
@@ -238,11 +247,36 @@ export function PlanView() {
       setIsExecuting(true);
       addLog({ type: 'log', level: 'success', message: '恢复请求已发出，计划将从断点继续执行' });
     } catch (error) {
+      const message = `恢复失败: ${error instanceof Error ? error.message : String(error)}`;
+      setActionError(message);
       addLog({
         type: 'log',
         level: 'error',
-        message: `恢复失败: ${error instanceof Error ? error.message : String(error)}`,
+        message,
       });
+    } finally {
+      setControlInFlight(null);
+    }
+  };
+
+  const handleSupplyInput = async (step: Step) => {
+    const input = inputDraft.trim();
+    if (!input) return;
+    setActionError(null);
+    setControlInFlight('input');
+    try {
+      await apiClient.supplyStepInput(currentPlan.plan_id, step.step_id, input);
+      setStepInputDraft({ planId: '', stepId: '', text: '' });
+      addLog({ type: 'log', level: 'success', message: `步骤 ${step.step_id} 已保存补充信息，等待手动恢复执行` });
+      try {
+        setCurrentPlan(await apiClient.getPlan(currentPlan.plan_id));
+      } catch {
+        addLog({ type: 'log', level: 'warning', message: '补充信息已保存，但刷新计划失败；可重新进入计划页查看状态' });
+      }
+    } catch (error) {
+      const message = `保存补充信息失败: ${error instanceof Error ? error.message : String(error)}`;
+      setActionError(message);
+      addLog({ type: 'log', level: 'error', message });
     } finally {
       setControlInFlight(null);
     }
@@ -449,6 +483,35 @@ export function PlanView() {
           {actionError && <div role="alert" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-red-400/20 bg-red-400/[0.08] px-3 py-2 text-xs text-red-200"><span>{actionError}</span><button type="button" onClick={() => setActionError(null)} aria-label="关闭错误提示" className="text-red-300 hover:text-white">×</button></div>}
         </div>
 
+        {waitingInputStep && (
+          <section aria-label="步骤等待补充输入" className="rounded-xl border border-amber-400/25 bg-amber-400/[0.06] p-4 sm:p-5">
+            <h3 className="text-sm font-semibold text-amber-200">步骤需要补充输入 · {waitingInputStep.description}</h3>
+            <p className="mt-2 whitespace-pre-wrap break-words text-sm text-zinc-200">
+              {typeof waitingInputStep.outputs?.question === 'string'
+                ? waitingInputStep.outputs.question : '请补充当前步骤需要的信息。'}
+            </p>
+            <label htmlFor="step-extra-input" className="mt-4 block text-xs font-medium text-zinc-300">补充信息</label>
+            <textarea
+              id="step-extra-input"
+              rows={3}
+              value={inputDraft}
+              onChange={(event) => setStepInputDraft({
+                planId: currentPlan.plan_id, stepId: waitingInputStep.step_id, text: event.target.value,
+              })}
+              disabled={controlInFlight !== null}
+              className="mt-2 w-full resize-y rounded-lg border border-white/[0.12] bg-black/25 p-3 text-sm text-white outline-none focus:border-violet-400 disabled:opacity-40"
+            />
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button type="button" onClick={() => void handleSupplyInput(waitingInputStep)}
+                disabled={!inputDraft.trim() || controlInFlight !== null}
+                className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-40">
+                {controlInFlight === 'input' ? '保存中...' : '保存补充信息'}
+              </button>
+              <p className="text-xs text-zinc-400">保存后仍需点击上方「恢复执行」；不会自动执行步骤。</p>
+            </div>
+          </section>
+        )}
+
         {totalSteps === 0 ? (
           <div className="rounded-xl border border-dashed border-amber-400/20 bg-amber-400/[0.04] p-6 text-center text-sm text-zinc-400">这个计划还没有可执行步骤。</div>
         ) : hasDependencies && graphView ? (
@@ -569,7 +632,7 @@ export function PlanView() {
                                 </div>
                                 <div className="flex shrink-0 items-center gap-1">
                                   {canSkip(step) && (
-                                    <button onClick={() => { if (window.confirm('确定跳过此步骤？该步骤不会调用工具。') !== false) void handleSkip(step); }} disabled={controlInFlight !== null} title="跳过" aria-label="跳过" className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.08] hover:text-zinc-200 disabled:opacity-40">
+                                    <button onClick={() => { if (window.confirm('确定跳过此步骤？该步骤不会调用工具。')) void handleSkip(step); }} disabled={controlInFlight !== null} title="跳过" aria-label="跳过" className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.08] hover:text-zinc-200 disabled:opacity-40">
                                       <SkipForward className="h-3.5 w-3.5" />
                                     </button>
                                   )}

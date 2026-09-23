@@ -315,7 +315,7 @@ async def skip_step(plan_id: str, step_id: str):
 async def supply_step_input(plan_id: str, step_id: str, request: Optional[Dict[str, Any]] = None):
     """把用户补充的输入写回等待中的步骤（agent 返回 needs_input 时的补充通道）。
 
-    只接受 Paused 计划 + Pending 步骤——正是 needs_input 的落库形态。内容合并进
+    只接受 Paused 计划中恢复断点对应的 Pending 且 needs_input 的步骤。内容合并进
     steps.inputs 的 user_input 键（可同时给 artifact_refs），计划保持 Paused：
     补输入不等于授权执行，是否继续由调用方显式 /resume 决定。
     """
@@ -339,10 +339,20 @@ async def supply_step_input(plan_id: str, step_id: str, request: Optional[Dict[s
                 status_code=409,
                 detail=f"只有等待补充输入（Pending）的步骤可以提交输入，当前状态: {effective_status}",
             )
+        if str(getattr(plan, "resume_from_step_id", None) or "") != str(step_id):
+            raise HTTPException(status_code=409, detail="该步骤不是当前计划的补输入恢复断点")
         row = next(
             (s for s in state.database.get_steps(plan_id) if str(s["step_id"]) == str(step_id)),
             None,
         )
+        outputs = row.get("outputs") if row else None
+        if isinstance(outputs, str):
+            try:
+                outputs = json.loads(outputs)
+            except (ValueError, TypeError):
+                outputs = None
+        if not isinstance(outputs, dict) or outputs.get("needs_input") is not True:
+            raise HTTPException(status_code=409, detail="该步骤没有等待补充输入")
         inputs = row.get("inputs") if row else {}
         if isinstance(inputs, str):
             try:

@@ -449,6 +449,48 @@ def test_supplied_input_is_persisted_and_step_stays_resumable(tmp_path, monkeypa
         reset_token_cache()
 
 
+def test_supply_input_rejects_unrelated_or_non_waiting_steps(tmp_path, monkeypatch):
+    """普通人工暂停不能改写步骤；等待输入时只允许改写恢复目标。"""
+    from fastapi.testclient import TestClient
+
+    from api.auth import reset_token_cache
+    from api.server import app
+
+    monkeypatch.setenv("EAS_API_TOKEN", TOKEN)
+    reset_token_cache()
+    db = Database(str(tmp_path / "supply-guard.db"))
+    monkeypatch.setattr(state, "database", db)
+    plan, _, ids = _seed_plan(db, [
+        ("需要输入", [], "review_agent"),
+        ("其他步骤", [], "review_agent"),
+    ])
+    waiting_id, other_id = ids["需要输入"], ids["其他步骤"]
+    db.update_plan_state_machine(str(plan.plan_id), PlanStatus.PAUSED.value,
+                                 resume_from_step_id=waiting_id)
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+    try:
+        url = f"/api/plan/{plan.plan_id}/steps"
+        no_request = client.post(f"{url}/{waiting_id}/input", headers=headers,
+                                 json={"input": "没有请求过"})
+        assert no_request.status_code == 409
+
+        db.update_step_state_machine(step_id=waiting_id, status="Pending",
+                                     outputs={"needs_input": True, "question": "请补充"})
+        unrelated = client.post(f"{url}/{other_id}/input", headers=headers,
+                                json={"input": "不属于此步骤"})
+        assert unrelated.status_code == 409
+        other_row = next(r for r in db.get_steps(str(plan.plan_id)) if r["step_id"] == other_id)
+        assert json.loads(other_row["inputs"]) == {}
+
+        allowed = client.post(f"{url}/{waiting_id}/input", headers=headers,
+                              json={"input": "这里是补充信息"})
+        assert allowed.status_code == 200
+    finally:
+        monkeypatch.delenv("EAS_API_TOKEN", raising=False)
+        reset_token_cache()
+
+
 def test_coding_agent_needs_input_is_not_a_failure(tmp_path, monkeypatch):
     """多轮 coding_agent 同样要保留 needs_input，不能退化成「输出缺少 content」失败。"""
     from authorization import GrantLimits

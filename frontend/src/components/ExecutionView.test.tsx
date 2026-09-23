@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExecutionView } from './ExecutionView';
 import { useAppStore } from '../stores/appStore';
 import { apiClient } from '../api/client';
-import type { ExecutionPlan, Step } from '../types';
+import type { ExecutionPlan } from '../types';
 
 vi.mock('../api/client', () => ({
   apiClient: {
