@@ -75,6 +75,8 @@ curl -X POST http://127.0.0.1:8000/api/plan/<plan_id>/execute \
 ```
 
 执行进度通过 `GET /api/plan/{id}` 轮询或前端页面查看；日志事件由 `/ws/logs` 推送。
+计划详情的步骤 `inputs` 来自步骤表的最新运行态（包括提交后的 `user_input`），
+不会改写计划保存时的 `plans.segments` 设计快照。
 
 ## 智能体任务交接（handoff）
 

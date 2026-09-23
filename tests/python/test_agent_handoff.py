@@ -408,6 +408,14 @@ def test_supplied_input_is_persisted_and_step_stays_resumable(tmp_path, monkeypa
     try:
         client = TestClient(app)
         headers = {"Authorization": f"Bearer {TOKEN}"}
+        detail = client.get(f"/api/plan/{plan.plan_id}", headers=headers)
+        assert detail.status_code == 200
+        visible = detail.json()["plan"]
+        assert visible["status"] == PlanStatus.PAUSED.value
+        assert visible["resume_from_step_id"] == step_id
+        assert visible["segments"][0]["steps"][0]["outputs"] == {
+            "needs_input": True, "question": "要哪个仓库？"
+        }
         resp = client.post(
             f"/api/plan/{plan.plan_id}/steps/{step_id}/input",
             headers=headers,
@@ -417,6 +425,12 @@ def test_supplied_input_is_persisted_and_step_stays_resumable(tmp_path, monkeypa
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["success"] is True
+
+        refreshed = client.get(f"/api/plan/{plan.plan_id}", headers=headers)
+        assert refreshed.status_code == 200
+        assert refreshed.json()["plan"]["segments"][0]["steps"][0]["inputs"]["user_input"] == {
+            "repo_url": "https://example.invalid/repo"
+        }
 
         row = db.get_steps(str(plan.plan_id))[0]
         inputs = json.loads(row["inputs"])

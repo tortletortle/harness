@@ -45,11 +45,14 @@ def test_plan_detail_preserves_dependencies_and_branch_checkpoint():
 
 
 def test_old_plan_without_workgraph_fields_has_safe_defaults():
+    legacy_step = _step(uuid4(), order=1)
+    legacy_step.pop("depends_on")
+    legacy_step.pop("branch_version")
     result = format_plan_for_frontend({
         "plan_id": uuid4(),
         "design_id": uuid4(),
         "segments": [{"segment_id": uuid4(), "description": "旧计划",
-                      "steps": [_step(uuid4(), order=1)]}],
+                      "steps": [legacy_step]}],
     })
 
     assert result["current_branch"] == 1

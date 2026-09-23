@@ -1043,7 +1043,7 @@ class Database:
                     # 从 JSON 加载 segments
                     segments_data = json.loads(row['segments'])
                     
-                    # 从 steps 表读取步骤状态和输出（覆盖 JSON 中的旧数据）。
+                    # 从 steps 表读取步骤实时输入、状态和输出（覆盖 JSON 中的旧快照）。
                     # 回滚克隆会沿用原 step_id 产生多行（旧分支 obsolete + 新分支活动），
                     # dict 覆盖顺序必须让「活动分支、未废弃」的行排在最后生效，
                     # 否则 get_plan 会随机返回旧分支的过期状态。
@@ -1057,6 +1057,7 @@ class Database:
                     steps_rows = cursor.fetchall()
                     steps_updates = {
                         row['step_id']: {
+                            'inputs': json.loads(row['inputs']) if row['inputs'] else {},
                             'status': row['status'],
                             'outputs': json.loads(row['outputs']) if row['outputs'] else None,
                             'executed_at': row['executed_at'],
@@ -1487,8 +1488,8 @@ class Database:
     def update_step_inputs(self, step_id: str, inputs: Dict[str, Any]) -> bool:
         """覆盖 steps.inputs（当前用于用户补充 agent 步骤缺失的输入）。
 
-        只写 steps 行，不回写 plans.segments 里的计划期快照：执行期取步读的是
-        steps.inputs，segments JSON 保持设计原样，回滚与重规划仍可复现。
+        只写 steps 行，不回写 plans.segments 里的计划期快照：执行期取步及
+        get_plan 的运行态投影都读取 steps.inputs，segments JSON 保持设计原样。
         命中返回 True，step_id 不存在返回 False，SQL 失败抛 DatabaseError。
         """
         try:
