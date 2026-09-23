@@ -352,8 +352,9 @@ async def test_compat_chat_connection_error_without_response(monkeypatch):
 
     _patch_http(monkeypatch, boom)
     provider = OpenAICompatibleProvider("t", "k", "https://x.com")
-    with pytest.raises(Exception, match="conn refused"):
+    with pytest.raises(Exception, match="RuntimeError") as caught:
         await provider.chat([Message(role="user", content="q")], model="m")
+    assert "conn refused" not in str(caught.value)  # Arbitrary transport text is private.
 
 
 async def test_compat_chat_broken_response_detail_swallowed(monkeypatch):
@@ -372,8 +373,9 @@ async def test_compat_chat_broken_response_detail_swallowed(monkeypatch):
 
     _patch_http(monkeypatch, weird)
     provider = OpenAICompatibleProvider("t", "k", "https://x.com")
-    with pytest.raises(Exception, match="bad status"):
+    with pytest.raises(Exception, match="RuntimeError") as caught:
         await provider.chat([Message(role="user", content="q")], model="m")
+    assert "bad status" not in str(caught.value)
 
 
 async def test_compat_health_check_and_close():

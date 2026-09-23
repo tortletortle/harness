@@ -51,7 +51,16 @@ def _provider_slot(base_url, api_key):
     key = (base_url, hashlib.sha256(api_key.encode()).hexdigest())
     with _provider_slots_lock:
         if key not in _provider_slots:
-            limit = max(1, int(os.getenv("EAS_LLM_MAX_CONCURRENCY", "2")))
+            try:
+                limit = int(os.getenv("EAS_LLM_MAX_CONCURRENCY", "2"))
+                if not 1 <= limit <= 64:
+                    raise ValueError("out of range")
+            except (ValueError, TypeError, OverflowError):
+                # Do not echo arbitrary environment contents into logs.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Invalid EAS_LLM_MAX_CONCURRENCY; using default 2 (allowed 1-64)")
+                limit = 2
             _provider_slots[key] = _threading.BoundedSemaphore(limit)
         return _provider_slots[key]
 
@@ -206,7 +215,8 @@ class AnthropicProvider(LLMProvider):
                 max_tokens=10,
             )
             return True
-        except:
+        except Exception:
+            # Cancellation/SystemExit are control signals, not failed health checks.
             return False
 
 
@@ -270,7 +280,8 @@ class OpenAIProvider(LLMProvider):
                 max_tokens=10,
             )
             return True
-        except:
+        except Exception:
+            # Cancellation/SystemExit are control signals, not failed health checks.
             return False
 
 
@@ -385,37 +396,38 @@ class OpenAICompatibleProvider(LLMProvider):
             finally:
                 self._slot.release()
             response.raise_for_status()
-            data = response.json()
-            
-            message = data["choices"][0]["message"]
-            
-            return LLMResponse(
-                content=message.get("content") or "",
-                model=model,
-                usage=data.get("usage", {}),
-                finish_reason=data["choices"][0].get("finish_reason"),
-                tool_calls=message.get("tool_calls"),  # 可能为None
-            )
-        except Exception as e:
-            # 打印详细错误信息用于调试
-            error_msg = f"{self._name} API error: [{type(e).__name__}] {str(e) or chr(60) + chr(101) + chr(109) + chr(112) + chr(116) + chr(121) + chr(32) + chr(109) + chr(101) + chr(115) + chr(115) + chr(97) + chr(103) + chr(101) + chr(62)}"
             try:
-                if 'response' in locals():
-                    error_msg += f"\n响应状态码: {response.status_code}"
-                    # Do not copy untrusted upstream bodies into logs/API exceptions:
-                    # gateways may echo credentials or private prompt content.
-
-            except:
-                pass
-            if isinstance(e, LLMRequestError):
-                raise
-            error_msg = error_msg.replace(self.api_key, "[REDACTED]") if self.api_key else error_msg
+                data = response.json()
+                message = data["choices"][0]["message"]
+                return LLMResponse(
+                    content=message.get("content") if message.get("content") is not None else "",
+                    model=model,
+                    usage=data.get("usage", {}),
+                    finish_reason=data["choices"][0].get("finish_reason"),
+                    tool_calls=message.get("tool_calls"),
+                )
+            except (ValueError, TypeError, KeyError, IndexError, AttributeError) as exc:
+                # HTTP success alone does not mean a usable model response. Validation
+                # errors may embed private response content: never copy their text.
+                raise LLMRequestError(
+                    f"{self._name} API error: invalid response [{type(exc).__name__}]",
+                    status_code=response.status_code, retry_after=_retry_after(response),
+                    retryable=True,
+                ) from None
+        except LLMRequestError:
+            raise
+        except Exception as exc:
             status = getattr(locals().get("response"), "status_code", None)
+            # HTTP/transport exception strings may contain URL credentials or private
+            # gateway text. Keep the type/status, not untrusted exception messages.
+            error_msg = f"{self._name} API error: [{type(exc).__name__}]"
+            if status is not None:
+                error_msg += f" HTTP {status}"
             raise LLMRequestError(
                 error_msg, status_code=status, retry_after=_retry_after(locals().get("response")),
-                retryable=status in {408, 429, 500, 502, 503, 504} or isinstance(e, httpx.TransportError),
-            ) from e
-    
+                retryable=status in {408, 429, 500, 502, 503, 504} or isinstance(exc, httpx.TransportError),
+            ) from None
+
     async def health_check(self) -> bool:
         try:
             await self.chat(
@@ -424,7 +436,8 @@ class OpenAICompatibleProvider(LLMProvider):
                 max_tokens=10,
             )
             return True
-        except:
+        except Exception:
+            # Cancellation/SystemExit are control signals, not failed health checks.
             return False
     
     async def close(self):
