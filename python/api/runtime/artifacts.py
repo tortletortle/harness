@@ -15,6 +15,7 @@ from weakref import WeakKeyDictionary
 
 from api.shared import broadcast_log, state
 
+from domain.report_truth import capture_facts, unknown_facts, report_facts, render_report
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -56,17 +57,22 @@ def _attempt_count(metadata):
     return value
 
 
-def prepare_final_report(plan, run_id=None, *, database=None, workspace=None):
+def prepare_final_report(plan, run_id=None, *, database=None, workspace=None, revision_id=None, interventions=None):
     """Durable, per-Run snapshot; optional reports never own execution reservations."""
     from tools.workspace import resolve_workspace_root
-    from uuid import uuid4
+    from uuid import UUID, uuid4
     db = database or state.database
     job_id = f"report-job-{run_id or uuid4()}"
+    if revision_id is not None:
+        if not run_id:
+            raise ValueError("Report revision requires an existing Run")
+        job_id += "-revision-" + str(UUID(str(revision_id)))
     existing = db.get_artifact(job_id)
     if existing:
         return existing
     metadata = {"status": "pending", "attempts": 0,
                 "snapshot": plan.model_dump(mode="json"),
+                "execution_facts": capture_facts(db, plan, run_id, interventions),
                 "workspace": str(workspace or resolve_workspace_root()),
                 "report_workspace": str(resolve_workspace_root())}
     if not db.create_artifact(job_id, "delivery_report_job", f"job://{job_id}",
@@ -114,6 +120,8 @@ async def _execute_report_job(job, database, designer, timeout):
     token = set_workspace_override(metadata.get("report_workspace") or resolve_workspace_root())
     usage_token = usage_tracker._context.set({"plan_id": job.get("plan_id"), "phase": "report"})
 
+    facts_token = None
+
     def persist(status, **extra):
         updated = {**metadata, "status": status, "updated_at": datetime.now().isoformat(), **extra}
         if not database.update_artifact_metadata(job["artifact_id"], updated):
@@ -148,13 +156,15 @@ async def _execute_report_job(job, database, designer, timeout):
         persist("running", attempts=attempts + 1, error=None)
         results = [step for segment in plan.segments for step in segment.steps]
         timeout = report_options({"reports": {"timeout_seconds": timeout}})["timeout_seconds"]
+        facts = metadata.get("execution_facts") or unknown_facts(plan)
+        facts_token = report_facts.set(facts)
         summary = await asyncio.wait_for(designer.generate_summary(plan, results), timeout=timeout)
         if not summary or not str(summary).strip():
             raise ValueError("模型返回空交付报告")
         database.store_artifact_content(
-            artifact_id, str(summary).encode("utf-8"), plan_id=str(plan.plan_id),
+            artifact_id, render_report(summary, facts).encode("utf-8"), plan_id=str(plan.plan_id),
             run_id=job.get("run_id"), kind="delivery_report",
-            metadata={"source": "final_report", "plan_status": "Completed"},
+            metadata={"source": "final_report", "plan_status": plan.status.value, "truth_schema_version": 1},
         )
         persist("completed", report_artifact_id=artifact_id)
     except asyncio.CancelledError:
@@ -165,6 +175,8 @@ async def _execute_report_job(job, database, designer, timeout):
         logger.warning("最终交付报告失败: {} ({})", job["artifact_id"], type(exc).__name__)
         return
     finally:
+        if facts_token is not None:
+            report_facts.reset(facts_token)
         usage_tracker._context.reset(usage_token)
         reset_workspace_override(token)
 
