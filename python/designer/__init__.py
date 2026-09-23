@@ -861,7 +861,7 @@ class DefaultDesigner(Designer):
 - 目录路径以 / 结尾（如 "output/"），文件路径带扩展名
 
 【约束（重要）】
-- 允许使用的工具：file_creator（创建新文件/目录）、coding_agent（修改已存在的代码文件）、test_runner（运行登记过的测试模板验证代码）、lint_gate（对 .py 文件做语法检查）、browser_check（用无头浏览器检查页面：文本/选择器断言+截图）。不要执行任何 shell 命令，不要使用 command_runner / package_installer / git_operator / text_editor / web_fetcher。
+- 允许使用的工具：file_creator（创建新文件/目录）、coding_agent（修改已存在的代码文件）、test_runner（运行登记过的测试模板验证代码）、lint_gate（对 .py 文件做语法检查）、browser_check（用无头浏览器检查页面：文本/选择器断言+截图）。不要执行任何 shell 命令；text_editor 不作为独立顶层工具使用，只能作为 coding_agent 的 allowed_tools 值（见 coding_agent 契约），其余顶层禁用 command_runner / package_installer / git_operator / web_fetcher。
 - 创建新文件用 file_creator；修改已存在文件的内容用 coding_agent（它能先读原文再做受控修改）；代码改完后优先在该 coding_agent 步骤的 acceptance 直接挂 test_passes 由 pytest 判定行为（见下方验收写法要求），也可用独立 test_runner 步骤跑测试。
 - test_runner 步骤契约：inputs 必含 suite（已登记模板名，如 "pytest"，可用 test_path 指定测试文件或目录）；acceptance 必含 {"type":"test_passes","suite":"<同 inputs.suite>"}（推荐，行为级）或 {"type":"exit_code","equals":0}；不要用 test_runner 执行非测试命令。
 - lint_gate 步骤契约：inputs 必含 path（要检查的 .py 文件，相对路径）；acceptance 必含 {"type":"exit_code","equals":0}；只做语法检查，不能替代测试。
@@ -871,7 +871,7 @@ class DefaultDesigner(Designer):
 - 验收写法要求：content_contains 只匹配稳定的行为性标记（新增断言、函数名、关键逻辑行），不要精确匹配调用的参数顺序或完整调用形状——实现可能用不同但正确的写法。能跑测试的场景：优先把 {"type":"test_passes","suite":"pytest","test_path":"<任务创建的测试文件或目录>"} 挂在修改代码的 coding_agent 步骤 acceptance 上——行为对不对由 pytest 判定；test_path 指向的测试文件必须在该步骤之前已创建，且此时不必再追加独立的 test_runner 步骤（避免同一测试跑两遍）。
 
 【coding_agent 步骤契约（必须全部满足，否则计划会被拒绝）】
-1. inputs 必须包含：path（要修改的单个文件，相对路径）、instruction（一句话修改指令）、allowed_tools 固定为 ["text_editor"]
+1. inputs 必须包含：path（要修改的单个文件，相对路径）、instruction（一句话修改指令）、allowed_tools——只能是 ["text_editor"] 或 ["text_editor", "test_runner"]（后者允许 coding_agent 多轮自测）；绝不能包含 command_runner 或任何未登记的 shell 类工具
 2. 一个 coding_agent 步骤只修改一个文件；多个文件拆成多个步骤
 3. 必须携带非空 acceptance（content_contains / file_exists / test_passes），不依赖人工检查
 4. 验收-指令一致性（强约束，计划期会被校验拒绝）：
@@ -965,6 +965,28 @@ class DefaultDesigner(Designer):
                 "model": "gpt-5.6-sol", 
                 "temperature": 0.3
             })
+        
+        # 只保留已注册的 provider：config/硬编码里的 stepfun、hejuapi 等若运行时未注册
+        # （api_keys/base_urls 缺失导致 server.py 注册时跳过），llm_client.chat 会抛
+        # Provider not found，重试 4 次全部打在无效 provider 上，主/备真实模型一次都没试到。
+        # 仅在能确认注册表（providers 非空词典）时过滤；无法确认（测试裸桩、空注册表）
+        # 时保留原重试契约，不影响既有行为。
+        providers_registry = getattr(self.llm_client, "providers", None)
+        if isinstance(providers_registry, dict) and providers_registry:
+            usable = [cfg for cfg in fallback_strategy if cfg["provider"] in providers_registry]
+            dropped = [
+                f"{cfg['provider']}:{cfg['model']}"
+                for cfg in fallback_strategy
+                if cfg["provider"] not in providers_registry
+            ]
+            for desc in dropped:
+                logger.warning("跳过未注册的 LLM provider（执行计划生成 fallback）: {}", desc)
+            fallback_strategy = usable
+            if not fallback_strategy:
+                raise GenerationError(
+                    "执行计划生成失败：没有可用的已注册 LLM provider，"
+                    "请检查 api_keys/base_urls 配置（primary 与所有 fallback 均未注册）"
+                )
         
         for attempt in range(max_retries):
             try:

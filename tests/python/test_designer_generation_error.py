@@ -106,6 +106,65 @@ async def test_generate_plan_failure_raises_generation_error_after_retries(tmp_p
     assert llm.calls == 4, "必须保持原有的 4 次尝试（1 次主调用 + 3 次重试）"
 
 
+async def test_generate_plan_filters_unregistered_fallback_providers(tmp_path, monkeypatch):
+    """回归：generate_plan 的 fallback 曾指向运行时未注册的 provider（stepfun/hejuapi），
+    导致 4 次重试全部 Provider not found。已注册 provider 存在时，未注册 fallback 必须被剔除。
+    """
+    async def _no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+
+    class _LLMWithRegistry:
+        """能暴露 providers 注册表（与真实 LLMClient 同构）的桩，记录被调用的 provider。"""
+
+        def __init__(self):
+            self.providers = {"stub": SimpleNamespace(name="stub")}
+            self.calls = []
+
+        async def chat(self, **kwargs):
+            self.calls.append(kwargs.get("provider_name"))
+            raise RuntimeError("LLM 不可用")
+
+    llm = _LLMWithRegistry()
+    designer = _make_designer(llm, tmp_path)
+
+    with pytest.raises(GenerationError, match="执行计划生成失败"):
+        await designer.generate_plan(_sample_design())
+
+    assert llm.calls, "应当发起过 LLM 调用"
+    assert set(llm.calls) == {"stub"}, (
+        f"未注册的 fallback provider 不应被调用，实际调用了: {sorted(set(llm.calls))}"
+    )
+
+
+async def test_generate_plan_no_usable_provider_raises_early(tmp_path, monkeypatch):
+    """回归：primary 与全部 fallback 都未注册时，不再空烧重试，直接失败并说明缺 provider。"""
+    async def _no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+
+    class _LLMOnlyUnusableProvider:
+        """providers 非空但没有任何条目匹配 fallback 策略（模拟注册表漂移）。"""
+
+        def __init__(self):
+            self.providers = {"other-provider": SimpleNamespace(name="other-provider")}
+            self.calls = []
+
+        async def chat(self, **kwargs):
+            self.calls.append(kwargs.get("provider_name"))
+            raise AssertionError("不应调用任何 chat")
+
+    llm = _LLMOnlyUnusableProvider()
+    designer = _make_designer(llm, tmp_path)
+
+    with pytest.raises(GenerationError, match="没有可用的已注册 LLM provider"):
+        await designer.generate_plan(_sample_design())
+
+    assert llm.calls == [], "未注册任何可用 provider 时不应白烧重试"
+
+
 async def test_revise_design_failure_raises_generation_error(tmp_path):
     """回归：revise_design 曾在失败时静默返回原设计书，用户以为反馈已生效。"""
     llm = _ExplodingLLM()

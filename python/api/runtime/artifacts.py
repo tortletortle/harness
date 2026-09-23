@@ -159,41 +159,58 @@ async def _execute_report_job(job, database, designer, timeout):
         facts = metadata.get("execution_facts") or unknown_facts(plan)
         facts_token = report_facts.set(facts)
         started = asyncio.get_running_loop().time()
-        summary = await asyncio.wait_for(designer.generate_summary(plan, results), timeout=timeout)
-        if not summary or not str(summary).strip():
-            raise ValueError("模型返回空交付报告")
-        narrative_generation_attempts = 1
+        summary_timeout = False
         try:
-            report_text = render_report(summary, facts)
-            narrative_status = "validated"
-        except ReportTruthError:
-            # Do not send rejected text back to the model or publish it. Optional
-            # designers may offer one safe rewrite using only frozen fact fields.
-            report_text = None
-            retry = getattr(designer, "generate_summary_retry", None)
-            remaining = timeout - (asyncio.get_running_loop().time() - started)
-            if callable(retry) and remaining > 0.01:
-                narrative_generation_attempts = 2
-                try:
-                    revised = await asyncio.wait_for(retry(plan, results), timeout=remaining)
-                    if revised and str(revised).strip():
-                        report_text = render_report(revised, facts)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    logger.warning("报告事实校验后的重写未通过: {} ({})",
-                                   job["artifact_id"], type(exc).__name__)
-            if report_text is None:
-                # Never publish either rejected model output. The independently
-                # frozen facts remain useful, with an explicit downgrade label.
-                narrative_status = "facts_only"
-                report_text = render_report(
-                    "模型补充说明未被采用：自动生成文字未通过事实校验。"
-                    "本报告仅保留系统核验事实，不包含模型结论。", facts,
-                )
-                logger.warning("报告补充说明未通过事实校验，仅保存核验事实: {}", job["artifact_id"])
-            else:
+            summary = await asyncio.wait_for(designer.generate_summary(plan, results), timeout=timeout)
+        except asyncio.TimeoutError:
+            # 事实已冻结、独立于模型叙事：模型摘要超时宁可降级只交付核验事实，
+            # 也不把整份交付报告标成 failed 丢掉已有成果。
+            summary_timeout = True
+            summary = None
+            logger.warning("最终交付报告模型摘要超时（{} 秒），改为仅保存核验事实: {}",
+                           round(timeout, 2), job["artifact_id"])
+        if not summary or not str(summary).strip():
+            if not summary_timeout:
+                raise ValueError("模型返回空交付报告")
+            narrative_generation_attempts = 1
+            narrative_status = "facts_only"
+            report_text = render_report(
+                "模型生成交付报告超时，未获得可用补充说明；本报告仅保留系统核验事实，不包含模型结论。",
+                facts,  # render_report is pure; the timeout-safe narrative_text is fixed
+            )
+        else:
+            narrative_generation_attempts = 1
+            try:
+                report_text = render_report(summary, facts)
                 narrative_status = "validated"
+            except ReportTruthError:
+                # Do not send rejected text back to the model or publish it. Optional
+                # designers may offer one safe rewrite using only frozen fact fields.
+                report_text = None
+                retry = getattr(designer, "generate_summary_retry", None)
+                remaining = timeout - (asyncio.get_running_loop().time() - started)
+                if callable(retry) and remaining > 0.01:
+                    narrative_generation_attempts = 2
+                    try:
+                        revised = await asyncio.wait_for(retry(plan, results), timeout=remaining)
+                        if revised and str(revised).strip():
+                            report_text = render_report(revised, facts)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        logger.warning("报告事实校验后的重写未通过: {} ({})",
+                                       job["artifact_id"], type(exc).__name__)
+                if report_text is None:
+                    # Never publish either rejected model output. The independently
+                    # frozen facts remain useful, with an explicit downgrade label.
+                    narrative_status = "facts_only"
+                    report_text = render_report(
+                        "模型补充说明未被采用：自动生成文字未通过事实校验。"
+                        "本报告仅保留系统核验事实，不包含模型结论。", facts,
+                    )
+                    logger.warning("报告补充说明未通过事实校验，仅保存核验事实: {}", job["artifact_id"])
+                else:
+                    narrative_status = "validated"
         database.store_artifact_content(
             artifact_id, report_text.encode("utf-8"), plan_id=str(plan.plan_id),
             run_id=job.get("run_id"), kind="delivery_report",

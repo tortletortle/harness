@@ -223,3 +223,32 @@ async def test_forty_concurrent_callers_share_one_report(env):
     designer.generate_summary.assert_awaited_once()
     assert env.db.get_artifact(job['artifact_id'])['metadata']['attempts'] == 1
     assert not artifacts._report_workers
+
+
+async def test_summary_timeout_preserves_verified_facts_as_facts_only(env):
+    """回归：模型摘要超时不应把整份交付报告标成 failed 丢掉核验事实，
+    而应降级为 facts_only 保留下发（与事实校验失败的降级策略一致）。"""
+    from api.runtime import artifacts
+    job = artifacts.prepare_final_report(env.make().plan, database=env.db)
+
+    async def slow_summary(*args):
+        await asyncio.sleep(10)  # 刻意远超 timeout，触发 asyncio.wait_for 的 TimeoutError
+        return "超时不应返回的叙事"
+
+    await artifacts._run_report_job(job, env.db, SimpleNamespace(generate_summary=slow_summary),
+                                    timeout=0.05)
+    record = env.db.get_artifact(job['artifact_id'])['metadata']
+    assert record['status'] == 'completed', "超时后应仍交付完成态（仅核验事实）"
+    assert record['narrative_status'] == 'facts_only', "超时叙事应降级为 facts_only"
+    assert env.db.verify_artifact_hash(record['report_artifact_id']) is True
+
+
+async def test_empty_summary_without_timeout_is_hard_failure(env):
+    """回归：非超时的空响应仍是硬失败（区别于超时降级），保持既有契约。"""
+    from api.runtime import artifacts
+    job = artifacts.prepare_final_report(env.make().plan, database=env.db)
+
+    designer = SimpleNamespace(generate_summary=AsyncMock(return_value=''))
+    await artifacts._run_report_job(job, env.db, designer)
+    record = env.db.get_artifact(job['artifact_id'])['metadata']
+    assert record['status'] == 'failed'
