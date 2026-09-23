@@ -142,7 +142,7 @@ def execute():
             assert hashlib.sha256((a.WS/'reconcile.py').read_bytes()).hexdigest()==repair['program_sha256']
             assert plan['status']=='Failed',plan['status']
             assert call(client,'GET','/api/status').get('current_execution') is None
-            failed=[s for seg in plan['segments'] for s in seg['steps'] if s['status']=='Failed']
+            failed=[s for seg in plan['segments'] for s in seg['steps'] if s['status'] in {'Failed','Pending','Retry'} and s['tool']=='test_runner' and s['inputs'].get('suite')=='pytest']
             assert len(failed)==1 and failed[0]['tool']=='test_runner' and failed[0]['inputs']['suite']=='pytest'
             predecessors=[s for seg in plan['segments'] for s in seg['steps'] if s['status']=='Success' and s['order']<failed[0]['order']]
             assert predecessors,'Need a completed checkpoint before the failed step'

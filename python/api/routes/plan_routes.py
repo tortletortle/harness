@@ -461,12 +461,18 @@ async def rollback_plan(plan_id: str, request: Optional[Dict[str, Any]] = None):
         # 任何一步失败都不得留下「步骤已废弃但没有克隆」的破损状态。
         if not state.database.clone_steps_from(plan_id, target_step_id, new_branch):
             raise HTTPException(status_code=500, detail="克隆步骤到新分支失败，回滚未执行")
+        # The rollback target belongs to the retained historical prefix. Resume
+        # must point at a NEW active clone, not that old-branch checkpoint.
+        clones = state.database.get_active_steps_snapshot(plan_id, new_branch)
+        if not clones:
+            raise HTTPException(status_code=409, detail="回滚检查点之后没有可重试步骤")
+        resume_step_id = clones[0]["step_id"]
         marked = state.database.mark_steps_obsolete(plan_id, target_step_id, current_branch)
         _require_write(
             state.database.update_plan_state_machine(
                 plan_id,
                 PlanStatus.PENDING.value,
-                resume_from_step_id=target_step_id,
+                resume_from_step_id=resume_step_id,
                 current_branch=new_branch,
             ),
             f"计划 {plan_id} 状态 → Pending（回滚到步骤 {target_step_id}，新分支 {new_branch}）",
@@ -483,7 +489,8 @@ async def rollback_plan(plan_id: str, request: Optional[Dict[str, Any]] = None):
         return {
             "success": True,
             "new_branch": new_branch,
-            "resume_from": target_step_id,
+            "resume_from": resume_step_id,
+            "rollback_checkpoint": target_step_id,
             "strategy": strategy,
             "marked_obsolete": marked,
         }

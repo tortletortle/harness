@@ -1,5 +1,7 @@
 """Regression prompted by the real order task and a harness checkpoint mistake."""
 import asyncio
+from pathlib import Path
+from fastapi import HTTPException
 import pytest
 from test_execution_ownership import env
 from test_rollback_branching import _three_step_plan, _rollback, _branch_rows
@@ -53,3 +55,28 @@ async def test_cancelled_run_has_distinct_reason(env,monkeypatch):
     run=env.db.list_execution_runs(item.pid)[0]
     assert run['status']=='Failed'
     assert run['failure_reason']=='execution task cancelled'
+
+
+async def test_rollback_api_checkpoints_new_clone_not_historical_prefix(env):
+    pid,ids=_three_step_plan(env.db,Path(env.db.db_path).parent)
+    for sid in ids[:2]:env.db.update_step(sid,'Success')
+    env.db.update_step(ids[2],'Failed')
+    env.db.update_plan_state_machine(str(pid),'Failed')
+    result=await env.routes.rollback_plan(str(pid),{'step_id':ids[1]})
+    plan=env.db.get_plan(str(pid))
+    active=env.db.get_active_steps_snapshot(str(pid),result['new_branch'])
+    assert len(active)==1
+    assert str(plan.resume_from_step_id)==active[0]['step_id']
+    selection=env.db.select_next_batch(str(pid),branch_version=result['new_branch'],resume_from_step_id=str(plan.resume_from_step_id))
+    assert len(selection['steps'])==1 and selection['checkpoint_consumed']
+    await env.run(plan)
+    assert env.db.get_plan_status(str(pid))=='Completed'
+
+
+async def test_rollback_at_final_step_rejected_without_empty_branch(env):
+    pid,ids=_three_step_plan(env.db,Path(env.db.db_path).parent)
+    before=env.db.get_replan_snapshot(str(pid))
+    with pytest.raises(HTTPException) as caught:
+        await env.routes.rollback_plan(str(pid),{'step_id':ids[-1]})
+    assert caught.value.status_code==409
+    assert env.db.get_replan_snapshot(str(pid))==before

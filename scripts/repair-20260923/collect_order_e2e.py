@@ -21,7 +21,7 @@ token=a.ROOT/'config/api_token'
 if token.exists():a.SECRETS.append(token.read_text().strip())
 summary={'captured_at':a.datetime.now(a.timezone.utc).isoformat(),'head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=a.ROOT).decode().strip(),
          'tests':{},'cases':{},'llm':{}}
-for name in ('before','focused','backend','recovery-before','recovery-focused','backend-final'):
+for name in ('before','focused','backend','recovery-before','recovery-focused','backend-final','checkpoint-before','checkpoint-focused','backend-verified'):
     root=ET.parse(base/(name+'.xml'))
     cases=list(root.iter('testcase'))
     summary['tests'][name]={'passed':sum(not any(c.find(t) is not None for t in ('failure','error','skipped')) for c in cases),
@@ -32,7 +32,7 @@ rows=[]
 for case in ('case-1','case-2'):
     folder=base/case
     info={}
-    for name in ('generate-error.json','execute-error.json','generated.json','execution.json','report-verification.json','oracle.json','execution-retry.json','report-verification-retry.json','oracle-retry.json','task-repair.json','rollback.json','execution-retry2.json','report-verification-retry2.json','oracle-retry2.json','rollback-retry2.json'):
+    for name in ('generate-error.json','execute-error.json','generated.json','execution.json','report-verification.json','oracle.json','execution-retry.json','report-verification-retry.json','oracle-retry.json','task-repair.json','rollback.json','execution-retry2.json','report-verification-retry2.json','oracle-retry2.json','rollback-retry2.json','execution-retry3.json','report-verification-retry3.json','oracle-retry3.json','rollback-retry3.json'):
         p=folder/name
         if p.exists():info[name]=json.loads(text(p))
     summary['cases'][case]=info
@@ -51,7 +51,7 @@ manifest=json.loads(text(base/'patch-manifest.json'))
 for f in manifest['files']:
     assert hashlib.sha256((a.ROOT/f['path']).read_text(encoding='utf-8').replace('\r\n','\n').encode()).hexdigest()==f['after_sha256_lf'],f['path']
 summary['patch']=manifest
-summary['end_to_end_passed']=summary['cases']['case-2'].get('oracle-retry2.json',{}).get('passed',False)
+summary['end_to_end_passed']=summary['cases']['case-2'].get('oracle-retry3.json',{}).get('passed',False)
 (base/'summary.json').write_text(a.clean(json.dumps(summary,ensure_ascii=False,indent=2)),encoding='utf-8')
 (base/'llm-evidence.json').write_text(a.clean(json.dumps(rows,ensure_ascii=False,indent=2)),encoding='utf-8')
 with zipfile.ZipFile(base/'evidence.zip','w',zipfile.ZIP_DEFLATED) as z:
