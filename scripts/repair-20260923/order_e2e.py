@@ -129,7 +129,7 @@ def approve_reviewed():
 
 
 def execute():
-    suffix='-'+os.getenv('EAS_ORDER_RECOVERY_TAG','retry') if STAGE=='retry' else ''
+    suffix='-'+os.getenv('EAS_ORDER_RECOVERY_TAG','retry') if STAGE in ('retry','finalize-reviewed') else ''
     saved=json.loads((a.RUN/'generated.json').read_text(encoding='utf-8'))
     assert not (a.RUN/('execution'+suffix+'.json')).exists(),'Do not overwrite prior execution evidence'
     pid=saved['plan_id']
@@ -140,30 +140,36 @@ def execute():
             repair=json.loads((a.RUN/'task-repair.json').read_text(encoding='utf-8'))
             assert hashlib.sha256((a.WS/'test_reconcile.py').read_bytes()).hexdigest()==repair['after_sha256']
             assert hashlib.sha256((a.WS/'reconcile.py').read_bytes()).hexdigest()==repair['program_sha256']
-            assert plan['status']=='Failed',plan['status']
-            assert call(client,'GET','/api/status').get('current_execution') is None
-            failed=[s for seg in plan['segments'] for s in seg['steps'] if s['status'] in {'Failed','Pending','Retry'} and s['tool']=='test_runner' and s['inputs'].get('suite')=='pytest']
-            assert len(failed)==1 and failed[0]['tool']=='test_runner' and failed[0]['inputs']['suite']=='pytest'
-            predecessors=[s for seg in plan['segments'] for s in seg['steps'] if s['status']=='Success' and s['order']<failed[0]['order']]
-            assert predecessors,'Need a completed checkpoint before the failed step'
-            checkpoint=max(predecessors,key=lambda s:s['order'])
-            rollback=call(client,'POST',f'/api/plan/{pid}/rollback',{'step_id':checkpoint['step_id'],'strategy':'retry'})
-            a.save('rollback'+suffix+'.json',{'checkpoint':checkpoint['step_id'],'failed_step':failed[0]['step_id'],**rollback})
-            active=state.database.get_active_steps_snapshot(pid,rollback['new_branch'])
-            assert len(active)==1 and active[0]['status']=='Pending','Rollback must create the failed suffix, not an empty branch'
+            if STAGE=='finalize-reviewed':
+                assert plan['status']=='Completed'
+                assert all(s['status']=='Success' for seg in plan['segments'] for s in seg['steps'])
+            else:
+                assert plan['status']=='Failed',plan['status']
+                assert call(client,'GET','/api/status').get('current_execution') is None
+                failed=[s for seg in plan['segments'] for s in seg['steps'] if s['status'] in {'Failed','Pending','Retry'} and s['tool']=='test_runner' and s['inputs'].get('suite')=='pytest']
+                assert len(failed)==1 and failed[0]['tool']=='test_runner' and failed[0]['inputs']['suite']=='pytest'
+                predecessors=[s for seg in plan['segments'] for s in seg['steps'] if s['status']=='Success' and s['order']<failed[0]['order']]
+                assert predecessors,'Need a completed checkpoint before the failed step'
+                checkpoint=max(predecessors,key=lambda s:s['order'])
+                rollback=call(client,'POST',f'/api/plan/{pid}/rollback',{'step_id':checkpoint['step_id'],'strategy':'retry'})
+                a.save('rollback'+suffix+'.json',{'checkpoint':checkpoint['step_id'],'failed_step':failed[0]['step_id'],**rollback})
+                active=state.database.get_active_steps_snapshot(pid,rollback['new_branch'])
+                assert len(active)==1 and active[0]['status']=='Pending','Rollback must create the failed suffix, not an empty branch'
+        previous_runs={r['run_id'] for r in state.database.list_execution_runs(pid)}
         call(client,'POST',f'/api/plan/{pid}/execute')
         deadline=time.monotonic()+600
         final={}
         while time.monotonic()<deadline:
             final=call(client,'GET',f'/api/plan/{pid}')['plan']
-            if final.get('status') in {'Completed','Failed','Paused','RolledBack','PartiallyFailed'}:break
+            new_runs=[r for r in state.database.list_execution_runs(pid) if r['run_id'] not in previous_runs]
+            if new_runs and new_runs[0]['status'] in {'Completed','Failed','Paused'} and call(client,'GET','/api/status').get('current_execution') is None:break
             time.sleep(1)
         a.save('execution'+suffix+'.json',{'plan':final,'runs':call(client,'GET',f'/api/plan/{pid}/runs'),
             'status':call(client,'GET','/api/status')})
         deadline=time.monotonic()+180
         while final.get('status')=='Completed' and time.monotonic()<deadline:
             jobs=[j for j in state.database.list_artifacts(pid) if j['kind']=='delivery_report_job']
-            if jobs and all(j['metadata'].get('status') in {'completed','failed'} for j in jobs):break
+            if new_runs and any(j['artifact_id']=='report-job-'+new_runs[0]['run_id'] for j in jobs) and all(j['metadata'].get('status') in {'completed','failed'} for j in jobs):break
             time.sleep(.5)
         records=state.database.list_artifacts(pid)
         a.save('artifacts'+suffix+'.json',records)
@@ -177,7 +183,7 @@ if __name__=='__main__':
         a.inventory()
         if STAGE=='generate':generate()
         elif STAGE=='approve-reviewed':approve_reviewed()
-        elif STAGE in ('execute','retry'):raise SystemExit(0 if execute() else 1)
+        elif STAGE in ('execute','retry','finalize-reviewed'):raise SystemExit(0 if execute() else 1)
         else:raise ValueError('Unsupported stage')
     except Exception as exc:
         a.save(STAGE+'-error.json',{'type':type(exc).__name__,'error':a.clean(exc)})

@@ -1075,24 +1075,26 @@ class Database:
                         for row in steps_rows
                     }
 
-                    # 回滚克隆拥有新 step_id（原 id 是主键，无法重复插入），
-                    # 但 segments JSON 里只有原步骤。把活动分支克隆行的状态
-                    # 通过 parent_step_id 映射回原步骤，展示层才能反映当前分支。
+                    # Resolve the entire clone ancestry: repeated rollbacks clone clones,
+                    # while segments keep the original logical step ID. Project all
+                    # execution metadata so historical failure details cannot leak.
                     current_branch = row['current_branch'] or 1
-                    clone_updates = {
-                        r['parent_step_id']: {
-                            'status': r['status'],
-                            'outputs': json.loads(r['outputs']) if r['outputs'] else None,
-                            'executed_at': r['executed_at'],
-                            'retry_count': r['retry_count'],
-                            'acceptance': json.loads(r['acceptance_json']) if r['acceptance_json'] else [],
-                            'depends_on': json.loads(r['depends_on']) if r['depends_on'] else [],
-                            'is_obsolete': r['is_obsolete'],
-                            'branch_version': r['branch_version'],
-                        }
-                        for r in steps_rows
-                        if r['parent_step_id'] and r['branch_version'] == current_branch
-                    }
+                    rows_by_id = {r['step_id']: r for r in steps_rows}
+                    clone_updates = {}
+                    for r in steps_rows:
+                        if r['branch_version'] != current_branch or r['is_obsolete']:
+                            continue
+                        parent_id = r['parent_step_id']
+                        seen = {r['step_id']}
+                        while parent_id:
+                            if parent_id in seen:
+                                raise ValueError("Cyclic rollback step ancestry")
+                            seen.add(parent_id)
+                            parent_row = rows_by_id.get(parent_id)
+                            if parent_row is None:
+                                raise ValueError("Missing rollback step ancestor")
+                            clone_updates[parent_id] = steps_updates[r['step_id']]
+                            parent_id = parent_row['parent_step_id']
 
                     # 更新 segments 中的步骤状态
                     for segment in segments_data:

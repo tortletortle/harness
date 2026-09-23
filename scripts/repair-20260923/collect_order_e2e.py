@@ -3,6 +3,7 @@ import collections
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -13,6 +14,14 @@ sys.argv=[sys.argv[0],'collect']
 import verify_live as a
 base=a.BASE
 
+def clean(value):
+    content=str(value)
+    for secret in a.SECRETS:
+        content=content.replace(secret,'[REDACTED]')
+    content=re.sub(r"Bearer\s+[^\s\"']+",'Bearer [REDACTED]',content)
+    # A token must start at a boundary; 'task-20260923' is a filename, not a key.
+    return re.sub(r'(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}','[REDACTED]',content)
+
 def text(path):
     raw=path.read_bytes()
     return raw.decode('utf-16' if raw.startswith((b'\xff\xfe',b'\xfe\xff')) else 'utf-8-sig',errors='replace')
@@ -21,7 +30,7 @@ token=a.ROOT/'config/api_token'
 if token.exists():a.SECRETS.append(token.read_text().strip())
 summary={'captured_at':a.datetime.now(a.timezone.utc).isoformat(),'head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=a.ROOT).decode().strip(),
          'tests':{},'cases':{},'llm':{}}
-for name in ('before','focused','backend','recovery-before','recovery-focused','backend-final','checkpoint-before','checkpoint-focused','backend-verified'):
+for name in ('before','focused','backend','recovery-before','recovery-focused','backend-final','checkpoint-before','checkpoint-focused','backend-verified','projection-before','projection-focused','backend-final-verified'):
     root=ET.parse(base/(name+'.xml'))
     cases=list(root.iter('testcase'))
     summary['tests'][name]={'passed':sum(not any(c.find(t) is not None for t in ('failure','error','skipped')) for c in cases),
@@ -32,7 +41,7 @@ rows=[]
 for case in ('case-1','case-2'):
     folder=base/case
     info={}
-    for name in ('generate-error.json','execute-error.json','generated.json','execution.json','report-verification.json','oracle.json','execution-retry.json','report-verification-retry.json','oracle-retry.json','task-repair.json','rollback.json','execution-retry2.json','report-verification-retry2.json','oracle-retry2.json','rollback-retry2.json','execution-retry3.json','report-verification-retry3.json','oracle-retry3.json','rollback-retry3.json'):
+    for name in ('generate-error.json','execute-error.json','generated.json','execution.json','report-verification.json','oracle.json','execution-retry.json','report-verification-retry.json','oracle-retry.json','task-repair.json','rollback.json','execution-retry2.json','report-verification-retry2.json','oracle-retry2.json','rollback-retry2.json','execution-retry3.json','report-verification-retry3.json','oracle-retry3.json','rollback-retry3.json','execution-finalized.json','report-verification-finalized.json','oracle-finalized.json'):
         p=folder/name
         if p.exists():info[name]=json.loads(text(p))
     summary['cases'][case]=info
@@ -49,15 +58,15 @@ summary['llm']={'requests':sum(requests.values()),'terminals':sum(terminals.valu
     'scope':'Instrumented calls only; includes failed first generation; not a bill.'}
 manifest=json.loads(text(base/'patch-manifest.json'))
 for f in manifest['files']:
-    assert hashlib.sha256((a.ROOT/f['path']).read_text(encoding='utf-8').replace('\r\n','\n').encode()).hexdigest()==f['after_sha256_lf'],f['path']
+    assert hashlib.sha256((a.ROOT/f['path']).read_text(encoding='utf-8-sig').replace('\r\n','\n').encode()).hexdigest()==f['after_sha256_lf'],f['path']
 summary['patch']=manifest
-summary['end_to_end_passed']=summary['cases']['case-2'].get('oracle-retry3.json',{}).get('passed',False)
-(base/'summary.json').write_text(a.clean(json.dumps(summary,ensure_ascii=False,indent=2)),encoding='utf-8')
-(base/'llm-evidence.json').write_text(a.clean(json.dumps(rows,ensure_ascii=False,indent=2)),encoding='utf-8')
+summary['end_to_end_passed']=summary['cases']['case-2'].get('oracle-finalized.json',{}).get('passed',False)
+(base/'summary.json').write_text(clean(json.dumps(summary,ensure_ascii=False,indent=2)),encoding='utf-8')
+(base/'llm-evidence.json').write_text(clean(json.dumps(rows,ensure_ascii=False,indent=2)),encoding='utf-8')
 with zipfile.ZipFile(base/'evidence.zip','w',zipfile.ZIP_DEFLATED) as z:
     def put(name,content):
         if name!='order-e2e.patch' and not name.startswith('source/'):
-            content=a.clean(content)
+            content=clean(content)
         assert not any(s and len(s)>6 and s in content for s in a.SECRETS),name
         z.writestr(name,content)
     for name in ('summary.json','llm-evidence.json','patch-manifest.json','order-e2e.patch'):

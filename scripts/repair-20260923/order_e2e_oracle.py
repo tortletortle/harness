@@ -136,13 +136,20 @@ def main():
     def lifecycle():
         data=json.loads((a.RUN/('execution'+SUFFIX+'.json')).read_text(encoding='utf-8'))
         assert data['plan']['status']=='Completed',data['plan']['status']
+        assert data['plan']['steps'] and all(s['status']=='Success' for s in data['plan']['steps']),data['plan']['steps']
         runs=data['runs']['runs']
         latest=max(runs,key=lambda r:r['started_at']) if runs else None
         assert latest and latest['status']=='Completed',runs
         assert data['status'].get('current_execution') is None
         reports=json.loads((a.RUN/('report-verification'+SUFFIX+'.json')).read_text(encoding='utf-8'))
         assert reports and all(r['hash_valid'] is True for r in reports),reports
-        return {'plan':'Completed','runs':len(runs),'historical_failed_runs':sum(r['status']=='Failed' for r in runs),'reports':len(reports),'ownership_released':True}
+        artifacts=json.loads((a.RUN/('artifacts'+SUFFIX+'.json')).read_text(encoding='utf-8'))
+        job=next(j for j in artifacts if j['kind']=='delivery_report_job' and j['run_id']==latest['run_id'])
+        assert job['metadata']['status']=='completed'
+        snapshot_steps=[s for segment in job['metadata']['snapshot']['segments'] for s in segment['steps']]
+        assert snapshot_steps and all(s['status']=='Success' for s in snapshot_steps)
+        assert any(j['kind']=='delivery_report' and j['run_id']==latest['run_id'] for j in artifacts)
+        return {'logical_steps_success':len(data['plan']['steps']),'latest_report_snapshot_success':len(snapshot_steps),'plan':'Completed','runs':len(runs),'historical_failed_runs':sum(r['status']=='Failed' for r in runs),'reports':len(reports),'ownership_released':True}
     check('lifecycle_and_delivery_report',lifecycle)
     result={'passed':all(c['passed'] for c in checks),'checks':checks}
     a.save('oracle'+SUFFIX+'.json',result)
