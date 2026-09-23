@@ -63,6 +63,7 @@ async def execute_plan_background(
     resume_from_step_id = None
     _scheduling_failed = False
     _completed_snapshot = None
+    _run_failure_reason = "step execution failed"
 
     def still_owns_run():
         if not (_run_claimed and _reservation_owned
@@ -377,6 +378,7 @@ async def execute_plan_background(
     except ExecutionBusy as e:
         await broadcast_log(f"跳过重复执行: {e}", "info")
     except asyncio.CancelledError:
+        _run_failure_reason = "execution task cancelled"
         try:
             if still_owns_run():
                 status = state.database.get_plan_status(str(plan.plan_id))
@@ -404,6 +406,7 @@ async def execute_plan_background(
             logger.warning("取消执行时状态收敛失败: {}", exc)
         raise
     except Exception as e:
+        _run_failure_reason = f"execution error: {type(e).__name__}"
         debug_log(f"EXCEPTION in execute_plan_background: {e}")
         import traceback
         debug_log(f"Traceback: {traceback.format_exc()}")
@@ -484,7 +487,7 @@ async def execute_plan_background(
                         _run_status = _run_terminal.get(_final_status, RunStatus.FAILED.value)
                         if not state.database.finish_execution_run(
                             run_id, owner_token, _run_status,
-                            failure_reason="interrupted by service shutdown" if _run_status == RunStatus.FAILED.value else None,
+                            failure_reason=_run_failure_reason if _run_status == RunStatus.FAILED.value else None,
                         ):
                             debug_log(f"finish_execution_run fenced or missing: run={run_id}")
                         elif _final_status == PlanStatus.COMPLETED.value:

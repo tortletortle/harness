@@ -1716,6 +1716,21 @@ class Database:
                 """, (plan_id,))
                 plan_row = cursor.fetchone()
                 source_branch = plan_row["current_branch"] if plan_row and plan_row["current_branch"] else 1
+                # A legacy rollback at the final step can create an empty branch.
+                # Explicitly rolling back to an earlier checkpoint must still recover
+                # its suffix. Pick ONE nearest populated source, never merge history.
+                cursor.execute("""
+                    SELECT 1 FROM steps
+                    WHERE plan_id = ? AND branch_version = ? AND is_obsolete = 0 LIMIT 1
+                """, (plan_id, source_branch))
+                if cursor.fetchone() is None:
+                    cursor.execute("""
+                        SELECT MAX(branch_version) AS source_branch FROM steps
+                        WHERE plan_id = ? AND branch_version < ? AND is_obsolete = 0
+                    """, (plan_id, source_branch))
+                    previous = cursor.fetchone()["source_branch"]
+                    if previous is not None:
+                        source_branch = previous
                 cursor.execute("""
                     SELECT * FROM steps
                     WHERE plan_id = ?

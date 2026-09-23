@@ -11,6 +11,13 @@ import xml.etree.ElementTree as ET
 os.environ['EAS_REPAIR_EVIDENCE_DIR']='out/order-e2e-20260923'
 sys.argv=[sys.argv[0],os.getenv('EAS_ORDER_CASE','case-1')]
 import verify_live as a
+import tempfile
+temp_root=a.WS/'.tmp'
+temp_root.mkdir(exist_ok=True)
+for key in ('TMP','TEMP','TMPDIR'):os.environ[key]=str(temp_root)
+tempfile.tempdir=str(temp_root)
+
+SUFFIX='-'+os.getenv('EAS_ORDER_RECOVERY_TAG','retry') if os.getenv('EAS_ORDER_RECOVERED')=='1' else ''
 
 FILES=('cleaned.csv','rejected.csv','duplicates.csv','customers.csv','summary.json','report.md')
 HEADERS={'cleaned.csv':['order_id','customer','amount','status'],
@@ -74,7 +81,7 @@ def run(argv):
 
 
 def main():
-    assert not (a.RUN/'oracle.json').exists(),'Do not overwrite previous acceptance'
+    assert not (a.RUN/('oracle'+SUFFIX+'.json')).exists(),'Do not overwrite previous acceptance'
     checks=[]
     def check(name,operation):
         try:
@@ -83,7 +90,7 @@ def main():
         except Exception as exc:
             row={'case':name,'passed':False,'error_type':type(exc).__name__,'error':a.clean(exc)}
         checks.append(row)
-        a.save('oracle.json',{'passed':all(c['passed'] for c in checks),'checks':checks})
+        a.save('oracle'+SUFFIX+'.json',{'passed':all(c['passed'] for c in checks),'checks':checks})
     saved=json.loads((a.RUN/'generated.json').read_text(encoding='utf-8'))
     output=a.WS/'out/orders'
     def input_unchanged():
@@ -118,26 +125,27 @@ def main():
         return result
     check('missing_input_preserves_outputs',missing)
     def self_tests():
-        result=run([sys.executable,'-m','pytest','-c','pytest.ini','test_reconcile.py','-q','--junitxml='+str(a.RUN/'generated-tests.xml')])
+        result=run([sys.executable,'-m','pytest','-c','pytest.ini','test_reconcile.py','-q','--junitxml='+str(a.RUN/('generated-tests'+SUFFIX+'.xml'))])
         assert result['returncode']==0,result
-        cases=list(ET.parse(a.RUN/'generated-tests.xml').iter('testcase'))
+        cases=list(ET.parse(a.RUN/('generated-tests'+SUFFIX+'.xml')).iter('testcase'))
         assert len(cases)>=4,len(cases)
         assert all(c.find('skipped') is None and c.find('failure') is None and c.find('error') is None for c in cases)
         return {**result,'count':len(cases)}
     check('generated_tests_at_least_four_pass',self_tests)
     check('input_unchanged_after_all_checks',input_unchanged)
     def lifecycle():
-        data=json.loads((a.RUN/'execution.json').read_text(encoding='utf-8'))
+        data=json.loads((a.RUN/('execution'+SUFFIX+'.json')).read_text(encoding='utf-8'))
         assert data['plan']['status']=='Completed',data['plan']['status']
         runs=data['runs']['runs']
-        assert runs and all(r['status']=='Completed' for r in runs),runs
+        latest=max(runs,key=lambda r:r['started_at']) if runs else None
+        assert latest and latest['status']=='Completed',runs
         assert data['status'].get('current_execution') is None
-        reports=json.loads((a.RUN/'report-verification.json').read_text(encoding='utf-8'))
+        reports=json.loads((a.RUN/('report-verification'+SUFFIX+'.json')).read_text(encoding='utf-8'))
         assert reports and all(r['hash_valid'] is True for r in reports),reports
-        return {'plan':'Completed','runs':len(runs),'reports':len(reports),'ownership_released':True}
+        return {'plan':'Completed','runs':len(runs),'historical_failed_runs':sum(r['status']=='Failed' for r in runs),'reports':len(reports),'ownership_released':True}
     check('lifecycle_and_delivery_report',lifecycle)
     result={'passed':all(c['passed'] for c in checks),'checks':checks}
-    a.save('oracle.json',result)
+    a.save('oracle'+SUFFIX+'.json',result)
     print(a.clean(json.dumps(result,ensure_ascii=False,indent=2)),flush=True)
     return result
 

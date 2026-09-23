@@ -85,3 +85,26 @@ A011,Eve,30.00,cancelled
 - 工具执行在独立 Git 工作区和数据库中；模型请求走已授权的现有路由。
 - 独立工作区不是操作系统级沙箱，因此执行前必须审查生成代码，不执行越权计划。
 - 不主动制造供应商限流、不更改密钥、不重启生产服务。
+
+## 如何复用
+
+本次执行器在独立进程中注册 `reconcile` 和 `pytest` 两个白名单模板，不修改生产配置。项目内复跑时使用一个全新的批次名，避免混合缓存、数据库和证据：
+
+```powershell
+$env:EAS_ORDER_CASE = 'case-new'
+python scripts/repair-20260923/order_e2e.py generate
+# 阅读该批次 proposed-steps.json，人工审查路径、工具及 Python 代码后明确签收：
+python scripts/repair-20260923/order_e2e.py approve-reviewed
+python scripts/repair-20260923/order_e2e.py execute
+python scripts/repair-20260923/order_e2e_oracle.py
+```
+
+前两条命令会调用真实模型，可能产生费用。独立验收脚本不调用模型，但会执行本次生成并已审查的程序。
+
+如只需检查已经生成的六个输出文件，可使用附带的无网络、无凭据独立检查器：
+
+```bash
+python verify_outputs.py path/to/out/orders
+```
+
+检查器验的是文件内容，不代表 Plan/Run、模型调用或报告生命周期也已通过。完整端到端结果见同包的测试报告。
