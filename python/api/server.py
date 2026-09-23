@@ -134,6 +134,26 @@ def _load_models_config(config_root: Path | None = None) -> dict:
     return config
 
 
+async def _shutdown_runtime():
+    """Drain owned tasks and close MCP on normal shutdown *and* partial startup failure."""
+    tasks = [t for t in state.execution_tasks if not t.done()]
+    if tasks:
+        from api.runtime.artifacts import report_options
+        grace = report_options(state.config)["shutdown_grace_seconds"]
+        _, pending = await asyncio.wait(tasks, timeout=max(0, grace))
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    state.execution_tasks.clear()
+    # Models/tools have stopped using MCP before subprocess pipes are closed.
+    for _client in getattr(state, 'mcp_clients', []) or []:
+        try:
+            await _client.stop()
+        except Exception as exc:
+            logger.warning("MCP 关闭失败: {}", type(exc).__name__)
+    state.mcp_clients = []
+    logger.info("EAS 2.0 API 服务已停止")
+
 # ===== 启动和关闭（lifespan） =====
 
 @asynccontextmanager
@@ -142,7 +162,7 @@ async def lifespan(app: FastAPI):
     logger.info("正在启动 EAS 2.0 API 服务...")
 
     try:
-        # 加载配置（models.yaml 模板 + models.local.yaml 深覆盖，后者存真实 key 且不入库）
+        # 加载模板与本机模型路由覆盖；密钥仅来自环境变量或加密存储。
         state.config = _load_models_config()
         
         # 初始化数据库：路径统一由 paths.resolve_db_path 决定（EAS_DB_PATH 优先，
@@ -418,38 +438,24 @@ async def lifespan(app: FastAPI):
             logger.warning("检测到 {} 个重启前遗留的执行 Run，已标记为 Interrupted", recovered_runs)
 
         # 初始化认证 token（不存在时自动生成）
-        token = load_token()
+        load_token()
         logger.debug("===== API 认证 =====")
         logger.info("所有 /api/* 端点需要 token：Authorization: Bearer <token>")
-        logger.debug("当前 token: {}", token)
+        logger.debug("API 认证令牌已加载（不记录令牌内容）")
         logger.info("前端请在 frontend/.env.local 设置 VITE_API_TOKEN=<token>")
         logger.debug("==================")
         
-    except Exception as e:
-        logger.exception("启动失败: {}", e)
+    except BaseException as e:
+        logger.warning("启动未完成: {}", type(e).__name__)
+        await _shutdown_runtime()
         raise
 
     from api.runtime.artifacts import recover_report_jobs
-    recover_report_jobs()
     try:
+        recover_report_jobs()
         yield
     finally:
-        tasks = [t for t in state.execution_tasks if not t.done()]
-        if tasks:
-            grace = float(state.config.get("reports", {}).get("shutdown_grace_seconds", 15))
-            _, pending = await asyncio.wait(tasks, timeout=max(0, grace))
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-        state.execution_tasks.clear()
-        # Models/tools have stopped using MCP before subprocess pipes are closed.
-        for _client in getattr(state, 'mcp_clients', []) or []:
-            try:
-                await _client.stop()
-            except Exception as exc:
-                logger.warning("MCP 关闭失败: {}", type(exc).__name__)
-        state.mcp_clients = []
-        logger.info("EAS 2.0 API 服务已停止")
+        await _shutdown_runtime()
 
 
 # ===== FastAPI App =====

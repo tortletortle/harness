@@ -11,12 +11,49 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
+from weakref import WeakKeyDictionary
 
 from api.shared import broadcast_log, state
 
 from logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# One backend/event loop may have several callers for the same durable report.
+# Keep the actual worker separate from callers; a cancelled joiner cannot cancel it.
+# This is deliberately NOT advertised as a distributed/multi-process lock.
+_report_workers = WeakKeyDictionary()
+
+
+def report_options(config):
+    """Reject non-finite/unbounded values instead of hanging shutdown or leaking coroutines."""
+    import math
+    raw = config.get("reports", {}) if isinstance(config, dict) else {}
+    raw = raw if isinstance(raw, dict) else {}
+    result = {}
+    for key, default, lower, upper in (
+        ("timeout_seconds", 180.0, 0.001, 3600),
+        ("shutdown_grace_seconds", 15.0, 0, 300),
+    ):
+        value = raw.get(key, default)
+        try:
+            if isinstance(value, bool):
+                raise ValueError("boolean duration")
+            value = float(value)
+            if not math.isfinite(value) or not lower <= value <= upper:
+                raise ValueError("invalid duration")
+        except (TypeError, ValueError, OverflowError):
+            logger.warning("报告配置 {} 无效，使用安全默认值 {}", key, default)
+            value = default
+        result[key] = value
+    return result
+
+
+def _attempt_count(metadata):
+    value = metadata.get("attempts", 0)
+    if type(value) is not int or value < 0:
+        raise ValueError("invalid report attempts")
+    return value
 
 
 def prepare_final_report(plan, run_id=None, *, database=None, workspace=None):
@@ -39,30 +76,78 @@ def prepare_final_report(plan, run_id=None, *, database=None, workspace=None):
 
 
 async def _run_report_job(job, database, designer, timeout=180):
+    """Single-flight per DB/job in this event loop; joiners share the same result."""
+    import asyncio
+    loop = asyncio.get_running_loop()
+    workers = _report_workers.setdefault(loop, {})
+    key = (str(Path(database.db_path).resolve()), job["artifact_id"])
+    existing = workers.get(key)
+    if existing is not None and not existing.done():
+        await asyncio.shield(existing)
+        return
+    worker = asyncio.create_task(_execute_report_job(job, database, designer, timeout),
+                                 name="report-worker-" + job["artifact_id"])
+    workers[key] = worker
+    try:
+        # Owner cancellation propagates to the worker; duplicate callers use shield.
+        await worker
+    finally:
+        if workers.get(key) is worker:
+            workers.pop(key, None)
+        if not workers:
+            _report_workers.pop(loop, None)
+
+
+async def _execute_report_job(job, database, designer, timeout):
     import asyncio
     from models import ExecutionPlan
     from tools.workspace import set_workspace_override, reset_workspace_override, resolve_workspace_root
-    metadata = dict(job["metadata"])
-    if metadata.get("status") == "completed":
-        return
-    artifact_id = job["artifact_id"].replace("report-job-", "report-", 1)
-    # The execution worktree may already have been merged/discarded after release.
-    # Reports use only their frozen snapshot; accounting must not recreate that tree.
-    token = set_workspace_override(metadata.get("report_workspace") or resolve_workspace_root())
     from utils import usage_tracker
+    # Callers may hold an old pending snapshot after a previous invocation completed.
+    current = database.get_artifact(job["artifact_id"])
+    if not current:
+        logger.warning("报告任务已不存在: {}", job["artifact_id"])
+        return
+    job = current
+    metadata = dict(job.get("metadata") or {})
+    artifact_id = job["artifact_id"].replace("report-job-", "report-", 1)
+    token = set_workspace_override(metadata.get("report_workspace") or resolve_workspace_root())
     usage_token = usage_tracker._context.set({"plan_id": job.get("plan_id"), "phase": "report"})
+
     def persist(status, **extra):
-        metadata.update(status=status, updated_at=datetime.now().isoformat(), **extra)
-        if not database.update_artifact_metadata(job["artifact_id"], metadata):
+        updated = {**metadata, "status": status, "updated_at": datetime.now().isoformat(), **extra}
+        if not database.update_artifact_metadata(job["artifact_id"], updated):
             raise RuntimeError("报告任务状态写入失败")
+        metadata.update(updated)
+
+    def note_failure(status, error):
+        try:
+            persist(status, error=error)
+        except Exception as exc:
+            # Storage can be unavailable; do not replace cancellation/the original error.
+            # The previous durable running record remains eligible for restart recovery.
+            logger.warning("报告任务状态无法持久化: {} ({})", job["artifact_id"], type(exc).__name__)
+
     try:
-        # A crash between content commit and job commit must not duplicate the report.
-        if database.get_artifact(artifact_id):
-            persist("completed", report_artifact_id=artifact_id)
+        # Metadata alone cannot prove successful delivery. Never overwrite a damaged
+        # existing artifact: keep it for diagnosis, and mark the job failed instead.
+        existing = database.get_artifact(artifact_id)
+        if existing:
+            if existing.get("kind") != "delivery_report" or database.verify_artifact_hash(artifact_id) is not True:
+                raise ValueError("报告内容缺失或哈希校验失败")
+            persist("completed", report_artifact_id=artifact_id, error=None)
             return
-        persist("running", attempts=metadata.get("attempts", 0) + 1, error=None)
+        if metadata.get("status") == "completed":
+            raise ValueError("已完成报告缺少交付产物")
+        if metadata.get("status") == "failed":
+            return
+        attempts = _attempt_count(metadata)
+        if attempts >= 2:
+            raise ValueError("报告恢复次数已耗尽")
         plan = ExecutionPlan(**metadata["snapshot"])
+        persist("running", attempts=attempts + 1, error=None)
         results = [step for segment in plan.segments for step in segment.steps]
+        timeout = report_options({"reports": {"timeout_seconds": timeout}})["timeout_seconds"]
         summary = await asyncio.wait_for(designer.generate_summary(plan, results), timeout=timeout)
         if not summary or not str(summary).strip():
             raise ValueError("模型返回空交付报告")
@@ -72,17 +157,23 @@ async def _run_report_job(job, database, designer, timeout=180):
             metadata={"source": "final_report", "plan_status": "Completed"},
         )
         persist("completed", report_artifact_id=artifact_id)
-        await broadcast_log(f"[REPORT] 最终交付报告已生成: {artifact_id}", "success")
     except asyncio.CancelledError:
-        persist("interrupted", error="报告任务在服务关停时取消，将在下次启动恢复")
+        note_failure("interrupted", "报告任务已取消，将在下次启动恢复")
         raise
     except Exception as exc:
-        # Persist a bounded diagnostic, not a credential-bearing upstream body.
-        persist("failed", error=f"报告生成失败: {type(exc).__name__}")
-        logger.warning("最终交付报告生成失败: {} ({})", job["artifact_id"], type(exc).__name__)
+        note_failure("failed", f"报告生成或完整性验证失败: {type(exc).__name__}")
+        logger.warning("最终交付报告失败: {} ({})", job["artifact_id"], type(exc).__name__)
+        return
     finally:
         usage_tracker._context.reset(usage_token)
         reset_workspace_override(token)
+
+    # Notification is an observation of an already committed result. A broken or
+    # cancelled websocket must never change completed -> failed/interrupted.
+    try:
+        await broadcast_log(f"[REPORT] 最终交付报告已生成: {artifact_id}", "success")
+    except Exception as exc:
+        logger.warning("报告已保存，但通知失败: {} ({})", artifact_id, type(exc).__name__)
 
 
 async def _generate_final_report(plan, run_id=None, *, refresh=True):
@@ -94,7 +185,7 @@ async def _generate_final_report(plan, run_id=None, *, refresh=True):
         if refresh:
             plan = db.get_plan(str(plan.plan_id)) or plan
         job = prepare_final_report(plan, run_id, database=db)
-        timeout = float(state.config.get("reports", {}).get("timeout_seconds", 180))
+        timeout = report_options(state.config)["timeout_seconds"]
         await _run_report_job(job, db, designer, timeout=timeout)
     except Exception as exc:
         logger.warning("最终交付报告不可用: {}", type(exc).__name__)
@@ -105,25 +196,43 @@ def recover_report_jobs():
     import asyncio
     if state.designer is None or state.llm_client is None:
         return
-    for job in state.database.list_artifacts():
-        metadata = job.get("metadata", {})
-        if job.get("kind") != "delivery_report_job" or metadata.get("status") not in {"pending", "running", "interrupted"}:
+    db, designer = state.database, state.designer
+    timeout = report_options(state.config)["timeout_seconds"]
+    try:
+        jobs = db.list_artifacts()
+    except Exception as exc:
+        logger.warning("报告恢复列表读取失败: {}", type(exc).__name__)
+        return
+    for job in jobs:
+        if job.get("kind") != "delivery_report_job":
             continue
-        run = state.database.get_execution_run(job["run_id"]) if job.get("run_id") else None
-        if (job.get("run_id") and (not run or run["status"] != "Completed")) or metadata.get("attempts", 0) >= 2:
-            metadata.update(status="failed", error="原Run未完成或报告恢复次数已耗尽")
-            state.database.update_artifact_metadata(job["artifact_id"], metadata)
-            continue
-        task = asyncio.create_task(_run_report_job(
-            job, state.database, state.designer,
-            float(state.config.get("reports", {}).get("timeout_seconds", 180)),
-        ), name=job["artifact_id"])
-        state.execution_tasks.add(task)
-        def finished(task, tasks=state.execution_tasks):
-            tasks.discard(task)
-            if not task.cancelled() and task.exception() is not None:
-                logger.warning("报告恢复任务异常: {}", type(task.exception()).__name__)
-        task.add_done_callback(finished)
+        metadata = job.get("metadata")
+        try:
+            if not isinstance(metadata, dict):
+                raise ValueError("invalid report metadata")
+            if metadata.get("status") in {"completed", "failed"}:
+                continue
+            if metadata.get("status") not in {"pending", "running", "interrupted"}:
+                raise ValueError("invalid report status")
+            run = db.get_execution_run(job["run_id"]) if job.get("run_id") else None
+            if (job.get("run_id") and (not run or run["status"] != "Completed")) or _attempt_count(metadata) >= 2:
+                raise ValueError("原Run未完成或报告恢复次数已耗尽")
+            task = asyncio.create_task(_run_report_job(job, db, designer, timeout), name=job["artifact_id"])
+            state.execution_tasks.add(task)
+            def finished(task, tasks=state.execution_tasks):
+                tasks.discard(task)
+                if not task.cancelled() and task.exception() is not None:
+                    logger.warning("报告恢复任务异常: {}", type(task.exception()).__name__)
+            task.add_done_callback(finished)
+        except Exception as exc:
+            logger.warning("单条报告恢复记录不可用: {} ({})", job.get("artifact_id"), type(exc).__name__)
+            failed = dict(metadata) if isinstance(metadata, dict) else {}
+            failed.update(status="failed", error="报告恢复记录损坏、Run未完成或尝试次数耗尽")
+            try:
+                if not db.update_artifact_metadata(job["artifact_id"], failed):
+                    logger.warning("报告恢复记录已不存在: {}", job.get("artifact_id"))
+            except Exception as persist_exc:
+                logger.warning("损坏报告状态写入失败: {}", type(persist_exc).__name__)
 
 
 def _artifact_result_layers(result: Dict[str, Any]) -> List[Dict[str, Any]]:

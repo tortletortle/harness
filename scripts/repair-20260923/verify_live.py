@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[2]
 MODE = sys.argv[1] if len(sys.argv)>1 else 'probe'
-BASE = ROOT/'out'/'repair-20260923'
+BASE = (ROOT / os.getenv('EAS_REPAIR_EVIDENCE_DIR', 'out/repair-20260923')).resolve()
 RUN = BASE/MODE
 RUN.mkdir(parents=True, exist_ok=True)
 WS = RUN/'workspace'

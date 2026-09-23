@@ -99,13 +99,31 @@ changed = [
     'tests/python/test_exec_e2e.py', 'docs/ERROR_HANDLING.md']
 added = ['tests/fixtures/offline_api_server.py', 'tests/python/test_repair_model_recovery.py',
          'scripts/repair-20260923/verify_live.py', 'scripts/repair-20260923/collect_repair.py']
-patch = subprocess.run(['git', 'diff', '--no-ext-diff', '--', *changed], cwd=a.ROOT,
+baseline = '1dad44a'  # repair-start revision; HEAD may advance through external commits
+patch = subprocess.run(['git', 'diff', '--no-ext-diff', baseline, '--', *changed, *added], cwd=a.ROOT,
                        capture_output=True, check=True).stdout.decode('utf-8')
 for name in added:
+    tracked = subprocess.run(['git', 'ls-files', '--error-unmatch', name], cwd=a.ROOT, capture_output=True).returncode == 0
+    if tracked:
+        continue  # already present in git diff against the repair-start revision
     patch += f'diff --git a/{name} b/{name}\nnew file mode 100644\n'
     patch += ''.join(difflib.unified_diff([], (a.ROOT/name).read_text(encoding='utf-8').splitlines(keepends=True),
                                        fromfile='/dev/null', tofile='b/' + name))
-(base / 'repair.patch').write_text(patch, encoding='utf-8')
+(base / 'repair.patch').write_text(patch, encoding='utf-8', newline='\n')
+# Validate forward application without modifying the user's working tree or index.
+import os
+from uuid import uuid4
+index = base / ("patch-check-" + uuid4().hex + ".index")
+env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+try:
+    subprocess.run(['git', 'read-tree', baseline], cwd=a.ROOT, env=env, capture_output=True, check=True)
+    subprocess.run(['git', 'apply', '--cached', '--check', str(base/'repair.patch')],
+                   cwd=a.ROOT, env=env, capture_output=True, check=True)
+finally:
+    index.unlink(missing_ok=True)
+summary['baseline'] = subprocess.check_output(['git','rev-parse',baseline],cwd=a.ROOT).decode().strip()
+summary['tests']['patch_forward_check'] = {'passed': True, 'baseline': summary['baseline'], 'isolated_index': True}
+
 summary['files'] = [{'path': name, 'sha256': hashlib.sha256((a.ROOT/name).read_bytes()).hexdigest()} for name in changed + added]
 summary['head'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=a.ROOT).decode().strip()
 summary['routing_override'] = {'scope': 'gitignored config/models.local.yaml only; credentials unchanged',
