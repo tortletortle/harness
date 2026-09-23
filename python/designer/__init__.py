@@ -108,7 +108,15 @@ class DefaultDesigner(Designer):
         for index, route in enumerate(routes):
             for attempt in range(2):
                 try:
-                    return await self.llm_client.chat(**route)
+                    response = await self.llm_client.chat(**route)
+                    if getattr(response, "finish_reason", None) in {"length", "max_tokens"}:
+                        # Never parse/execute a known partial answer or increase token
+                        # budgets silently. Try the configured alternate route once.
+                        if index + 1 < len(routes):
+                            logger.warning("模型输出达到长度上限，切换配置的备用模型")
+                            break
+                        raise GenerationError("模型输出达到长度上限，未返回完整结果；请缩小任务或调整输出预算")
+                    return response
                 except LLMRequestError as exc:
                     has_fallback = index + 1 < len(routes)
                     if not exc.retryable and exc.status_code not in {401, 403, 404}:
@@ -421,10 +429,13 @@ class DefaultDesigner(Designer):
                 logger.debug("==================")
             
             # 尝试提取JSON（可能被markdown包裹）
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in response_text:
-                response_text = response_text.split("```")[1].split("```")[0].strip()
+            # Only unwrap the OUTER fence. Backticks inside valid JSON strings
+            # are data, not delimiters (e.g. a design describing code examples).
+            if response_text.startswith("```"):
+                import re
+                fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", response_text, re.DOTALL | re.IGNORECASE)
+                if fenced:
+                    response_text = fenced.group(1).strip()
             
             logger.debug("提取后的JSON长度: {}", len(response_text))
             logger.debug("提取后的JSON前200字符: {}", response_text[:200])
