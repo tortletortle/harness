@@ -136,21 +136,35 @@ class JSONFixer:
     @staticmethod
     def _fix_unclosed_brackets(text: str) -> str:
         """修复未闭合的括号"""
-        # 统计括号
-        open_braces = text.count('{')
-        close_braces = text.count('}')
-        open_brackets = text.count('[')
-        close_brackets = text.count(']')
+        # 只统计 JSON 结构括号；字符串值中的括号不是结构的一部分。
+        # 例如截断响应 {"message": "use { safely", 会被朴素 count()
+        # 误判为缺两个 }，从而把原本可恢复的 JSON 再次破坏。
+        stack = []
+        in_string = False
+        escaped = False
+        for char in text:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == '\\':
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char in '{[':
+                stack.append(char)
+            elif char in '}]' and stack:
+                expected = '{' if char == '}' else '['
+                if stack[-1] == expected:
+                    stack.pop()
         
         # 移除末尾的逗号和空白
         text = text.rstrip().rstrip(',')
         
-        # 添加缺失的闭合括号
-        if open_brackets > close_brackets:
-            text += ']' * (open_brackets - close_brackets)
-        
-        if open_braces > close_braces:
-            text += '}' * (open_braces - close_braces)
+        # 按实际嵌套顺序补齐缺失的闭合括号。
+        text += ''.join('}' if char == '{' else ']' for char in reversed(stack))
         
         return text
     
