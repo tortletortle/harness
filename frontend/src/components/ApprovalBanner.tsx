@@ -21,15 +21,35 @@ export function ApprovalBanner() {
   const [confirmedId, setConfirmedId] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
+    let inFlight = false;
+    let failing = false;
     const refresh = async () => {
+      if (!active || inFlight) return;
+      inFlight = true;
+      // 只允许仍对应请求开始时那条审批的响应修改 store；旧 GET 不得复活已处理项。
+      const requestedApprovalId = useAppStore.getState().pendingApproval?.approval_id ?? null;
       try {
         const requests = await apiClient.getPendingApprovals();
         if (!active) return;
+        failing = false;
         const current = useAppStore.getState().pendingApproval;
+        if ((current?.approval_id ?? null) !== requestedApprovalId) return;
         if (!current || !requests.some((r) => r.approval_id === current.approval_id)) {
           useAppStore.getState().setPendingApproval(requests[0] || null);
         }
-      } catch { /* Offline/auth errors must not authorize or dismiss a request. */ }
+      } catch (error) {
+        // 一次连续故障只写一条日志；请求失败不授权，也不清除当前审批。
+        if (active && !failing) {
+          failing = true;
+          useAppStore.getState().addLog({
+            type: 'log',
+            level: 'error',
+            message: `刷新待审批请求失败: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+      } finally {
+        inFlight = false;
+      }
     };
     void refresh();
     const timer = setInterval(() => { void refresh(); }, 5000);

@@ -288,6 +288,8 @@ class AuthorizationManager:
                 return GrantDecision(False, "grant_revoked", "Grant 已撤销", grant_id, grant.usage())
             if datetime.utcnow() >= grant.expires_at:
                 return GrantDecision(False, "grant_expired", "Grant 已过期", grant_id, grant.usage())
+            if time.monotonic() - grant._issued_monotonic > grant.limits.max_elapsed_seconds:
+                return GrantDecision(False, "budget_exceeded", "Grant 时间预算已用尽", grant_id, grant.usage())
             if grant.used_model_calls >= grant.limits.max_model_calls:
                 return GrantDecision(False, "budget_exceeded", "Grant 模型调用次数已用尽", grant_id, grant.usage())
             grant.used_model_calls += 1

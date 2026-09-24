@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from authorization import AuthorizationManager
+from authorization import AuthorizationManager, GrantLimits
 from executor import DefaultExecutor
 from llm_client import LLMClient
 from models import Step
@@ -134,6 +134,22 @@ def test_expired_and_revoked_grants_are_denied(tmp_path):
     revoked = fresh_manager.authorize(fresh.grant_id, "file_creator", "create_file", {"path": "src/a.txt"})
     assert not revoked.allowed
     assert revoked.reason == "grant_revoked"
+
+
+def test_model_calls_respect_grant_elapsed_budget(tmp_path):
+    manager = _manager(tmp_path)
+    grant = manager.issue_for_step(
+        "p", _step(),
+        limits=GrantLimits(max_tool_calls=1, max_model_calls=2, max_elapsed_seconds=0.01),
+    )
+    # 避免真实 sleep：模拟 Grant 已超过独立的 elapsed budget，但尚未过期。
+    grant._issued_monotonic -= 1
+
+    decision = manager.record_model_call(grant.grant_id)
+
+    assert not decision.allowed
+    assert decision.reason == "budget_exceeded"
+    assert decision.usage["model_calls"] == 0
 
 
 def test_network_host_requires_explicit_allowlist(tmp_path):

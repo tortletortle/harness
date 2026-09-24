@@ -1847,8 +1847,24 @@ class Database:
         try:
             with closing(self._get_connection()) as conn, conn:
                 cursor = conn.cursor()
-                cursor.execute("UPDATE execution_runs SET heartbeat_at = ? WHERE run_id = ? AND owner_token = ? AND status = ?",
-                               (datetime.utcnow().isoformat(), str(run_id), str(owner_token), RunStatus.RUNNING.value))
+                cursor.execute("""UPDATE execution_runs
+                    SET heartbeat_at = ?
+                    WHERE run_id = ? AND owner_token = ? AND status = ?
+                      AND EXISTS (
+                          SELECT 1 FROM plans p
+                          WHERE p.plan_id = execution_runs.plan_id AND p.status = ?
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM execution_runs newer
+                          WHERE newer.plan_id = execution_runs.plan_id
+                            AND (
+                                newer.created_at > execution_runs.created_at
+                                OR (newer.created_at = execution_runs.created_at
+                                    AND newer.run_id > execution_runs.run_id)
+                            )
+                      )""",
+                    (datetime.utcnow().isoformat(), str(run_id), str(owner_token),
+                     RunStatus.RUNNING.value, PlanStatus.RUNNING.value))
                 return cursor.rowcount == 1
         except Exception as e:
             raise DatabaseError(f"执行 Run 心跳失败: {e}") from e
@@ -1880,31 +1896,42 @@ class Database:
         try:
             with closing(self._get_connection()) as conn, conn:
                 cursor = conn.cursor()
-                # 可选 fencing：attempt 必须仍属于指定 run，且该 run 正由 owner_token 持有。
-                # 防止「旧任务/旧前台实例」在换跑/恢复后把新任务正在执行的 attempt 盖上终态。
+                # Fence in the UPDATE itself: a prior SELECT left a check-then-write
+                # window in which the Run could be closed/replaced before this row changed.
+                ownership_clause = ""
+                params = (
+                    status, datetime.utcnow().isoformat(), duration_ms,
+                    None if retryable is None else int(bool(retryable)), failure_reason,
+                    json.dumps(outputs, ensure_ascii=False, default=str) if outputs is not None else None,
+                    str(attempt_id), AttemptStatus.RUNNING.value,
+                )
                 if run_id is not None:
-                    cursor.execute("""SELECT r.status AS run_status FROM execution_attempts a
-                        JOIN execution_runs r ON r.run_id = a.run_id
-                        WHERE a.attempt_id = ? AND a.run_id = ?""",
-                        (str(attempt_id), str(run_id)))
-                    row = cursor.fetchone()
-                    if not row:
-                        return False
-                    if row["run_status"] != RunStatus.RUNNING.value:
-                        return False
-                    if owner_token is not None:
-                        cursor.execute("""SELECT owner_token FROM execution_runs WHERE run_id = ?""",
-                                       (str(run_id),))
-                        run_row = cursor.fetchone()
-                        if not run_row or run_row["owner_token"] != str(owner_token):
-                            return False
-                cursor.execute("""UPDATE execution_attempts SET status = ?, finished_at = ?,
+                    ownership_clause = """
+                        AND execution_attempts.run_id = ?
+                        AND EXISTS (
+                            SELECT 1 FROM execution_runs active_run
+                            WHERE active_run.run_id = execution_attempts.run_id
+                              AND active_run.run_id = ?
+                              AND active_run.status = ?
+                              AND (? IS NULL OR active_run.owner_token = ?)
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM execution_runs newer
+                                  WHERE newer.plan_id = active_run.plan_id
+                                    AND (
+                                        newer.created_at > active_run.created_at
+                                        OR (newer.created_at = active_run.created_at
+                                            AND newer.run_id > active_run.run_id)
+                                    )
+                              )
+                        )
+                    """
+                    token = str(owner_token) if owner_token is not None else None
+                    params += (
+                        str(run_id), str(run_id), RunStatus.RUNNING.value, token, token,
+                    )
+                cursor.execute(f"""UPDATE execution_attempts SET status = ?, finished_at = ?,
                     duration_ms = ?, retryable = ?, failure_reason = ?, outputs = ?
-                    WHERE attempt_id = ? AND status = ?""",
-                    (status, datetime.utcnow().isoformat(), duration_ms,
-                     None if retryable is None else int(bool(retryable)), failure_reason,
-                     json.dumps(outputs, ensure_ascii=False, default=str) if outputs is not None else None,
-                     str(attempt_id), AttemptStatus.RUNNING.value))
+                    WHERE attempt_id = ? AND status = ? {ownership_clause}""", params)
                 return cursor.rowcount == 1
         except Exception as e:
             raise DatabaseError(f"结束执行 Attempt 失败: {e}") from e
