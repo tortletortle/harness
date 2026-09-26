@@ -947,20 +947,22 @@ class DefaultDesigner(Designer):
         
         # 添加额外的通用 fallback（如果还有空间）
         if len(fallback_strategy) < max_retries:
-            # 尝试 stepfun 作为第三选择
+            # 尝试 stepfun 作为第三选择：step-3.7-flash 在配置端点为 403（已下线），
+            # 改用实测可用（qwen3.8-max）的模型作兜底（2026-09-26）。
             fallback_strategy.append({
                 "type": "fallback-2", 
                 "provider": "stepfun", 
-                "model": "step-3.7-flash", 
+                "model": "qwen3.8-max", 
                 "temperature": 0.3
             })
         
         if len(fallback_strategy) < max_retries:
-            # 尝试 hejuapi 作为第四选择
+            # 尝试 stepfun/glm-5.2 作为第四选择：hejuapi 端点当前不可达且 gpt-5.6-sol
+            # 返回 404，整条不可靠；改回经真实验证的 stepfun 备选模型（2026-09-26）。
             fallback_strategy.append({
                 "type": "fallback-3", 
-                "provider": "hejuapi", 
-                "model": "gpt-5.6-sol", 
+                "provider": "stepfun", 
+                "model": "glm-5.2", 
                 "temperature": 0.3
             })
         
