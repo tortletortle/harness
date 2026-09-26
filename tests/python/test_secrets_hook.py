@@ -41,6 +41,41 @@ class _FakeDesign:
 DESIGN = _FakeDesign()
 
 
+def test_normalize_declaration_json_dict():
+    from api import secrets_hook as hook
+    assert hook._normalize_declaration(
+        '{"required_secrets": ["X"]}') == {"required_secrets": ["X"]}
+    assert hook._normalize_declaration('{"secrets": ["Y"]}') == {"secrets": ["Y"]}
+
+
+def test_normalize_declaration_plain_list():
+    from api import secrets_hook as hook
+    assert hook._normalize_declaration('["A", "B"]') == {"required_secrets": ["A", "B"]}
+
+
+def test_normalize_declaration_keeps_non_json():
+    from api import secrets_hook as hook
+    blob = "## secrets code block text"
+    assert hook._normalize_declaration(blob) is blob
+
+
+def test_declaration_json_string_passes_dict_to_after_approval(patch_tools):
+    """宿主把声明当 JSON 字符串传，必须被规范成 dict 再交给真模块（此前会静默漏掉）。"""
+    from api import secrets_hook as hook
+
+    captured = {}
+
+    def _after_approval(document, store, root=None, launcher=None):
+        captured["document"] = document
+        return {"prompt_shown": True, "entry_url": "http://localhost/e",
+                "pending": ["MY_SECRET_TOKEN"], "already_set": []}
+
+    fake_tools = _types.SimpleNamespace(after_approval=_after_approval)
+    patch_tools(fake_tools, None)
+    hook.build_secrets_prompt(DESIGN, declaration='{"required_secrets": ["MY_SECRET_TOKEN"]}')
+    assert captured["document"] == {"required_secrets": ["MY_SECRET_TOKEN"]}
+
+
 def test_tools_absent_fails_closed(patch_tools):
     from api import secrets_hook as hook
     patch_tools(None, None)

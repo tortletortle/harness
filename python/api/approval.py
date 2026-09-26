@@ -17,7 +17,8 @@ from copy import deepcopy
 import asyncio
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from utils.utcnow import utcnow_iso
+
 from typing import Any, Dict, List, Optional
 
 from logging_config import get_logger
@@ -111,7 +112,7 @@ class ApprovalManager:
             instruction=instruction,
             inputs=deepcopy(inputs or {}),
             desktop_scope=deepcopy(desktop_scope),
-            created_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+            created_at=utcnow_iso(),
         )
         self._pending[request.approval_id] = request
         return request

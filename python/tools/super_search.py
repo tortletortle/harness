@@ -18,7 +18,8 @@ import base64
 import io
 import time
 from contextvars import ContextVar, copy_context
-from datetime import datetime, timezone
+from utils.utcnow import utcnow
+
 import json
 import os
 import re
@@ -102,7 +103,7 @@ def execute_with_grant(instruction, inputs, manager, grant_id):
             return (parts.scheme in ('https','http') and parts.port in (None,80,443)
                     and 'super_search' in grant.allowed_tools and parts.hostname and parts.username is None
                     and parts.password is None and manager.get(grant_id) is grant and not grant.revoked
-                    and datetime.now(timezone.utc).replace(tzinfo=None) < grant.expires_at
+                    and utcnow() < grant.expires_at
                     and time.monotonic()-grant._issued_monotonic < grant.limits.max_elapsed_seconds
                     and manager._check_resources(grant, {'url':url}) is None)
         token = _SEARCH_POLICY.set(permitted)
@@ -125,7 +126,7 @@ def execute_with_grant(instruction, inputs, manager, grant_id):
                 return fail('budget_exceeded')
             safe_inputs['timeout'] = min(_clamp_int(inputs.get('timeout'),15,1,120),int(remaining))
             result = SuperSearch.execute(instruction, safe_inputs)
-            if (manager.get(grant_id) is not grant or grant.revoked or datetime.now(timezone.utc).replace(tzinfo=None) >= grant.expires_at
+            if (manager.get(grant_id) is not grant or grant.revoked or utcnow() >= grant.expires_at
                     or time.monotonic()-grant._issued_monotonic >= grant.limits.max_elapsed_seconds):
                 return fail('grant_no_longer_valid')
             return result

@@ -75,6 +75,29 @@ def _text_blob(design) -> str:
     return "\n".join(parts)
 
 
+def _normalize_declaration(text: str) -> Any:
+    """把宿主的密钥声明规范成外部 design_secrets 认识的形态。
+
+    外部 parse_required 对 str 只扫 fenced 代码块；对 dict 才取 required_secrets /
+    secrets。宿主把声明当 JSON 字符串传时若直接透传，程序化声明会被静默忽略
+    （此前 names/declaration 路径永远不弹录入页）。这里把可解析的 JSON 归一成 dict：
+      {"required_secrets": [...]}  → dict（保留）
+      [...]                        → {"required_secrets": [...]}
+      其它（YAML / fenced 块 / 设计正文）→ 原样 str，交给 fenced 扫描。
+    """
+    if not text or not text.strip():
+        return text
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return text
+    if isinstance(parsed, dict) and ("required_secrets" in parsed or "secrets" in parsed):
+        return parsed
+    if isinstance(parsed, list):
+        return {"required_secrets": parsed}
+    return text
+
+
 def build_secrets_prompt(design, *, declaration: Optional[str] = None,
                          launcher=None) -> Dict[str, Any]:
     """设计书审批通过后调用；返回模型可读的提示计划（不含密钥值）。
@@ -92,7 +115,7 @@ def build_secrets_prompt(design, *, declaration: Optional[str] = None,
         root = _workspace_root()
         root.mkdir(parents=True, exist_ok=True)
         store = SecretStore(root)
-        document = declaration if declaration and declaration.strip() else _text_blob(design)
+        document = _normalize_declaration(declaration) if (declaration and declaration.strip()) else _text_blob(design)
         result = design_secrets.after_approval(document, store, root=root,
                                                launcher=launcher)
         result["available"] = True
