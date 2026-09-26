@@ -28,8 +28,7 @@ import sys
 import time
 from pathlib import Path
 from uuid import uuid4
-from datetime import datetime
-
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 SLOW = "python -c \"import time; time.sleep(2)\""
@@ -92,7 +91,7 @@ def main() -> int:
 
     def make_plan(steps, user_request="C 验收计划"):
         design = DesignDocument(
-            design_id=uuid4(), user_request=user_request, timestamp=datetime.utcnow(),
+            design_id=uuid4(), user_request=user_request, timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
             part1_design=DesignPart1(
                 architecture=Architecture(components=["c"], interactions=["i"]),
                 difficulty=Difficulty(overall="low", breakdown={}),
@@ -103,7 +102,7 @@ def main() -> int:
         state.database.save_design(design)
         plan = ExecutionPlan(
             plan_id=uuid4(), design_id=design.design_id, status=PlanStatus.PENDING,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
             segments=[PlanSegment(segment_id=uuid4(), description="graph", steps=steps)],
             implementation_list=[],
         )

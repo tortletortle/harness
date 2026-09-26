@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlsplit
@@ -181,7 +181,7 @@ class AuthorizationManager:
             name = str(extra).strip()
             if name:
                 allowed_tools.add(name)
-        issued = datetime.utcnow()
+        issued = datetime.now(timezone.utc).replace(tzinfo=None)
         grant = CapabilityGrant(
             grant_id=uuid.uuid4().hex,
             plan_id=str(plan_id),
@@ -216,7 +216,7 @@ class AuthorizationManager:
           （缺省继承全局配置，为空则一律拒绝——fail-closed）。
         - 生命周期同步骤 Grant：到期/撤销/预算耗尽即失效。
         """
-        issued = datetime.utcnow()
+        issued = datetime.now(timezone.utc).replace(tzinfo=None)
         ttl = self.default_ttl_seconds if ttl_seconds is None else max(0.01, float(ttl_seconds))
         hosts = (
             self.allowed_hosts
@@ -262,7 +262,7 @@ class AuthorizationManager:
                 return GrantDecision(False, "grant_not_found", "Grant 不存在", grant_id)
             if grant.revoked:
                 return GrantDecision(False, "grant_revoked", "Grant 已撤销", grant_id, grant.usage())
-            if datetime.utcnow() >= grant.expires_at:
+            if datetime.now(timezone.utc).replace(tzinfo=None) >= grant.expires_at:
                 return GrantDecision(False, "grant_expired", "Grant 已过期", grant_id, grant.usage())
             if time.monotonic() - grant._issued_monotonic > grant.limits.max_elapsed_seconds:
                 return GrantDecision(False, "budget_exceeded", "Grant 时间预算已用尽", grant_id, grant.usage())
@@ -286,7 +286,7 @@ class AuthorizationManager:
                 return GrantDecision(False, "grant_not_found", "Grant 不存在", grant_id)
             if grant.revoked:
                 return GrantDecision(False, "grant_revoked", "Grant 已撤销", grant_id, grant.usage())
-            if datetime.utcnow() >= grant.expires_at:
+            if datetime.now(timezone.utc).replace(tzinfo=None) >= grant.expires_at:
                 return GrantDecision(False, "grant_expired", "Grant 已过期", grant_id, grant.usage())
             if time.monotonic() - grant._issued_monotonic > grant.limits.max_elapsed_seconds:
                 return GrantDecision(False, "budget_exceeded", "Grant 时间预算已用尽", grant_id, grant.usage())

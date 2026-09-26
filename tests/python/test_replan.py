@@ -3,7 +3,7 @@
 分支克隆 / 依赖改写 / 旧线性计划显式化。"""
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -43,7 +43,7 @@ def _save_plan_with_failure(db: Database, tmp_path: Path, linear: bool = False):
     """三步计划：1 成功、2 失败（锚点）、3 Pending。linear=True 时不带任何依赖。"""
     design_id = uuid4()
     db.save_design(DesignDocument(
-        design_id=design_id, user_request="replan 测试", timestamp=datetime.utcnow(),
+        design_id=design_id, user_request="replan 测试", timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["c"], interactions=["i"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -62,7 +62,7 @@ def _save_plan_with_failure(db: Database, tmp_path: Path, linear: bool = False):
         s3.depends_on = [str(s2.step_id)]
     plan = ExecutionPlan(
         plan_id=uuid4(), design_id=design_id, status=PlanStatus.FAILED,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         segments=[PlanSegment(segment_id=uuid4(), description="g", steps=[s1, s2, s3])],
         implementation_list=[],
         resume_from_step_id=s2.step_id,

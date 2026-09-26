@@ -15,9 +15,7 @@ from tools import get_registry
 from plugin_system import get_plugin_manager
 from models import DesignDocument, ExecutionPlan, PlanSegment, Step, StepStatus
 from uuid import uuid4
-from datetime import datetime
-
-
+from datetime import datetime, timezone
 def test_database():
     """测试数据库功能"""
     print("=" * 70)
@@ -33,7 +31,7 @@ def test_database():
     design = DesignDocument(
         design_id=uuid4(),
         user_request="测试项目",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(
                 components=["组件1", "组件2"],

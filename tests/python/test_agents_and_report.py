@@ -96,7 +96,7 @@ def test_diagnosis_agent_runs_through_capability_pipeline(tmp_path, monkeypatch)
 
 def test_final_report_generated_on_completion(tmp_path, monkeypatch):
     """计划 Completed 后调用 _generate_final_report：报告落 artifacts 表（kind=delivery_report）。"""
-    from datetime import datetime
+    from datetime import datetime, timezone
     from uuid import uuid4
 
     from api import server as server_mod
@@ -110,7 +110,7 @@ def test_final_report_generated_on_completion(tmp_path, monkeypatch):
 
     design_id = uuid4()
     db.save_design(DesignDocument(
-        design_id=design_id, user_request="报告", timestamp=datetime.utcnow(),
+        design_id=design_id, user_request="报告", timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["c"], interactions=["i"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -122,7 +122,7 @@ def test_final_report_generated_on_completion(tmp_path, monkeypatch):
                 inputs={}, check_criteria="手动检查", status="Success")
     plan = ExecutionPlan(
         plan_id=uuid4(), design_id=design_id, status=PlanStatus.COMPLETED,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         segments=[PlanSegment(segment_id=uuid4(), description="g", steps=[step])],
         implementation_list=[],
     )
@@ -145,7 +145,7 @@ def test_final_report_generated_on_completion(tmp_path, monkeypatch):
 
 def test_final_report_fail_open_without_designer(tmp_path):
     """Designer 缺失时报告生成静默跳过（fail-open）。"""
-    from datetime import datetime
+    from datetime import datetime, timezone
     from uuid import uuid4
 
     from api import server as server_mod
@@ -160,7 +160,7 @@ def test_final_report_fail_open_without_designer(tmp_path):
 
     design_id = uuid4()
     db.save_design(DesignDocument(
-        design_id=design_id, user_request="x", timestamp=datetime.utcnow(),
+        design_id=design_id, user_request="x", timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["c"], interactions=["i"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -170,7 +170,7 @@ def test_final_report_fail_open_without_designer(tmp_path):
     ))
     plan = ExecutionPlan(
         plan_id=uuid4(), design_id=design_id, status=PlanStatus.COMPLETED,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         segments=[PlanSegment(segment_id=uuid4(), description="g", steps=[])],
         implementation_list=[],
     )

@@ -1,6 +1,6 @@
 """Database-backed dependency selection tests."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -25,7 +25,7 @@ def _seed_plan(db, specs):
     db.save_design(DesignDocument(
         design_id=design_id,
         user_request="graph",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["x"], interactions=["y"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -54,7 +54,7 @@ def _seed_plan(db, specs):
         plan_id=uuid4(),
         design_id=design_id,
         status=PlanStatus.PENDING,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         segments=[PlanSegment(segment_id=uuid4(), description="g", steps=steps)],
         implementation_list=[],
     )
@@ -112,7 +112,7 @@ def test_save_plan_rejects_cyclic_graph(tmp_path):
     db.save_design(DesignDocument(
         design_id=design_id,
         user_request="cyclic",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["x"], interactions=["y"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -127,7 +127,7 @@ def test_save_plan_rejects_cyclic_graph(tmp_path):
     b.depends_on = [str(a.step_id)]
     plan = ExecutionPlan(
         plan_id=uuid4(), design_id=design_id, status=PlanStatus.PENDING,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         segments=[PlanSegment(segment_id=uuid4(), description="g", steps=[a, b])],
         implementation_list=[],
     )
@@ -141,7 +141,7 @@ def _seed_graph(db, specs, max_concurrency=2, parallel=True):
     db.save_design(DesignDocument(
         design_id=design_id,
         user_request="graph",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["x"], interactions=["y"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -170,7 +170,7 @@ def _seed_graph(db, specs, max_concurrency=2, parallel=True):
         plan_id=uuid4(),
         design_id=design_id,
         status=PlanStatus.PENDING,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         segments=[PlanSegment(segment_id=uuid4(), description="g", steps=steps)],
         implementation_list=[],
     )

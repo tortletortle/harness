@@ -7,8 +7,7 @@ pytest 风格并使用 tmp_path 避免写入生产数据库。
 """
 
 from uuid import uuid4
-from datetime import datetime
-
+from datetime import datetime, timezone
 import pytest
 
 from database import Database
@@ -34,7 +33,7 @@ def _make_design():
     return DesignDocument(
         design_id=uuid4(),
         user_request="Test task",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["Component1"], interactions=["Interaction1"]),
             difficulty=Difficulty(overall="Simple", breakdown={"technical": "Low"}),
@@ -54,7 +53,7 @@ def test_save_plan_flattens_segment_steps_into_steps_table(db):
     plan = ExecutionPlan(
         plan_id=uuid4(),
         design_id=design.design_id,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         status="Pending",
         segments=[
             PlanSegment(

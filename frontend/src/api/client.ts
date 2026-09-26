@@ -149,7 +149,7 @@ export class ApiClient {
     designId: string,
     approved: boolean,
     feedback?: string
-  ): Promise<{ plan?: ExecutionPlan; revised?: boolean; design?: Design; rejected?: boolean; message?: string }> {
+  ): Promise<{ plan?: ExecutionPlan; revised?: boolean; design?: Design; rejected?: boolean; message?: string; secrets_prompt?: { prompt_shown: boolean; available?: boolean; entry_url?: string; pending?: string[]; already_set?: string[] } }> {
     const response = await authFetch(`${API_BASE}/api/design/${designId}/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

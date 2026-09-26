@@ -10,7 +10,7 @@
 """
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -44,7 +44,7 @@ def _seed_plan(db, specs):
     assert db.save_design(DesignDocument(
         design_id=design_id,
         user_request="交接测试",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["c"], interactions=["i"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -66,7 +66,7 @@ def _seed_plan(db, specs):
         steps.append(step)
     plan = ExecutionPlan(
         plan_id=uuid4(), design_id=design_id, status=PlanStatus.PENDING,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         segments=[PlanSegment(segment_id=uuid4(), description="g", steps=steps)],
         implementation_list=[],
     )

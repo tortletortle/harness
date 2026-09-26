@@ -8,7 +8,7 @@ import json
 import uuid
 from contextlib import closing
 from typing import Optional, List, Dict, Any, Mapping
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from models import (
@@ -340,7 +340,7 @@ class Database:
                     str(artifact_id), plan_id, run_id, step_id, str(kind), str(uri),
                     content_hash, size_bytes,
                     json.dumps(metadata or {}, ensure_ascii=False),
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 ))
                 return True
         except Exception as e:
@@ -455,7 +455,7 @@ class Database:
                     VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
                 """, (
                     str(worktree_id), str(plan_id), str(repo_path), str(worktree_path),
-                    str(branch), base_commit, datetime.utcnow().isoformat(),
+                    str(branch), base_commit, datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 ))
                 return True
         except Exception as e:
@@ -508,7 +508,7 @@ class Database:
             with closing(self._get_connection()) as conn, conn:
                 cursor = conn.execute(
                     "UPDATE worktrees SET status = ?, closed_at = ? WHERE worktree_id = ?",
-                    (status, datetime.utcnow().isoformat(), str(worktree_id)),
+                    (status, datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), str(worktree_id)),
                 )
                 return cursor.rowcount > 0
         except Exception as e:
@@ -528,7 +528,7 @@ class Database:
                     (session_id, plan_id, run_id, step_id, agent_tool, status, started_at)
                     VALUES (?, ?, ?, ?, ?, 'running', ?)
                 """, (str(session_id), plan_id, run_id, step_id, str(agent_tool),
-                      datetime.utcnow().isoformat()))
+                      datetime.now(timezone.utc).replace(tzinfo=None).isoformat()))
                 return True
         except Exception as e:
             logger.exception("登记 agent session 失败: {}", e)
@@ -553,7 +553,7 @@ class Database:
                 """, (status, int(turns_used), int(model_calls), int(tool_calls),
                       int(input_tokens), int(output_tokens),
                       str(error)[:2000] if error else None,
-                      datetime.utcnow().isoformat(), str(session_id)))
+                      datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), str(session_id)))
                 return cursor.rowcount > 0
         except Exception as e:
             logger.exception("收尾 agent session 失败: {}", e)
@@ -575,7 +575,7 @@ class Database:
                 """, (str(session_id), int(turn_no), str(outcome),
                       int(input_tokens), int(output_tokens), duration_ms,
                       json.dumps(detail or {}, ensure_ascii=False),
-                      datetime.utcnow().isoformat()))
+                      datetime.now(timezone.utc).replace(tzinfo=None).isoformat()))
                 return cursor.lastrowid
         except Exception as e:
             logger.exception("记录 agent turn 失败: {}", e)
@@ -728,7 +728,7 @@ class Database:
                     (step_id, plan_id, event_type, event_data, branch_version, created_at)
                     VALUES (?, ?, 'replanned', ?, ?, ?)
                 """, (changes["anchor"], plan_id, json.dumps(event, ensure_ascii=False),
-                      changes["new_branch"], datetime.utcnow().isoformat()))
+                      changes["new_branch"], datetime.now(timezone.utc).replace(tzinfo=None).isoformat()))
                 if cursor.rowcount != 1:
                     raise DatabaseError("重规划事件写入未命中")
             return {"success": True, **{key: changes[key] for key in (
@@ -812,7 +812,7 @@ class Database:
                     json.dumps(design.part2_tool_assessment.model_dump()),
                     design.user_approval,
                     design.user_comments,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 ))
                 
                 conn.commit()
@@ -1520,7 +1520,7 @@ class Database:
                     event_type,
                     json.dumps(event_data, ensure_ascii=False) if event_data is not None else None,
                     branch_version,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 ))
                 return True
         except Exception as e:
@@ -1798,7 +1798,7 @@ class Database:
         if not from_statuses:
             return None
         run_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         valid = {s.value for s in PlanStatus}
         if PlanStatus.RUNNING.value not in valid:
             return None
@@ -1830,7 +1830,7 @@ class Database:
         """仅 Run owner 可以结束 Run，防止旧任务覆盖新任务。"""
         if status not in {s.value for s in RunStatus}:
             return False
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         try:
             with closing(self._get_connection()) as conn, conn:
                 cursor = conn.cursor()
@@ -1863,7 +1863,7 @@ class Database:
                                     AND newer.run_id > execution_runs.run_id)
                             )
                       )""",
-                    (datetime.utcnow().isoformat(), str(run_id), str(owner_token),
+                    (datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), str(run_id), str(owner_token),
                      RunStatus.RUNNING.value, PlanStatus.RUNNING.value))
                 return cursor.rowcount == 1
         except Exception as e:
@@ -1872,7 +1872,7 @@ class Database:
     def create_execution_attempt(self, run_id: str, plan_id: str, step_id: str,
                                  attempt_no: int) -> Dict[str, Any]:
         attempt_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         try:
             with closing(self._get_connection()) as conn, conn:
                 conn.execute("""INSERT INTO execution_attempts
@@ -1900,7 +1900,7 @@ class Database:
                 # window in which the Run could be closed/replaced before this row changed.
                 ownership_clause = ""
                 params = (
-                    status, datetime.utcnow().isoformat(), duration_ms,
+                    status, datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), duration_ms,
                     None if retryable is None else int(bool(retryable)), failure_reason,
                     json.dumps(outputs, ensure_ascii=False, default=str) if outputs is not None else None,
                     str(attempt_id), AttemptStatus.RUNNING.value,
@@ -1943,7 +1943,7 @@ class Database:
                 cursor = conn.cursor()
                 cursor.execute("SELECT run_id FROM execution_runs WHERE status = ?", (RunStatus.RUNNING.value,))
                 run_ids = [str(row["run_id"]) for row in cursor.fetchall()]
-                now = datetime.utcnow().isoformat()
+                now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
                 for run_id in run_ids:
                     cursor.execute("UPDATE execution_attempts SET status = ?, finished_at = ? WHERE run_id = ? AND status = ?",
                                    (AttemptStatus.INTERRUPTED.value, now, run_id, AttemptStatus.RUNNING.value))
@@ -2099,7 +2099,7 @@ class Database:
                             (step_id, plan_id, event_type, event_data, branch_version, created_at)
                             VALUES (?, ?, 'interrupted', ?, ?, ?)""", (step_id, plan_id,
                             json.dumps({"reason": "interrupted by service restart", "previous_status": row["status"]}, ensure_ascii=False),
-                            step_branch, datetime.utcnow().isoformat()))
+                            step_branch, datetime.now(timezone.utc).replace(tzinfo=None).isoformat()))
                         cursor.execute("UPDATE steps SET status = ? WHERE step_id = ?", (StepStatus.PENDING.value, step_id))
                     if checkpoint is not None:
                         cursor.execute("UPDATE plans SET status = ?, resume_from_step_id = ?, paused_at_step_id = NULL WHERE plan_id = ?",
@@ -2121,7 +2121,7 @@ class Database:
                     INSERT INTO logs (timestamp, level, message, context, service)
                     VALUES (?, ?, ?, ?, ?)
                 """, (
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     level,
                     message,
                     json.dumps(context) if context else None,
@@ -2161,7 +2161,7 @@ class Database:
                         inputs, success, blocked, block_reason, actor, grant_id
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     plan_id,
                     step_id,
                     tool_id,

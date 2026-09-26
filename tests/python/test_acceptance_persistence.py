@@ -1,6 +1,6 @@
 """Structured acceptance persistence and branch-copy tests."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from database import Database
@@ -20,7 +20,7 @@ def _design():
     return DesignDocument(
         design_id=uuid4(),
         user_request="acceptance persistence",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["c"], interactions=["i"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -57,7 +57,7 @@ def test_acceptance_survives_plan_round_trip_and_branch_clone(tmp_path):
     plan = ExecutionPlan(
         plan_id=uuid4(),
         design_id=design.design_id,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         status="Pending",
         segments=[PlanSegment(segment_id=uuid4(), description="segment", steps=[first, second])],
         implementation_list=[],

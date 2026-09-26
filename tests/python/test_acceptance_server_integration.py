@@ -1,6 +1,6 @@
 """End-to-end state-machine assertion for deterministic acceptance."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -30,7 +30,7 @@ def _design():
     return DesignDocument(
         design_id=uuid4(),
         user_request="acceptance state machine",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["c"], interactions=["i"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -63,7 +63,7 @@ async def test_state_machine_does_not_mark_false_tool_success_as_success(tmp_pat
     plan = ExecutionPlan(
         plan_id=uuid4(),
         design_id=design.design_id,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         status="Pending",
         segments=[PlanSegment(segment_id=uuid4(), description="segment", steps=[step])],
         implementation_list=[],

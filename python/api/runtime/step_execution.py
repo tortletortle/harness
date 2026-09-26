@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 from uuid import UUID
 
@@ -474,7 +474,7 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
         {"grant_id": grant.grant_id, "expires_at": grant.expires_at.isoformat(), "tool_id": tool_id_for_approval},
         branch_version=step_model.branch_version,
     )
-    started = datetime.utcnow()
+    started = datetime.now(timezone.utc).replace(tzinfo=None)
     try:
         # 兼容尚未升级 grant_id 参数的测试/第三方 Executor；正式 DefaultExecutor
         # 始终走带 Grant 的调用路径。
@@ -515,7 +515,7 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
             {"grant_id": grant.grant_id, "usage": grant.usage()},
             branch_version=step_model.branch_version,
         )
-    duration_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+    duration_ms = int((datetime.now(timezone.utc).replace(tzinfo=None) - started).total_seconds() * 1000)
 
     success = bool(result.get("success"))
     check_status = result.get("check_status")

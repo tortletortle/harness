@@ -12,7 +12,7 @@
 运行方式：
   离线部分（_infer_instruction 映射）随常规 pytest 运行；
   真实 LLM 评测需要显式开启：
-    RUN_REAL_LLM_EVAL=1 python -m pytest tests/eval/test_tool_selection.py -q --no-cov -s
+    RUN_REAL_LLM_EVAL=1 python -m pytest tests/eval/test_tool_selection.py -q --no-cov -s --live-models
 """
 
 import asyncio
@@ -26,7 +26,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python"))
 
 from executor import DefaultExecutor  # noqa: E402
-from llm_client import LLMClient, Message  # noqa: E402
+from llm_client import LLMClient, Message, OpenAICompatibleProvider  # noqa: E402
 from tools import get_registry  # noqa: E402
 
 # ===== 场景集 =====
@@ -302,23 +302,66 @@ async def _run_scenario(llm, cfg, scenario):
     return report
 
 
+async def _live_model_provider():
+    """真实评测凭据，与运行时一致：.env 注入 + env 键优先。
+
+    规避初版缺陷：初版直读 config/models.yaml 的占位 api_key、不加载 .env /
+    models.local，导致 RUN_REAL_LLM_EVAL 下 15 个场景全部 401。
+
+    模型名探测：优先配置的 executor 主模型；若端点返回 403（模型下线/改名）则
+    回退到经真实验证可用的候选模型（qwen3.8-max / glm-5.2），避免整批 api_error。
+    """
+    root = Path(__file__).resolve().parents[2]
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(root / ".env", override=False)
+    except Exception:
+        pass
+    import yaml
+
+    config = yaml.safe_load((root / "config" / "models.yaml").read_text(encoding="utf-8"))
+    exec_cfg = config["models"]["executor"]
+    base_urls = config.get("base_urls", {})
+    provider = exec_cfg.get("primary", {}).get("provider")
+    if not provider:
+        raise RuntimeError("models.yaml 未配置 executor.primary.provider")
+    api_key = os.getenv(f"EAS_LLM_API_KEY_{provider.upper()}")
+    if not api_key:
+        raise RuntimeError(f"未找到 EAS_LLM_API_KEY_{provider.upper()}（检查 .env）")
+    base_url = os.getenv(f"EAS_LLM_BASE_URL_{provider.upper()}") or base_urls.get(provider)
+
+    cfg_entry = dict(exec_cfg.get("primary") or {})
+    cfg_entry["provider"] = provider
+    candidates = [exec_cfg["primary"].get("model"), "qwen3.8-max", "glm-5.2"]
+
+    probe = LLMClient()
+    probe.register_provider(OpenAICompatibleProvider(name=provider, base_url=base_url, api_key=api_key))
+    for model in candidates:
+        if not model:
+            continue
+        try:
+            await probe.chat(provider, [Message(role="user", content="ping")],
+                             model=model, temperature=0.0, max_tokens=5)
+            cfg_entry["model"] = model
+            return cfg_entry, base_url, api_key
+        except Exception:
+            continue
+    raise RuntimeError(f"endpoint {base_url} 全部候选模型不可用")
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(not RUN_REAL, reason="需要 RUN_REAL_LLM_EVAL=1")
 async def test_tool_selection_accuracy_report():
     """真实 LLM 选型评测：输出逐场景结果与准确率，整体阈值 60% 兜底。"""
-    import yaml
-
-    cfg_path = Path(__file__).resolve().parents[2] / "config" / "models.yaml"
-    config = yaml.safe_load(open(cfg_path, encoding="utf-8"))
-    exec_cfg = config["models"]["executor"]["primary"]
+    exec_cfg, base_url, api_key = await _live_model_provider()
 
     llm = LLMClient()
     from llm_client import OpenAICompatibleProvider
 
     llm.register_provider(OpenAICompatibleProvider(
         name=exec_cfg["provider"],
-        base_url=config["base_urls"][exec_cfg["provider"]],
-        api_key=config["api_keys"][exec_cfg["provider"]],
+        base_url=base_url,
+        api_key=api_key,
     ))
 
     reports = []

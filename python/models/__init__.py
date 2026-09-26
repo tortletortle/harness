@@ -4,7 +4,7 @@
 与Rust层的类型保持一致
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
@@ -64,7 +64,7 @@ class ExecutionRun(BaseModel):
     heartbeat_at: Optional[datetime] = None
     owner_token: str = ""
     failure_reason: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class ExecutionAttempt(BaseModel):
@@ -74,13 +74,13 @@ class ExecutionAttempt(BaseModel):
     step_id: UUID
     attempt_no: int = 0
     status: AttemptStatus = AttemptStatus.RUNNING
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     finished_at: Optional[datetime] = None
     duration_ms: Optional[int] = None
     retryable: Optional[bool] = None
     failure_reason: Optional[str] = None
     outputs: Optional[Dict[str, Any]] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class Architecture(BaseModel):
@@ -115,7 +115,7 @@ class DesignPart1(BaseModel):
 class DesignDocument(BaseModel):
     design_id: UUID = Field(default_factory=uuid4)
     user_request: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     part1_design: DesignPart1
     part2_tool_assessment: ToolAssessment
     user_approval: Optional[bool] = None
@@ -165,7 +165,7 @@ class DynamicInsertion(BaseModel):
 class ExecutionPlan(BaseModel):
     plan_id: UUID = Field(default_factory=uuid4)
     design_id: UUID
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     status: PlanStatus = PlanStatus.PENDING
     segments: List[PlanSegment]
     implementation_list: List[str]

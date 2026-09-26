@@ -8,8 +8,7 @@ import asyncio
 import sys
 from pathlib import Path
 from uuid import uuid4
-from datetime import datetime
-
+from datetime import datetime, timezone
 # 添加python目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent / "python"))
 
@@ -119,7 +118,7 @@ async def main():
     plan = ExecutionPlan(
         plan_id=uuid4(),
         design_id=uuid4(),
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         status="Pending",
         segments=[segment],
         implementation_list=["main.py", "README.md"]

@@ -5,7 +5,7 @@ git 用例操作真实仓库（tmp_path 内 init），提交身份用 -c 内联�
 """
 import os
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -128,7 +128,7 @@ def _save_plan(db: Database) -> str:
     """建最小计划记录（满足 worktrees.plan_id 外键）。"""
     design_id = uuid4()
     db.save_design(DesignDocument(
-        design_id=design_id, user_request="wt", timestamp=datetime.utcnow(),
+        design_id=design_id, user_request="wt", timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["c"], interactions=["i"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -138,7 +138,7 @@ def _save_plan(db: Database) -> str:
     ))
     plan = ExecutionPlan(
         plan_id=uuid4(), design_id=design_id, status=PlanStatus.PENDING,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         segments=[PlanSegment(segment_id=uuid4(), description="g", steps=[])],
         implementation_list=[],
     )
@@ -181,7 +181,7 @@ async def test_plan_execution_redirects_workspace_to_worktree(tmp_path, monkeypa
 
     design_id = uuid4()
     db.save_design(DesignDocument(
-        design_id=design_id, user_request="wt", timestamp=datetime.utcnow(),
+        design_id=design_id, user_request="wt", timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["c"], interactions=["i"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -195,7 +195,7 @@ async def test_plan_execution_redirects_workspace_to_worktree(tmp_path, monkeypa
     ]
     plan = ExecutionPlan(
         plan_id=uuid4(), design_id=design_id, status=PlanStatus.PENDING,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         segments=[PlanSegment(segment_id=uuid4(), description="g", steps=steps)],
         implementation_list=[],
     )

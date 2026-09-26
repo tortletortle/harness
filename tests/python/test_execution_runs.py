@@ -2,8 +2,7 @@ import asyncio
 import sqlite3
 import uuid
 from contextlib import closing
-from datetime import datetime
-
+from datetime import datetime, timezone
 from database import Database
 from models import (
     Architecture,
@@ -26,7 +25,7 @@ def _plan(db):
     db.save_design(DesignDocument(
         design_id=design_id,
         user_request="run lifecycle",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["c"], interactions=["i"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -40,7 +39,7 @@ def _plan(db):
     db.save_plan(ExecutionPlan(
         plan_id=plan_id,
         design_id=design_id,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         status=PlanStatus.PENDING,
         segments=[PlanSegment(
             segment_id=uuid.uuid4(), description="s",

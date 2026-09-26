@@ -7,7 +7,7 @@
 """
 import asyncio
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -40,7 +40,7 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
 def _make_plan(db: Database, description: str, out_name: str) -> "ExecutionPlan":
     design_id = uuid4()
     db.save_design(DesignDocument(
-        design_id=design_id, user_request=description, timestamp=datetime.utcnow(),
+        design_id=design_id, user_request=description, timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["c"], interactions=["i"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -53,7 +53,7 @@ def _make_plan(db: Database, description: str, out_name: str) -> "ExecutionPlan"
                 check_criteria="手动检查")
     plan = ExecutionPlan(
         plan_id=uuid4(), design_id=design_id, status=PlanStatus.PENDING,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         segments=[PlanSegment(segment_id=uuid4(), description="g", steps=[step])],
         implementation_list=[],
     )

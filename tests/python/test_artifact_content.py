@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Artifact 内容层回归：内容落盘 + SHA-256 校验、API 端点、步骤产物自动登记。"""
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -21,7 +21,7 @@ from models import (
 def _save_plan(db: Database) -> str:
     design_id = uuid4()
     db.save_design(DesignDocument(
-        design_id=design_id, user_request="art", timestamp=datetime.utcnow(),
+        design_id=design_id, user_request="art", timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["c"], interactions=["i"]),
             difficulty=Difficulty(overall="low", breakdown={}),
@@ -31,7 +31,7 @@ def _save_plan(db: Database) -> str:
     ))
     plan = ExecutionPlan(
         plan_id=uuid4(), design_id=design_id, status=PlanStatus.PENDING,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         segments=[PlanSegment(segment_id=uuid4(), description="g", steps=[])],
         implementation_list=[],
     )

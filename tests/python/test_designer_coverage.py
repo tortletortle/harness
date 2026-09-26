@@ -8,7 +8,7 @@ JSON 兜底、修订/修复/计划的重试分支、plan 缓存复用、assess/s
 import asyncio
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -116,7 +116,7 @@ def _sample_design():
     return DesignDocument(
         design_id=uuid4(),
         user_request="做一个待办事项应用",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["前端", "后端"], interactions=["HTTP"]),
             difficulty=Difficulty(overall="medium", breakdown={}),
@@ -135,7 +135,7 @@ def _sample_plan(design):
     return (
         ExecutionPlan(
             plan_id=uuid4(), design_id=design.design_id, status=PlanStatus.PENDING,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
             segments=[PlanSegment(segment_id=uuid4(), description="g", steps=[step])],
             implementation_list=[],
         ),

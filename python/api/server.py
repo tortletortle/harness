@@ -62,7 +62,7 @@ from api.shared import (  # 拆分：状态/广播/助手（行为不变，符�
     _compute_pause_checkpoint,
 )
 from api.routes import (
-    design_routes, plan_routes, approval_routes, artifact_routes,
+    design_routes, design_secret_routes, plan_routes, approval_routes, artifact_routes,
     agent_session_routes, worktree_routes, quick_task_routes, replan_routes,
     misc_routes,
 )
@@ -518,6 +518,7 @@ app.include_router(worktree_routes.router)
 app.include_router(quick_task_routes.router)
 app.include_router(replan_routes.router)
 app.include_router(misc_routes.router)
+app.include_router(design_secret_routes.router)
 
 
 @app.exception_handler(DatabaseError)

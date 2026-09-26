@@ -444,12 +444,11 @@ class DefaultDesigner(Designer):
             
             # 构建DesignDocument
             from uuid import uuid4
-            from datetime import datetime
-            
+            from datetime import datetime, timezone
             design = DesignDocument(
                 design_id=uuid4(),
                 user_request=user_request,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
                 part1_design=DesignPart1(
                     architecture=Architecture(
                         components=design_data["architecture"]["components"],
@@ -629,12 +628,11 @@ class DefaultDesigner(Designer):
             design_data = json.loads(content.strip())
             
             # 构建新的DesignDocument（保留原ID和timestamp）
-            from datetime import datetime
-            
+            from datetime import datetime, timezone
             revised_design = DesignDocument(
                 design_id=original_design.design_id,  # 保留原ID
                 user_request=original_design.user_request,
-                timestamp=datetime.utcnow(),  # 更新时间戳
+                timestamp=datetime.now(timezone.utc).replace(tzinfo=None),  # 更新时间戳
                 part1_design=DesignPart1(
                     architecture=Architecture(
                         components=design_data["architecture"]["components"],
@@ -1064,8 +1062,7 @@ class DefaultDesigner(Designer):
                 
                 # 成功解析，构建 ExecutionPlan
                 from uuid import UUID, uuid4
-                from datetime import datetime
-                
+                from datetime import datetime, timezone
                 segments = []
                 # step_order 必须全计划内唯一递增：get_next_runnable_step 按
                 # step_order 排序取下一步，回滚的 step_order > X 也依赖全局序。
@@ -1134,7 +1131,7 @@ class DefaultDesigner(Designer):
                 plan = ExecutionPlan(
                     plan_id=uuid4(),
                     design_id=design.design_id,
-                    created_at=datetime.utcnow(),
+                    created_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     status="Pending",
                     segments=segments,
                     implementation_list=plan_data.get("implementation_list", []),

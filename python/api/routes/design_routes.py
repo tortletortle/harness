@@ -156,9 +156,17 @@ async def approve_design(design_id: str, request: ApprovalRequest):
             
             await broadcast_log(f"执行计划生成完成: {plan.plan_id}", "success")
             
+            # 设计书声明了项目密钥且还没写全时，附上一次性本地录入入口；任何失败都不改变既有行为。
+            try:
+                from api.secrets_hook import build_secrets_prompt
+                secrets_prompt = build_secrets_prompt(design)
+            except Exception:
+                secrets_prompt = {"prompt_shown": False, "available": False, "pending": [], "already_set": []}
+            
             return {
                 "success": True,
-                "plan": format_plan_for_frontend(plan)
+                "plan": format_plan_for_frontend(plan),
+                "secrets_prompt": secrets_prompt
             }
         else:
             # 拒绝设计书：如果有反馈，让AI重新修订设计书

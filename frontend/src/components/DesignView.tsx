@@ -69,6 +69,14 @@ export function DesignView() {
           level: 'success', 
           message: `执行计划已生成: ${response.plan.plan_id}` 
         });
+        if (approved && response.secrets_prompt?.prompt_shown && response.secrets_prompt.entry_url) {
+          window.open(response.secrets_prompt.entry_url, '_blank', 'noopener,noreferrer');
+          addLog({ 
+            type: 'log', 
+            level: 'info', 
+            message: '该设计声明了项目密钥，已打开本地录入页面' 
+          });
+        }
       } else if (!approved && response.revised && response.design) {
         // AI已根据反馈修订设计书
         setCurrentDesign(response.design);

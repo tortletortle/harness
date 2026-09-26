@@ -74,8 +74,7 @@ def test_generate_plan_without_llm_step_ids_unchanged():
 
 
 def _design():
-    from datetime import datetime
-
+    from datetime import datetime, timezone
     from models import (
         Architecture,
         DesignDocument,
@@ -87,7 +86,7 @@ def _design():
     return DesignDocument(
         design_id=__import__("uuid").uuid4(),
         user_request="生成计划",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["c"], interactions=["i"]),
             difficulty=Difficulty(overall="low", breakdown={}),

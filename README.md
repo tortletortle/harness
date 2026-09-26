@@ -10,7 +10,7 @@ AI 任务编排与执行系统：用户提出需求 → Designer（LLM）生成�
 - 前端测试：`vitest` 36 passed；production build 成功
 - 真实 LLM 任务与隔离 checkpoint 验收：见 [docs/checkpoint-recovery-acceptance-2026-09-09.md](docs/checkpoint-recovery-acceptance-2026-09-09.md)
 - CI：Python 离线回归、frontend test/build、Rust workspace test；真实 LLM 和浏览器测试需单独配置环境
-- Rust：本机未安装 cargo，未声称已验证
+- Rust：本机已装 cargo 1.98 + VS BuildTools 2022（MSVC v143 + Windows SDK，位于 `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools`）；`cargo test --workspace` 本机复验通过（42 passed / 0 failed）。注意必须在 VS 原生 shell（先 `call Common7\Tools\VsDevCmd.bat`）里跑，否则 Git Bash 的 `/usr/bin/link` 会遮蔽 MSVC `link.exe`
 
 - 超级搜索工具：super_search（多引擎聚合搜索 + 深度检索 + 正文抽取；无 Key 可用，可选 Tavily/Brave/Serper 增强）
 - 代码上下文工具：code_context（Aider 式仓库地图 + SQLite FTS5 全文检索 + 知识笔记长期记忆，参考 docs/CODE_CONTEXT.md）

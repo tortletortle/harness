@@ -34,7 +34,9 @@ models:
   executor:
     primary:
       max_tokens: 4000
-      model: step-3.5-flash-2603
+      # 2026-09-26: step-3.5-flash-2603 在配置的 stepfun 端点已 403（下线/改名），
+      # 改为该端点实测可用的 qwen3.8-max（真实验收曾靠 fallback 兜到它才成功）。
+      model: qwen3.8-max
       provider: stepfun
       temperature: 0.1
     # 受控并行：max_concurrency=1 为严格串行（默认，行为与旧版一致）。

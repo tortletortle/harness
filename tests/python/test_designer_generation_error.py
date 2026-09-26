@@ -15,8 +15,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
-from datetime import datetime
-
+from datetime import datetime, timezone
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "python"))
@@ -64,7 +63,7 @@ def _sample_design() -> DesignDocument:
     return DesignDocument(
         design_id=uuid4(),
         user_request="做一个待办事项应用",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         part1_design=DesignPart1(
             architecture=Architecture(components=["前端", "后端"], interactions=["HTTP"]),
             difficulty=Difficulty(overall="medium", breakdown={"前端": "easy"}),
