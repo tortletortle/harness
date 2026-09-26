@@ -1,105 +1,166 @@
-"""
-集成测试 - 完整流程
+# -*- coding: utf-8 -*-
+"""离线集成测试：命中当前 python/api/server.py 真实路由的完整工作流。
 
-注意：本文件针对早期架构（独立 Rust server 监听 8090，
-以及 /api/v1/* 路由）。当前实际服务是 python/api/server.py，
-路由为 /api/plan/* 等，且需要 Bearer token 认证。
-本文件与当前架构不匹配，标记为 integration 且默认 skip，
-避免假阳性失败干扰真实回归。若未来重建该集成测试，
-应改为直接命中 python/api/server.py 实际路由并带上认证头。
+进程内 `with TestClient(app)` 触发真实 lifespan（provider 注册、工具 registry、
+executor、授权、数据库装配全部真实），但用一个「按序返回设计书/执行计划 JSON」
+的确定性 provider 完全离线跑 设计 → 批准 → 生成计划 → 执行 全链路，真实工具
+file_creator / test_runner 落盘执行。
+
+- conftest 的隔离工作区根（EAS_WORKSPACE_ROOT=临时目录）+ 本文件 monkeypatch 的
+  EAS_DB_PATH/EAS_LOG_DIR 保证绝不写仓库根与真实 data/eas.db。
+- monkeypatch api.server._load_models_config 返回受控 config：空 api_keys（不注册
+  真实 provider），designer/executor 主模型指向 deterministic —— 既不触发离线护栏
+  的 secret_store 拒绝，也不连任何外部上游。
 """
+import json
+import os
+import time
 
 import pytest
-import httpx
+from fastapi.testclient import TestClient
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skip(reason="靶对旧架构路由(/api/v1/*, 独立Rust server:8090)，与当前 api/server.py 不匹配"),
-]
+from llm_client import LLMProvider, LLMResponse
+from tools.workspace import resolve_workspace_root
 
-
-BASE_URL_PYTHON = "http://localhost:9000"
-BASE_URL_RUST = "http://localhost:8090"
+_TOKEN = "offline-integration-token"
 
 
-@pytest.mark.asyncio
-async def test_full_workflow():
-    """测试完整工作流程"""
-    
-    async with httpx.AsyncClient() as client:
-        # 1. 检查Python API健康状态
-        response = await client.get(f"{BASE_URL_PYTHON}/health")
-        assert response.status_code == 200
-        
-        # 2. 检查Rust Server健康状态
-        response = await client.get(f"{BASE_URL_RUST}/health")
-        assert response.status_code == 200
-        
-        # 3. 生成设计书
-        design_request = {
-            "action": "generate_design",
-            "data": {
-                "user_request": "创建一个简单的待办事项应用"
-            }
-        }
-        
-        response = await client.post(
-            f"{BASE_URL_PYTHON}/api/v1/designer",
-            json=design_request
-        )
-        assert response.status_code == 200
-        design_result = response.json()
-        assert design_result["success"] is True
-        
-        # 4. 验证设计书（通过Rust层）
-        design = design_result["result"]["design"]
-        validate_request = {"design": design}
-        
-        response = await client.post(
-            f"{BASE_URL_RUST}/api/v1/design/validate",
-            json=validate_request
-        )
-        assert response.status_code == 200
-        
-        # 5. 生成执行计划
-        plan_request = {
-            "action": "generate_plan",
-            "data": {
-                "design": design
-            }
-        }
-        
-        response = await client.post(
-            f"{BASE_URL_PYTHON}/api/v1/designer",
-            json=plan_request
-        )
-        assert response.status_code == 200
-        plan_result = response.json()
-        assert plan_result["success"] is True
+class _ScriptedProvider(LLMProvider):
+    """按调用顺序返回固定 JSON 的确定性 provider（离线）。"""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self._last = json.dumps({"ok": True})
+        self.calls = []
+
+    @property
+    def name(self):
+        return "deterministic"
+
+    async def chat(self, messages, model, temperature=0.7, max_tokens=4000, **kwargs):
+        self.calls.append(messages)
+        if self._responses:
+            self._last = self._responses.pop(0)
+        return LLMResponse(content=self._last, model=model, finish_reason="stop")
+
+    async def health_check(self):
+        return True
 
 
-@pytest.mark.asyncio
-async def test_knowledge_query():
-    """测试Knowledge AI查询"""
-    
-    async with httpx.AsyncClient() as client:
-        request = {
-            "action": "query",
-            "data": {
-                "question": "如何修复数据库连接错误？",
-                "context": {}
-            }
-        }
-        
-        response = await client.post(
-            f"{BASE_URL_PYTHON}/api/v1/knowledge",
-            json=request
-        )
-        assert response.status_code == 200
-        result = response.json()
-        assert "answer" in result["result"]
+DESIGN_JSON = json.dumps({
+    "architecture": {"components": ["后端"], "interactions": []},
+    "difficulty": {"overall": "medium", "breakdown": {}},
+    "required_tools": [{"tool_id": "file_creator", "availability": "available"}],
+    "overall_tool_completeness": 1.0,
+    "risks": [],
+}, ensure_ascii=False)
 
 
-# 运行前需要启动服务：
-# python -m uvicorn python.api.main:app --port 9000
-# cargo run --bin eas-server
+def _plan_json(tool, inputs, acceptance, description):
+    return json.dumps({
+        "segments": [{"description": description, "steps": [
+            {"description": description, "tool": tool, "inputs": inputs,
+             "acceptance": acceptance},
+        ]}],
+        "implementation_list": [],
+    }, ensure_ascii=False)
+
+
+def _fake_config(root=None):
+    primary = {"provider": "deterministic", "model": "test-model",
+               "temperature": 0.1, "max_tokens": 2000}
+    return {
+        "api_keys": {},
+        "base_urls": {},
+        "models": {
+            "designer": {"primary": dict(primary)},
+            "executor": {"primary": dict(primary), "max_concurrency": 1},
+        },
+        "parallel_graphs": False,
+        "authorization": {},
+        "notify": {},
+        "budget": {},
+        "retry": {},
+        "skills": {},
+        "chat": {},
+    }
+
+
+@pytest.fixture
+def live_client(monkeypatch, tmp_path, request):
+    import api.server as srv
+    from api.auth import reset_token_cache
+
+    monkeypatch.setenv("EAS_API_TOKEN", _TOKEN)
+    monkeypatch.setenv("EAS_DB_PATH", str(tmp_path / "eas.db"))
+    monkeypatch.setenv("EAS_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(srv, "_load_models_config", _fake_config)
+    reset_token_cache()
+
+    plan = request.param
+    provider = _ScriptedProvider([DESIGN_JSON, plan])
+    with TestClient(srv.app) as client:
+        srv.state.llm_client.register_provider(provider)
+        yield client, provider
+
+
+def _wait_terminal(client, plan_id, timeout=30.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r = client.get(f"/api/plan/{plan_id}", headers={"Authorization": f"Bearer {_TOKEN}"})
+        data = r.json()
+        status = data["plan"]["status"]
+        if status in {"Completed", "Failed", "RolledBack"}:
+            return status, data
+        time.sleep(0.2)
+    raise AssertionError(f"plan {plan_id} 未在 {timeout}s 内到达终态")
+
+
+def _run_flow(client, user_request):
+    headers = {"Authorization": f"Bearer {_TOKEN}"}
+    r = client.post("/api/design", json={"user_request": user_request}, headers=headers)
+    assert r.status_code == 200, r.text
+    design_id = r.json()["design"]["design_id"]
+
+    r = client.post(f"/api/design/{design_id}/approve",
+                    json={"design_id": design_id, "approved": True}, headers=headers)
+    assert r.status_code == 200, r.text
+    plan_id = r.json()["plan"]["plan_id"]
+
+    r = client.post(f"/api/plan/{plan_id}/execute", headers=headers)
+    assert r.status_code == 200, r.text
+    return plan_id
+
+
+@pytest.mark.parametrize(
+    "live_client",
+    [_plan_json("file_creator",
+                {"path": "a.txt", "content": "hello integration"},
+                [{"type": "file_exists", "path": "a.txt", "kind": "file"}],
+                "创建 a.txt")],
+    indirect=True,
+)
+def test_full_route_success_completes_and_writes_file(live_client):
+    client, provider = live_client
+    plan_id = _run_flow(client, "创建 a.txt 内容 hello integration")
+
+    status, data = _wait_terminal(client, plan_id)
+    assert status == "Completed", f"期望 Completed，实际 {status}: {data}"
+    assert (resolve_workspace_root() / "a.txt").exists(), "file_creator 产物未落盘"
+    assert len(provider.calls) >= 2, "设计书+执行计划应各消费一次确定性调用"
+
+
+@pytest.mark.parametrize(
+    "live_client",
+    [_plan_json("test_runner",
+                {"suite": "pytest", "test_path": "output/does-not-exist_test.py"},
+                [{"type": "exit_code", "equals": 0}],
+                "运行不存在的测试文件")],
+    indirect=True,
+)
+def test_full_route_failing_step_ends_failed(live_client):
+    client, _provider = live_client
+    plan_id = _run_flow(client, "运行一个必然失败的测试")
+
+    status, data = _wait_terminal(client, plan_id)
+    assert status == "Failed", f"期望 Failed，实际 {status}: {data}"

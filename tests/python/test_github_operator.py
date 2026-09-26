@@ -3,6 +3,7 @@
 真实 gh CLI 的只读用例打标 RUN_REAL_GH=1，默认全部离线（mock subprocess）。"""
 import json
 import os
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +12,10 @@ from tools import get_registry
 from tools import github_operator as gh_mod
 from tools.github_operator import ACTION_TEMPLATES, GitHubOperator
 from executor import DefaultExecutor
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
 
 
 # ===== 元数据 =====
@@ -151,7 +156,15 @@ def test_inferred_instruction_accepted():
 # ===== 真实 gh（打标，默认跳过） =====
 
 @pytest.mark.skipif(os.environ.get("RUN_REAL_GH") != "1", reason="真实 gh 用例需 RUN_REAL_GH=1")
-def test_real_pr_list_readonly():
+def test_real_pr_list_readonly(monkeypatch, tmp_path):
+    # 隔离工作区根默认是临时目录（非 git 仓库），gh pr list 需要 git 仓库 + 远端，
+    # 且远端的 repo 必须是 gh 登录账号有权限的。这里在临时目录建带远端的最小仓库。
+    repo = tmp_path / "gh_probe"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "remote", "add", "origin", os.environ.get("RUN_REAL_GH_REPO", "https://github.com/tortletortle/harness.git"))
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-qm", "probe")
+    monkeypatch.setenv("EAS_WORKSPACE_ROOT", str(repo))
     result = GitHubOperator.execute("pr_list", {})
     assert result["success"] is True
     assert isinstance(result.get("data"), list)
