@@ -109,9 +109,10 @@ class DefaultDesigner(Designer):
             for attempt in range(2):
                 try:
                     response = await self.llm_client.chat(**route)
-                    if not (getattr(response, "content", None) or "").strip():
-                        # 模型返回 200 但空内容：按可重试失败处理（现有逻辑会重试当前 route、
-                        # 再切备用 route），避免下游 json.loads 空串直接 502 级联（真实压力实测暴露）。
+                    if not (getattr(response, "content", None) or "").strip() and not getattr(response, "tool_calls", None):
+                        # 模型返回 200 但既无内容也无工具调用：按可重试失败处理（现有逻辑会重试当前
+                        # route、再切备用 route），避免下游 json.loads 空串直接 502 级联（真实压力实测暴露）。
+                        # 注意：带 tool_calls 的响应（只发函数调用不发文本）是合法的，不能判空。
                         raise LLMRequestError("模型返回空响应（设计对话）", retryable=True)
                     if getattr(response, "finish_reason", None) in {"length", "max_tokens"}:
                         # Never parse/execute a known partial answer or increase token
