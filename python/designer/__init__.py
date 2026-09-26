@@ -109,6 +109,10 @@ class DefaultDesigner(Designer):
             for attempt in range(2):
                 try:
                     response = await self.llm_client.chat(**route)
+                    if not (getattr(response, "content", None) or "").strip():
+                        # 模型返回 200 但空内容：按可重试失败处理（现有逻辑会重试当前 route、
+                        # 再切备用 route），避免下游 json.loads 空串直接 502 级联（真实压力实测暴露）。
+                        raise LLMRequestError("模型返回空响应（设计对话）", retryable=True)
                     if getattr(response, "finish_reason", None) in {"length", "max_tokens"}:
                         # Never parse/execute a known partial answer or increase token
                         # budgets silently. Try the configured alternate route once.
