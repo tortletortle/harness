@@ -1,0 +1,320 @@
+/* 星舵 Helm 开屏动画 —— 颜色全部来自 index.css 的 --app-* 主题变量 */
+.helm-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* 星空始终是深空配色，不随亮色主题变白 */
+  --app-bg: #04050c;
+  --app-border: rgba(255, 255, 255, 0.1);
+  --app-text: #f4f5f7;
+  --app-text-muted: #aab1c4;
+  --app-text-subtle: #6f7890;
+  --app-brand: #8b7cff;
+  --app-brand-soft: rgba(139, 124, 255, 0.16);
+  --app-success: #42d392;
+  background: radial-gradient(ellipse at 50% 42%, #0c0f24 0%, #06071a 45%, #020308 100%);
+  color: var(--app-text);
+  cursor: pointer;
+  user-select: none;
+  transition: opacity 0.6s ease, transform 0.6s ease, filter 0.6s ease;
+}
+.helm-splash.is-leaving {
+  opacity: 0;
+  transform: scale(1.04);
+  filter: blur(6px);
+  pointer-events: none;
+}
+
+.helm-splash__stars {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+/* 星云：三团缓慢漂移的彩色雾气 */
+.helm-splash__nebula {
+  position: absolute;
+  inset: -20%;
+  opacity: 0;
+  filter: blur(40px);
+  background:
+    radial-gradient(38% 30% at 30% 35%, rgba(126, 20, 255, 0.28), transparent 70%),
+    radial-gradient(34% 28% at 72% 60%, rgba(71, 191, 255, 0.18), transparent 70%),
+    radial-gradient(28% 22% at 55% 25%, rgba(236, 110, 200, 0.12), transparent 70%);
+  animation: helm-fade 1.6s 0.4s ease forwards, helm-nebula 18s ease-in-out infinite alternate;
+}
+/* 银河带 */
+.helm-splash__milky {
+  position: absolute;
+  left: -20%;
+  right: -20%;
+  top: 30%;
+  height: 34%;
+  transform: rotate(-18deg);
+  background: radial-gradient(50% 50% at 50% 50%, rgba(190, 180, 255, 0.10), transparent 70%);
+  filter: blur(20px);
+  opacity: 0;
+  animation: helm-fade 2s 0.8s ease forwards;
+}
+.helm-splash__glow {
+  position: absolute;
+  width: 560px;
+  height: 560px;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, var(--app-brand-soft) 0%, transparent 65%);
+  opacity: 0;
+  animation: helm-fade 1.2s 0.2s ease forwards, helm-breathe 3s 1.4s ease-in-out infinite;
+}
+
+.helm-splash__center {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 阶段文字 */
+.helm-splash__stages {
+  margin-top: 14px;
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--app-text-subtle);
+}
+.helm-splash__stages span {
+  opacity: 0;
+  transform: translateY(4px);
+  animation: helm-rise 0.35s ease forwards;
+}
+.helm-splash__stages i {
+  font-style: normal;
+  margin-left: 6px;
+  color: var(--app-brand);
+  opacity: 0.6;
+}
+
+/* 标题 */
+.helm-splash__title {
+  margin: 18px 0 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  opacity: 0;
+  transform: translateY(8px);
+  animation: helm-rise 0.6s 1.75s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+.helm-splash__title-cn {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  background: linear-gradient(120deg, var(--app-text) 30%, var(--app-brand) 50%, var(--app-text) 70%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: helm-shine 1.6s 2s ease forwards;
+}
+.helm-splash__title-en {
+  font-size: 22px;
+  font-weight: 300;
+  letter-spacing: 0.3em;
+  color: var(--app-brand);
+}
+.helm-splash__subtitle {
+  margin: 6px 0 0;
+  font-size: 12px;
+  letter-spacing: 0.25em;
+  color: var(--app-text-muted);
+  opacity: 0;
+  animation: helm-fade 0.6s 2s ease forwards;
+}
+
+/* 进度条 */
+.helm-splash__bar {
+  margin-top: 26px;
+  width: 160px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--app-border);
+  overflow: hidden;
+}
+.helm-splash__bar span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--app-brand), #47bfff);
+  animation: helm-load 2.6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.helm-splash__hint {
+  position: absolute;
+  bottom: 28px;
+  font-size: 11px;
+  color: var(--app-text-subtle);
+  opacity: 0;
+  animation: helm-fade-half 0.6s 1.2s forwards;
+}
+
+/* ---------- 舵轮 v2 ---------- */
+.helm-w { width: 230px; height: 230px; overflow: visible; }
+.hw-rotor, .hw-hub, .hw-orbit { transform-origin: 120px 120px; }
+.hw-rotor {
+  animation: hw-spin-in 1.7s cubic-bezier(0.2, 0.8, 0.2, 1) both,
+             hw-idle 24s 1.7s linear infinite;
+}
+.hw-orbit { opacity: 0; animation: helm-fade 1s 0.5s forwards, hw-idle-rev 40s linear infinite; }
+.hw-orbit-ring { fill: none; stroke: var(--app-border); stroke-width: 1; stroke-dasharray: 1 5; }
+.hw-orbit-dot { fill: #47bfff; filter: drop-shadow(0 0 3px #47bfff); }
+
+.hw-spoke {
+  fill: url(#hw-spoke);
+  opacity: 0;
+  transform-origin: 120px 120px;
+  animation: hw-grow 0.5s cubic-bezier(0.3, 1.4, 0.5, 1) forwards;
+}
+.hw-peg {
+  fill: url(#hw-metal);
+  opacity: 0;
+  transform-origin: 120px 30px;
+  animation: hw-peg 0.45s cubic-bezier(0.3, 1.6, 0.5, 1) forwards;
+}
+.hw-rim { fill: none; stroke-linecap: round; }
+.hw-rim--band {
+  stroke: var(--app-brand-soft); stroke-width: 10;
+  opacity: 0; animation: helm-fade 0.6s 0.5s forwards;
+}
+.hw-rim--outer, .hw-rim--inner {
+  stroke: url(#hw-metal); stroke-width: 2.4;
+  stroke-dasharray: 540; stroke-dashoffset: 540;
+  animation: helm-draw 1s 0.1s ease-out forwards;
+}
+.hw-rim--inner { stroke-width: 1.6; animation-delay: 0.22s; }
+.hw-ticks line { stroke: var(--app-text-subtle); stroke-width: 0.8; opacity: 0.7; }
+.hw-ticks .hw-tick-l { stroke: var(--app-brand); stroke-width: 1.4; opacity: 1; }
+.hw-ticks { opacity: 0; animation: helm-fade 0.6s 0.9s forwards; }
+.hw-inner {
+  fill: none; stroke: var(--app-brand); stroke-width: 1; stroke-dasharray: 2 4;
+  opacity: 0; animation: helm-fade-half 0.6s 0.7s forwards;
+}
+
+.hw-hub { opacity: 0; animation: hw-hub-in 0.7s 0.15s cubic-bezier(0.2, 1.4, 0.4, 1) forwards; }
+.hw-hub-ring { stroke: url(#hw-metal); stroke-width: 2.2; }
+.hw-hub-ring2 { fill: none; stroke: var(--app-border); stroke-width: 1; }
+.hw-rivet { fill: var(--app-brand); }
+.hw-star {
+  fill: var(--app-text);
+  transform-origin: 120px 120px;
+  animation: hw-star-spin 1.4s 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both,
+             hw-star-pulse 2.2s 1.8s ease-in-out infinite;
+}
+.hw-core { fill: var(--app-brand); }
+
+.hw-path {
+  fill: none; stroke: var(--app-success); stroke-width: 1; stroke-dasharray: 3 4;
+  opacity: 0; animation: helm-fade-half 0.6s 1.2s forwards, hw-march 1.2s linear infinite;
+}
+.hw-node { opacity: 0; animation: helm-fade 0.3s ease forwards; }
+.hw-node-halo {
+  fill: var(--app-bg); stroke: var(--app-success); stroke-width: 1.2;
+  transform-box: fill-box; transform-origin: center;
+  animation: hw-ping 0.6s ease-out; animation-delay: inherit;
+}
+.hw-node-dot { fill: var(--app-success); filter: drop-shadow(0 0 4px var(--app-success)); }
+
+.hw-spark {
+  fill: var(--app-text); opacity: 0;
+  transform-box: fill-box; transform-origin: center;
+  animation: hw-twinkle 2.4s ease-in-out infinite;
+}
+
+@keyframes hw-spin-in { from { transform: rotate(-150deg) scale(0.8); } to { transform: rotate(0) scale(1); } }
+@keyframes hw-idle { to { transform: rotate(360deg); } }
+@keyframes hw-idle-rev { to { transform: rotate(-360deg); } }
+@keyframes hw-grow { from { opacity: 0; transform: scale(0.3); } to { opacity: 0.9; transform: scale(1); } }
+@keyframes hw-peg { from { opacity: 0; transform: translateY(14px) scale(0.2); } to { opacity: 1; transform: none; } }
+@keyframes hw-hub-in { from { opacity: 0; transform: scale(0.2); } to { opacity: 1; transform: scale(1); } }
+@keyframes hw-star-spin { from { transform: rotate(-270deg) scale(0); } to { transform: rotate(0) scale(1); } }
+@keyframes hw-star-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+@keyframes hw-ping { from { transform: scale(0.3); } to { transform: scale(1); } }
+@keyframes hw-march { to { stroke-dashoffset: -14; } }
+@keyframes hw-twinkle {
+  0%, 100% { opacity: 0; transform: scale(0.4) rotate(0); }
+  50% { opacity: 0.85; transform: scale(1) rotate(45deg); }
+}
+
+.hw-const-line {
+  fill: none; stroke: rgba(200, 210, 255, 0.45); stroke-width: 0.7;
+  stroke-dasharray: 90; stroke-dashoffset: 90;
+  animation: helm-draw 0.9s ease-out forwards;
+}
+.hw-const-star {
+  fill: #fff; opacity: 0;
+  filter: drop-shadow(0 0 3px #bfc8ff);
+  animation: helm-fade 0.4s ease forwards;
+}
+
+/* 结尾：内容放大穿过镜头，星空冲散 */
+.helm-splash.is-leaving { opacity: 1; transform: none; filter: none; transition: none; animation: helm-out 0.35s 0.5s ease forwards; pointer-events: none; }
+.helm-splash.is-leaving .helm-splash__center {
+  animation: helm-exit-zoom 0.8s cubic-bezier(0.6, 0, 0.8, 0.4) forwards;
+}
+.helm-splash.is-leaving .helm-splash__nebula,
+.helm-splash.is-leaving .helm-splash__milky,
+.helm-splash.is-leaving .helm-splash__hint { animation: helm-out 0.6s ease forwards; }
+@keyframes helm-exit-zoom {
+  to { transform: scale(2.6); opacity: 0; filter: blur(4px); }
+}
+@keyframes helm-out { to { opacity: 0; } }
+
+/* ---------- keyframes ---------- */
+@keyframes helm-nebula {
+  from { transform: translate(0, 0) scale(1); }
+  to { transform: translate(-3%, 2%) scale(1.08); }
+}
+@keyframes helm-fade { to { opacity: 1; } }
+@keyframes helm-fade-half { to { opacity: 0.6; } }
+@keyframes helm-draw { to { stroke-dashoffset: 0; } }
+@keyframes helm-pop {
+  0% { opacity: 0; transform: scale(0); }
+  70% { opacity: 1; transform: scale(1.4); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes helm-spin-in {
+  from { transform: rotate(-120deg) scale(0.85); }
+  to { transform: rotate(0deg) scale(1); }
+}
+@keyframes helm-idle { to { transform: rotate(360deg); } }
+@keyframes helm-ping {
+  0% { transform: scale(0.4); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes helm-core-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: 0.7; }
+}
+@keyframes helm-rise { to { opacity: 1; transform: translateY(0); } }
+@keyframes helm-shine {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
+}
+@keyframes helm-load {
+  0% { width: 0; }
+  60% { width: 70%; }
+  100% { width: 100%; }
+}
+@keyframes helm-breathe {
+  0%, 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: 0.7; transform: translate(-50%, -50%) scale(1.08); }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .helm-splash * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+}

@@ -93,7 +93,7 @@ export function InputView() {
             描述你想要构建的东西
           </h2>
           <p className="mt-3 max-w-xl text-sm leading-6 text-zinc-400 sm:text-[15px]">
-            EAS 会先拆解目标、评估技术方案和工具边界，再生成一份可以审阅、批准和恢复的执行计划。
+            星舵会先拆解目标、评估技术方案和工具边界，再生成一份可以审阅、批准和恢复的执行计划。
           </p>
         </section>
 

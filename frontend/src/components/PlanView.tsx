@@ -25,6 +25,7 @@ import {
 import { apiClient } from '../api/client';
 import { useAppStore } from '../stores/appStore';
 import { usePlanPolling } from '../hooks/usePlanPolling';
+import { WorktreePanel } from './WorktreePanel';
 import type { ExecutionPlan, PlanStatus, Step, StepStatus } from '../types';
 
 const TERMINAL_PLAN_STATUSES: PlanStatus[] = ['Completed', 'Failed', 'Paused', 'RolledBack'];
@@ -518,6 +519,8 @@ export function PlanView() {
             </div>
           </section>
         )}
+
+        <WorktreePanel planId={currentPlan.plan_id} planStatus={planStatus} />
 
         {totalSteps === 0 ? (
           <div className="rounded-xl border border-dashed border-amber-400/20 bg-amber-400/[0.04] p-6 text-center text-sm text-zinc-400">这个计划还没有可执行步骤。</div>

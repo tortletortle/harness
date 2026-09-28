@@ -1,9 +1,9 @@
 /**
- * Application shell for the EAS control room.
+ * Application shell for 星舵 Helm.
  */
 
-import { useEffect, useState } from 'react';
-import { Activity, Circle, ChevronDown, Moon, PanelRight, Sun, Wifi, WifiOff, Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Activity, Circle, Moon, PanelRight, Sun, Wifi, WifiOff, Loader2 } from 'lucide-react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { apiClient } from './api/client';
 import { useAppStore } from './stores/appStore';
@@ -21,8 +21,10 @@ import { ToolsView } from './components/ToolsView';
 import { HistoryView } from './components/HistoryView';
 import { AuditView } from './components/AuditView';
 import { ConfigView } from './components/ConfigView';
+import { SystemView } from './components/SystemView';
 import { ToastHub } from './components/ToastHub';
 import { ApprovalBanner } from './components/ApprovalBanner';
+import { SplashScreen, shouldShowSplash } from './components/SplashScreen';
 
 let lastPlanEventVersionByPlan = new Map<string, number>();
 
@@ -35,7 +37,7 @@ const connectionMeta: Record<ServiceConnectionState, { label: string; className:
 };
 
 const viewMeta = {
-  input: { label: '新建任务', hint: '把目标交给 EAS，先从清晰的需求开始' },
+  input: { label: '新建任务', hint: '把目标交给星舵，先从清晰的需求开始' },
   design: { label: '设计书审阅', hint: '检查架构、工具和风险，再批准执行' },
   plan: { label: '执行计划', hint: '管理步骤、依赖、验收和恢复点' },
   execution: { label: '实时执行', hint: '观察当前任务的运行状态' },
@@ -45,10 +47,13 @@ const viewMeta = {
   history: { label: '历史记录', hint: '浏览过往设计书和执行计划' },
   audit: { label: '审计日志', hint: '追踪工具调用和安全决定' },
   config: { label: '系统设置', hint: '管理服务地址、密钥和模型分配' },
+  system: { label: '系统概览', hint: '模型用量、技能与能力、密钥和通知通道' },
 } as const;
 
 function App() {
   const { currentView, addLog, sidebarCollapsed, logPanelCollapsed, aiPanelCollapsed, currentPlan, isExecuting, connectionState, setConnectionState } = useAppStore();
+  const [showSplash, setShowSplash] = useState(shouldShowSplash);
+  const hideSplash = useCallback(() => setShowSplash(false), []);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return (localStorage.getItem('eas-theme') as 'dark' | 'light' | null) || 'dark';
   });
@@ -92,6 +97,7 @@ function App() {
       case 'history': return <HistoryView />;
       case 'audit': return <AuditView />;
       case 'config': return <ConfigView />;
+      case 'system': return <SystemView />;
       default: return <InputView />;
     }
   };
@@ -113,7 +119,7 @@ function App() {
               <div className="flex h-full min-h-0 flex-col">
                 <header className="flex h-[72px] shrink-0 items-center justify-between border-b border-white/[0.08] bg-[#0d0f13]/80 px-6 backdrop-blur-xl">
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-[11px] text-zinc-600"><span>工作区</span><ChevronDown className="h-3 w-3" /><span className="text-zinc-400">EAS Control Room</span></div>
+                    <div className="flex items-center gap-2 text-[11px] text-zinc-600"><span>工作区</span><span className="text-zinc-700">/</span><span className="text-zinc-400">星舵 Helm</span></div>
                     <div className="mt-1 flex items-center gap-3"><h1 className="text-[17px] font-semibold tracking-tight text-white">{meta.label}</h1><span className="hidden text-xs text-zinc-600 sm:inline">{meta.hint}</span></div>
                   </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -146,6 +152,7 @@ function App() {
         {!logPanelCollapsed && <><PanelResizeHandle className="h-px bg-white/[0.06] transition-colors hover:bg-emerald-400" /><Panel defaultSize={15} minSize={10} maxSize={40} className="min-h-0"><LogPanel /></Panel></>}
       </PanelGroup>
       <ToastHub />
+      {showSplash && <SplashScreen onDone={hideSplash} />}
     </div>
   );
 }

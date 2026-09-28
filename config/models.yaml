@@ -1,3 +1,17 @@
+# ============================================================================
+# 运行时生效配置 = 本文件 + config/models.local.yaml + .env（后者优先）。
+#
+# 重要：下面 api_keys / base_urls 只是占位骨架，不是真实值。真实密钥只从环境
+# 变量 EAS_LLM_API_KEY_<PROVIDER> 读取，真实地址来自 models.local.yaml 或
+# EAS_LLM_BASE_URL_<PROVIDER>。任何直接读取本文件 api_keys 的脚本都会拿到
+# 占位符并稳定报 401——2026-09-28 修掉的 scripts/test_api_connectivity.py 就
+# 踩过这个坑。要看真实状态请跑：
+#     python scripts/test_api_connectivity.py     # 全角色主备真实探测
+#     python scripts/check_models.py              # CI 闸门，主模型 DEAD 即非零退出
+#
+# 2026-09-28 实测：bbapi / newapi 密钥已失效（401），hejuapi 端点 404。
+# 这三个 provider 目前均不可用，仅 stepfun（聚合）/ 国模 / stepfun_official 可用。
+# ============================================================================
 api_keys:
   bbapi: PUT-REAL-KEY-IN-config/models.local.yaml
   hejuapi: PUT-REAL-KEY-IN-config/models.local.yaml
@@ -110,6 +124,9 @@ models:
       provider: stepfun
       temperature: 0.3
   toolmanager:
+    # 2026-09-28: 本骨架里的 newapi / bbapi 密钥实测 401，这两条都不可用。
+    # 运行时由 models.local.yaml 覆盖为 国模/glm-5.2 + stepfun/qwen3.8-max（已验证 OK）。
+    # 若哪天移除了 models.local.yaml 的覆盖，这里会立刻整条链路崩掉——先换 provider。
     fallback:
       max_tokens: 4000
       model: claude-sonnet-5
@@ -120,17 +137,34 @@ models:
       model: claude-haiku-4-5-20251001
       provider: newapi
       temperature: 0.1
-  vision:
-    fallback:
-      max_tokens: 4000
-      model: step-1o-turbo-vision
-      provider: stepfun
-      temperature: 0.1
-    primary:
-      max_tokens: 4000
-      model: step-gui
-      provider: stepfun
-      temperature: 0.1
+  # ---------------------------------------------------------------------------
+  # vision：2026-09-28 停用（死配置）。
+  #
+  # 证据：step-gui 与 step-1o-turbo-vision 在全部 6 个已配置 provider 上逐一探测
+  # 均不可用（stepfun 403 / stepfun_official 404 / 国模 404 / bbapi 401 /
+  # newapi 401 / hejuapi 404）；拉 /models 清单确认两个可用端点都不提供视觉模型：
+  #   stepfun          : deepseek-v4-pro, glm-5.1, glm-5.2, kimi-k2.6,
+  #                      kimi-k2.7-code, qwen3.8-max
+  #   stepfun_official : step-3.5-flash, step-3.5-flash-2603, step-3.7-flash,
+  #                      step-5-preview, step-image-edit-2, step-router-v1,
+  #                      stepaudio-2.5-{asr,chat,realtime,tts}
+  # 即当前订阅下没有任何可用视觉模型，不是 provider 指错。
+  #
+  # 全仓库检索 "vision" 无任何代码消费点，因此整块注释掉而非留着让探测常红。
+  # 恢复方法：确认订阅含视觉模型后，取消注释并把 model/provider 改成真实可用项。
+  # 证据留档：out/model-acceptance-20260928/
+  # ---------------------------------------------------------------------------
+  # vision:
+  #   fallback:
+  #     max_tokens: 4000
+  #     model: step-1o-turbo-vision
+  #     provider: stepfun
+  #     temperature: 0.1
+  #   primary:
+  #     max_tokens: 4000
+  #     model: step-gui
+  #     provider: stepfun
+  #     temperature: 0.1
 rate_limit:
   requests_per_minute: 50
   tokens_per_minute: 100000

@@ -3,22 +3,27 @@
  */
 
 import { useRef, useState } from 'react';
-import { Bot, ChevronRight, Loader2, Send, Sparkles, X } from 'lucide-react';
+import { Bot, ChevronRight, Loader2, MessageSquarePlus, Send, Sparkles, X } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { apiClient } from '../api/client';
 
 interface ChatMessage { role: 'user' | 'assistant'; content: string }
 
+const GREETING: ChatMessage = { role: 'assistant', content: '你好，我是你的星舵 Copilot。可以帮你分析任务、检查风险，或解释执行结果。' };
+
 const suggestions = ['总结当前任务', '检查执行风险', '下一步该做什么？'];
 
 export function AiPanel() {
   const { toggleAiPanel, currentPlan } = useAppStore();
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'assistant', content: '你好，我是你的 EAS Copilot。可以帮你分析任务、检查风险，或解释执行结果。' },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([GREETING]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
+  const startNewChat = () => {
+    sessionIdRef.current = null;
+    setInput('');
+    setMessages([GREETING]);
+  };
 
   const handleSend = async (preset?: string) => {
     const userMessage = (preset ?? input).trim();
@@ -42,7 +47,7 @@ export function AiPanel() {
     <aside className="flex h-full min-h-0 w-full flex-col bg-[#101216]">
       <div className="flex h-[72px] shrink-0 items-center justify-between border-b border-white/[0.08] px-4">
         <div className="flex items-center gap-3"><div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/15 text-violet-300"><Bot className="h-4 w-4" /></div><div><div className="text-[13px] font-semibold text-white">AI Copilot</div><div className="flex items-center gap-1.5 text-[10px] text-zinc-500"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />已连接</div></div></div>
-        <button onClick={toggleAiPanel} className="rounded-md p-1.5 text-zinc-500 hover:bg-white/[0.06] hover:text-white"><X className="h-4 w-4" /></button>
+        <div className="flex items-center gap-1"><button type="button" onClick={startNewChat} disabled={sending} title="新对话" aria-label="开始新对话" className="rounded-md p-1.5 text-zinc-500 hover:bg-white/[0.06] hover:text-white disabled:opacity-40"><MessageSquarePlus className="h-4 w-4" /></button><button onClick={toggleAiPanel} title="收起" aria-label="收起 AI 面板" className="rounded-md p-1.5 text-zinc-500 hover:bg-white/[0.06] hover:text-white"><X className="h-4 w-4" /></button></div>
       </div>
       {currentPlan && <div className="border-b border-white/[0.06] px-4 py-3"><div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-zinc-600">当前上下文</div><div className="flex items-center gap-2 text-xs text-zinc-300"><span className="h-1.5 w-1.5 rounded-full bg-violet-300" />计划 {currentPlan.plan_id.slice(0, 8)}</div></div>}
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">

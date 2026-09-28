@@ -21,6 +21,7 @@ vi.mock('../api/client', () => ({
     pausePlan: vi.fn(),
     resumePlan: vi.fn(),
     supplyStepInput: vi.fn(),
+    getWorktree: vi.fn().mockResolvedValue({ worktree: null }),
     skipStep: vi.fn(),
     rollbackPlan: vi.fn(),
   },

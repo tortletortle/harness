@@ -23,6 +23,10 @@ import type {
   QuickTaskResponse,
   ReplanResponse,
 } from '../types';
+import type {
+  CapabilityInfo, ChatSessionStats, NotifyTestResult, PlanSummary, SecretList, SkillList,
+  UsageSummary, WorktreeActionResult, WorktreeStatus,
+} from '../types/system';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 const API_TOKEN = import.meta.env.VITE_API_TOKEN || '';
@@ -676,6 +680,108 @@ export class ApiClient {
       await throwResponseError(response, '快速任务执行失败');
     }
     return (await response.json()) as QuickTaskResponse;
+  }
+
+  // ===== 计划管理 / 隔离分支 / 系统概览 =====
+
+  private async requestJson<T>(path: string, fallback: string, init: RequestInit = {}): Promise<T> {
+    const headers = new Headers(init.headers || {});
+    if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    const response = await authFetch(`${API_BASE}${path}`, { ...init, headers });
+    if (!response.ok) {
+      await throwResponseError(response, fallback);
+    }
+    return (await response.json()) as T;
+  }
+
+  /** 计划摘要列表（含备注名与归档状态） */
+  async getPlanSummaries(limit = 50): Promise<PlanSummary[]> {
+    const data = await this.requestJson<{ plans?: PlanSummary[] }>(`/api/plans?limit=${limit}`, '获取计划列表失败');
+    return data.plans || [];
+  }
+
+  async renamePlan(planId: string, name: string): Promise<void> {
+    await this.requestJson(`/api/plan/${encodeURIComponent(planId)}/rename`, '重命名失败', {
+      method: 'POST', body: JSON.stringify({ name }),
+    });
+  }
+
+  async archivePlan(planId: string, archived: boolean): Promise<void> {
+    await this.requestJson(`/api/plan/${encodeURIComponent(planId)}/archive`, archived ? '归档失败' : '取消归档失败', {
+      method: 'POST', body: JSON.stringify({ archived }),
+    });
+  }
+
+  async deletePlan(planId: string): Promise<void> {
+    await this.requestJson(`/api/plan/${encodeURIComponent(planId)}`, '删除计划失败', { method: 'DELETE' });
+  }
+
+  async deleteDesign(designId: string): Promise<void> {
+    await this.requestJson(`/api/design/${encodeURIComponent(designId)}`, '删除设计书失败', { method: 'DELETE' });
+  }
+
+  async getWorktree(planId: string): Promise<WorktreeStatus> {
+    return this.requestJson<WorktreeStatus>(`/api/plan/${encodeURIComponent(planId)}/worktree`, '获取隔离分支状态失败');
+  }
+
+  async createWorktree(planId: string, name?: string): Promise<void> {
+    await this.requestJson(`/api/plan/${encodeURIComponent(planId)}/worktree`, '创建隔离分支失败', {
+      method: 'POST', body: JSON.stringify(name ? { name } : {}),
+    });
+  }
+
+  /** 合并/丢弃失败时后端返回 409 + 详情，这里统一返回结果而不是抛错，便于展示冲突信息 */
+  private async worktreeAction(planId: string, action: 'merge' | 'discard', body?: unknown): Promise<WorktreeActionResult> {
+    const response = await authFetch(`${API_BASE}/api/plan/${encodeURIComponent(planId)}/worktree/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body ?? {}),
+    });
+    let data: WorktreeActionResult & { detail?: string } = { success: false };
+    try { data = await response.json(); } catch { /* 非 JSON */ }
+    if (!response.ok) {
+      return { ...data, success: false, error: data.error || data.message || data.detail || `请求失败（${response.status}）` };
+    }
+    return { ...data, success: true };
+  }
+
+  mergeWorktree(planId: string, message?: string): Promise<WorktreeActionResult> {
+    return this.worktreeAction(planId, 'merge', message ? { message } : {});
+  }
+
+  discardWorktree(planId: string): Promise<WorktreeActionResult> {
+    return this.worktreeAction(planId, 'discard');
+  }
+
+  async getUsage(limit = 20, planId?: string): Promise<UsageSummary> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (planId) params.set('plan_id', planId);
+    return this.requestJson<UsageSummary>(`/api/usage?${params}`, '获取用量失败');
+  }
+
+  async getSkills(): Promise<SkillList> {
+    const data = await this.requestJson<Partial<SkillList>>('/api/skills', '获取技能列表失败');
+    return { skills: data.skills || [], skipped: data.skipped || [] };
+  }
+
+  async getCapabilities(): Promise<CapabilityInfo[]> {
+    const data = await this.requestJson<{ capabilities?: CapabilityInfo[] }>('/api/capabilities', '获取能力清单失败');
+    return data.capabilities || [];
+  }
+
+  async getSecrets(): Promise<SecretList> {
+    const data = await this.requestJson<Partial<SecretList>>('/api/secrets', '获取密钥列表失败');
+    return { available: Boolean(data.available), count: data.count ?? 0, entries: data.entries || [] };
+  }
+
+  async getChatSessions(): Promise<ChatSessionStats> {
+    const data = await this.requestJson<Partial<ChatSessionStats>>('/api/chat/sessions', '获取对话会话失败');
+    return { sessions: data.sessions ?? 0, session_ids: data.session_ids || [] };
+  }
+
+  async testNotify(): Promise<NotifyTestResult> {
+    const data = await this.requestJson<Partial<NotifyTestResult>>('/api/notify/test', '发送测试通知失败', { method: 'POST' });
+    return { channels: data.channels ?? 0, results: data.results || [] };
   }
 
   /**

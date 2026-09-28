@@ -6,9 +6,14 @@ import { test, expect } from '@playwright/test';
 const NAV = ['新建任务', '设计书', '执行计划', '实时执行', '产物库', 'Agent 记录', '工具库', '历史记录', '审计日志'];
 const REQ_PLACEHOLDER = '描述你想要实现的功能和技术要求...';
 
+// 跳过开屏动画，避免遮罩拦截点击
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem('eas-splash-shown', '1'));
+});
+
 test('应用外壳渲染：标题、侧栏导航与输入视图', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByText('EAS Control Room').first()).toBeVisible();
+  await expect(page.getByText('星舵 Helm').first()).toBeVisible();
   await expect(page.getByRole('button', { name: '新建任务', exact: true })).toBeVisible();
   await expect(page.getByPlaceholder(REQ_PLACEHOLDER)).toBeVisible();
 });

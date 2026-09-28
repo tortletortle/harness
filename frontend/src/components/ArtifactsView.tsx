@@ -34,7 +34,8 @@ export function ArtifactsView() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [planFilter, setPlanFilter] = useState('');
-  const [preview, setPreview] = useState<{ artifact: Artifact; content: string; imageUrl?: string } | null>(null);
+  const [preview, setPreview] = useState<{ artifact: Artifact; content: string; imageUrl?: string; external?: boolean } | null>(null);
+  const [copied, setCopied] = useState(false);
   const [previewLoading, setPreviewLoading] = useState<string | null>(null);
 
   const previewRequest = useRef(0);
@@ -88,6 +89,13 @@ export function ArtifactsView() {
       }
     } catch (err) {
       if (requestId !== previewRequest.current) return;
+      if (!artifact.content_hash) {
+        // 仅登记了外部引用（内容未入库）：展示文件位置，而不是只报错
+        releaseImage();
+        setCopied(false);
+        setPreview({ artifact, content: '', external: true });
+        return;
+      }
       const message = `读取产物内容失败: ${err instanceof Error ? err.message : String(err)}`;
       addLog({ type: 'log', level: 'error', message });
     } finally {
@@ -116,6 +124,7 @@ export function ArtifactsView() {
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-sm font-medium text-zinc-100">{label}</span>
             <span className={`rounded-full border px-2 py-0.5 text-[10px] ${meta.tone}`}>{meta.label}</span>
+            {!artifact.content_hash && <span className="rounded-full border border-zinc-600/40 px-2 py-0.5 text-[10px] text-zinc-500" title="内容未入库，只记录了文件位置">外部引用</span>}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-zinc-600">
             <span className="font-mono">{artifact.artifact_id.slice(0, 8)}</span>
@@ -205,6 +214,22 @@ export function ArtifactsView() {
                 <div className="min-h-0 flex-1 overflow-auto p-5">
                   <p className="mb-3 text-xs text-amber-200">只读窗口截图 · 未自动遮挡隐私 · 图片来自已校验的产物副本</p>
                   <img src={preview.imageUrl} alt="窗口截图" className="mx-auto max-w-full rounded object-contain" />
+                </div>
+              ) : preview.external ? (
+                <div className="min-h-0 flex-1 overflow-auto p-5 text-sm text-zinc-300">
+                  <p className="text-xs text-amber-200">这个产物只登记了文件位置，内容没有存进数据库，所以无法在这里预览。</p>
+                  <p className="mt-4 text-[11px] text-zinc-500">文件位置</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <code className="min-w-0 flex-1 break-all rounded-lg border border-white/[0.08] bg-black/30 px-3 py-2 font-mono text-[12px] text-zinc-200">{preview.artifact.uri.replace(/^file:\/\//, '')}</code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(preview.artifact.uri.replace(/^file:\/\//, '')).then(() => setCopied(true), () => setCopied(false));
+                      }}
+                      className="shrink-0 rounded-lg border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-white/[0.08]"
+                    >{copied ? '已复制' : '复制路径'}</button>
+                  </div>
+                  <p className="mt-3 text-[11px] text-zinc-600">如果文件所在的临时目录已被清理，这个文件可能已经不存在。</p>
                 </div>
               ) : <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-5 font-mono text-[12px] leading-6 text-zinc-300">{preview.content}</pre>}
             </div>

@@ -1,11 +1,11 @@
 /**
- * Workspace navigation for the EAS control room.
+ * Workspace navigation for 星舵 Helm.
  */
 
 import {
   Activity, Bot, Boxes, ChevronRight, ClipboardList, HelpCircle, FileText, History,
   LayoutDashboard, PanelLeftClose, PanelLeftOpen, PenSquare, ScrollText,
-  Settings, Terminal, Wrench,
+  Settings, Terminal, Wrench, Gauge,
 } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 
@@ -21,6 +21,7 @@ const libraryItems = [
   { id: 'tools' as const, label: '工具库', icon: Wrench },
   { id: 'history' as const, label: '历史记录', icon: History },
   { id: 'audit' as const, label: '审计日志', icon: ScrollText },
+  { id: 'system' as const, label: '系统概览', icon: Gauge },
 ];
 
 export function Sidebar() {
@@ -36,8 +37,8 @@ export function Sidebar() {
   };
   return <aside className={`flex h-full min-h-0 flex-col border-r border-white/[0.08] bg-[#0d0f13]/95 ${sidebarCollapsed ? 'w-[68px]' : 'w-full'}`}>
     <div className={`flex h-[72px] shrink-0 items-center border-b border-white/[0.08] ${sidebarCollapsed ? 'justify-center px-2' : 'gap-3 px-4'}`}>
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-400 to-indigo-600 text-sm font-bold text-white shadow-lg shadow-violet-900/30">E</div>
-      {!sidebarCollapsed && <div className="min-w-0"><div className="truncate text-[13px] font-semibold tracking-wide text-white">EAS Control Room</div><div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-zinc-500"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />本地工作区</div></div>}
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-400 to-indigo-600 text-sm font-bold text-white shadow-lg shadow-violet-900/30">舵</div>
+      {!sidebarCollapsed && <div className="min-w-0"><div className="truncate text-[13px] font-semibold tracking-wide text-white">星舵 Helm</div><div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-zinc-500"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />本地工作区</div></div>}
     </div>
     <div className="min-h-0 flex-1 overflow-y-auto px-2 py-4">
       {!sidebarCollapsed && <div className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">工作流</div>}

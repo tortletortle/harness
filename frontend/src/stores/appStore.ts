@@ -46,7 +46,7 @@ const TOAST_MAX = 5;
 
 interface AppState {
   // 当前视图
-  currentView: 'input' | 'design' | 'plan' | 'execution' | 'tools' | 'history' | 'audit' | 'artifacts' | 'agents' | 'config';
+  currentView: 'input' | 'design' | 'plan' | 'execution' | 'tools' | 'history' | 'audit' | 'artifacts' | 'agents' | 'config' | 'system';
   setCurrentView: (view: AppState['currentView']) => void;
 
   // 服务连接状态
