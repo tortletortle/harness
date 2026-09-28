@@ -11,6 +11,24 @@
 #
 # 2026-09-28 实测：bbapi / newapi 密钥已失效（401），hejuapi 端点 404。
 # 这三个 provider 目前均不可用，仅 stepfun（聚合）/ 国模 / stepfun_official 可用。
+#
+# ---------------------------------------------------------------------------
+# 2026-09-28 模型清单刷新（out/model-acceptance-20260928/ADDENDUM-model-refresh.md）
+#
+# 国模 端点现有 18 个模型，实测可用 17 个。当前各角色 primary 仍用 glm-5.2，
+# 属于**有意保持不变**（稳定优先），但以下事实已确认，需要时可直接切换：
+#
+#   * glm-5.3 / glm-5.3-flash 已上线。glm-5.3 单次采样 2712ms，比在用的
+#     glm-5.2（4535ms）更快；glm-5.3-flash 名字带 flash 但实测 11299ms 最慢，
+#     不要被命名误导。
+#   * 其他可用新型号：kimi-k3、minimax-m3、qwen3.7-max、qwen3.7-plus、
+#     qwen3.8-max-0902、deepseek-v4.1-flash、deepseek-v4-flash(-0731)。
+#   * ⚠ deepseek-v4-pro-0813 是「假活」：HTTP 200 但 content 为空。
+#     check_models.py 用 max_tokens=1 探测会把它误判成 OK，不要选它。
+#   * 换 primary 属于质量相关变更，切换后必须重跑 A/B/C 真实验收再上线。
+#
+# 刷新命令：python out/model-acceptance-20260928/refresh_models.py
+# ---------------------------------------------------------------------------
 # ============================================================================
 api_keys:
   bbapi: PUT-REAL-KEY-IN-config/models.local.yaml

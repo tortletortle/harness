@@ -68,6 +68,61 @@ class AcceptanceRunner:
         "tests_pass": "test_passes",
     }
 
+    # 简写形式落到各检查类型的哪个字段（值为标量时）。
+    _SHORTHAND_SCALAR_FIELD = {
+        "file_exists": "path",
+        "content_contains": "path",
+        "diff_scope": "allowed",
+        "test_passes": "suite",
+        "exit_code": "expected",
+    }
+
+    @classmethod
+    def _expand_shorthand(cls, item: Dict[str, Any]) -> Dict[str, Any]:
+        """把 {"file_exists": "a.txt"} 这类简写展开成契约形状。
+
+        背景（2026-09-28，B 标准 S4）：replan 生成的修复步骤输出了
+            {"file_exists": "output/does-not-exist_test.py"}
+        而契约要求
+            {"type": "file_exists", "path": "output/does-not-exist_test.py"}
+        缺少 "type" 时 _run_check 会判为未知类型并 fail-closed，现象是「工具
+        执行成功、文件确实落盘，但验收失败」，排查成本极高。
+
+        这里只做保守展开，不放宽 fail-closed 语义：
+          * 仅当条目没有 "type" 键、且恰好只有一个键、且该键（走别名表后）
+            属于已知检查类型时才展开；
+          * 其余任何形状一律原样透传，继续由 _run_check fail-closed。
+        因此拼错的类型名（如 {"file_exist": "a"}）不会被悄悄"修好"，仍会失败。
+        """
+        if "type" in item or len(item) != 1:
+            return item
+        ((raw_key, value),) = item.items()
+        key = str(raw_key).strip().lower()
+        check_type = cls.TYPE_ALIASES.get(key, key)
+        if check_type not in cls._SHORTHAND_SCALAR_FIELD:
+            return item
+
+        if isinstance(value, dict):
+            expanded: Dict[str, Any] = {"type": check_type}
+            expanded.update(value)
+        elif isinstance(value, list):
+            if check_type != "diff_scope":
+                return item
+            expanded = {"type": check_type, "allowed": value}
+        elif isinstance(value, bool):
+            # bool 是 int 的子类，但没有任何检查类型期望布尔标量
+            return item
+        elif isinstance(value, (str, int)):
+            expanded = {"type": check_type, cls._SHORTHAND_SCALAR_FIELD[check_type]: value}
+        else:
+            return item
+
+        logger.warning(
+            "验收规格使用了简写形式，已归一化为契约形状: {} -> {}（请修正生成侧）",
+            item, expanded,
+        )
+        return expanded
+
     def __init__(
         self,
         workspace_root: Optional[Path | str] = None,
@@ -129,7 +184,13 @@ class AcceptanceRunner:
             return [{"type": "__invalid_spec__"}] if spec is not None else []
         # 保留非法列表项，让 _run_check 走 fail-closed，而不是把它们
         # 静默过滤后错误地返回 unverified。
-        return [item if isinstance(item, dict) else {"type": "__invalid_spec__"} for item in spec]
+        normalised: List[Dict[str, Any]] = []
+        for item in spec:
+            if not isinstance(item, dict):
+                normalised.append({"type": "__invalid_spec__"})
+                continue
+            normalised.append(AcceptanceRunner._expand_shorthand(item))
+        return normalised
 
     def _run_check(self, spec: Dict[str, Any], tool_result: Dict[str, Any]) -> Dict[str, Any]:
         requested_type = str(spec.get("type", "")).strip().lower()

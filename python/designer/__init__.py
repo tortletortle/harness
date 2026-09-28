@@ -685,7 +685,16 @@ class DefaultDesigner(Designer):
 约束：
 1. 只生成 1-3 个步骤；修复"前置条件缺失/环境问题"，不要重复失败步骤本身的目标
 2. 允许的工具：file_creator（创建缺失文件/目录）、coding_agent（修改已存在代码文件，inputs 必含 path/instruction/allowed_tools=["text_editor"]）、test_runner（inputs 必含 suite）、lint_gate（inputs 必含 path）
-3. 每步必须携带非空 acceptance（file_exists / content_contains / exit_code / test_passes）
+3. 每步必须携带非空 acceptance 数组。**每个验收项都必须是带 "type" 键的对象**，
+   只能用下面这 5 种形状，照抄字段名，不要发明简写：
+     {"type": "file_exists", "path": "<相对路径>", "kind": "file"}
+     {"type": "content_contains", "path": "<相对路径>", "text": "<短标识符>"}
+     {"type": "exit_code", "equals": 0}
+     {"type": "test_passes", "suite": "<已登记模板名>"}
+     {"type": "diff_scope", "allowed": ["<相对路径>", ...]}
+   ❌ 错误示例（缺少 "type"，会被判为未知验收类型并直接失败）：
+     {"file_exists": "output/a.py"}
+     {"acceptance": "文件存在"}
 4. description 控制在 20 字以内
 """
         user_content = f"""**用户目标：**

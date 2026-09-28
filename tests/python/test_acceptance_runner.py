@@ -1,5 +1,6 @@
 """AcceptanceRunner deterministic checks."""
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -105,3 +106,96 @@ def test_aliases_are_supported(tmp_path):
         {"type": "content_contains", "path": "a.txt", "content": "ok"},
     ])
     assert result.passed
+
+
+# ===== 简写验收规格归一化（2026-09-28，B 标准 S4 回归）=====
+# 背景：replan 生成的修复步骤输出 {"file_exists": "..."}（缺 "type" 键），
+# 旧行为判为未知类型 fail-closed，现象是「工具成功、文件已落盘、验收却失败」。
+
+
+def test_shorthand_file_exists_is_normalised(tmp_path):
+    (tmp_path / "output").mkdir()
+    (tmp_path / "output" / "a_test.py").write_text("x", encoding="utf-8")
+    runner = AcceptanceRunner(tmp_path)
+
+    result = runner.run([{"file_exists": "output/a_test.py"}])
+
+    assert result.passed
+    assert result.checks[0]["type"] == "file_exists"
+
+
+def test_shorthand_missing_file_still_fails(tmp_path):
+    runner = AcceptanceRunner(tmp_path)
+
+    result = runner.run([{"file_exists": "output/nope.py"}])
+
+    assert not result.passed
+    assert result.checks[0]["type"] == "file_exists"
+    assert "未知验收类型" not in json.dumps(result.checks[0], ensure_ascii=False)
+
+
+def test_shorthand_dict_value_is_merged(tmp_path):
+    (tmp_path / "m.txt").write_text("needle-here", encoding="utf-8")
+    runner = AcceptanceRunner(tmp_path)
+
+    result = runner.run([{"content_contains": {"path": "m.txt", "text": "needle"}}])
+
+    assert result.passed
+    assert result.checks[0]["type"] == "content_contains"
+
+
+def test_shorthand_alias_is_resolved(tmp_path):
+    (tmp_path / "art.bin").write_text("x", encoding="utf-8")
+    runner = AcceptanceRunner(tmp_path)
+
+    result = runner.run([{"artifact_exists": "art.bin"}])
+
+    assert result.passed
+    assert result.checks[0]["type"] == "file_exists"
+
+
+def test_shorthand_exit_code_scalar(tmp_path):
+    runner = AcceptanceRunner(tmp_path)
+
+    assert runner.run([{"exit_code": 0}], {"returncode": 0}).passed
+    assert not runner.run([{"exit_code": 0}], {"returncode": 1}).passed
+
+
+def test_shorthand_diff_scope_list(tmp_path):
+    runner = AcceptanceRunner(tmp_path)
+
+    result = runner.run([{"diff_scope": ["a.txt"]}])
+
+    assert result.checks[0]["type"] == "diff_scope"
+
+
+def test_typo_type_name_is_not_silently_fixed(tmp_path):
+    """拼错的类型名不能被"修好"，必须继续 fail-closed。"""
+    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+    runner = AcceptanceRunner(tmp_path)
+
+    result = runner.run([{"file_exist": "a.txt"}])
+
+    assert not result.passed
+    assert "未知验收类型" in json.dumps(result.checks[0], ensure_ascii=False)
+
+
+def test_multi_key_shorthand_is_not_expanded(tmp_path):
+    """多键且无 type 的对象形状不明确，不做猜测，继续 fail-closed。"""
+    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+    runner = AcceptanceRunner(tmp_path)
+
+    result = runner.run([{"file_exists": "a.txt", "kind": "file"}])
+
+    assert not result.passed
+
+
+def test_explicit_type_takes_precedence(tmp_path):
+    """已经带 type 的规格不受归一化影响。"""
+    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+    runner = AcceptanceRunner(tmp_path)
+
+    result = runner.run([{"type": "file_exists", "path": "a.txt", "kind": "file"}])
+
+    assert result.passed
+
