@@ -35,7 +35,8 @@ token 来源优先级：环境变量 `EAS_API_TOKEN` → `config/api_token` 文�
 | POST | `/api/design` | 生成设计书，body: `{"user_request": "..."}` |
 | GET | `/api/designs?limit=10` | 设计书列表（摘要） |
 | GET | `/api/design/{id}` | 设计书详情 |
-| POST | `/api/design/{id}/approve` | 审批，body: `{"approved": bool, "feedback": "..."}`；批准→生成计划，拒绝+反馈→AI 修订设计书 |
+| POST | `/api/design/{id}/approve` | 审批，body: `{"approved": bool, "feedback": "..."}`；批准只落 `user_approval`（不生成计划），拒绝+反馈→AI 修订设计书 |
+| POST | `/api/design/{id}/generate-plan` | 已批准设计书 → 生成并保存执行计划（与审批解耦） |
 | GET | `/api/plans?limit=10` | 执行计划列表 |
 | GET | `/api/plan/{id}` | 计划详情（含 `current_branch`、`resume_from_step_id`；每个步骤含 `depends_on`、`branch_version` 和 `outputs`） |
 | POST | `/api/plan/{id}/execute` | 开始执行；已有任务在跑返回 409 |
@@ -63,11 +64,15 @@ curl -X POST http://127.0.0.1:8000/api/design \
   -H "Content-Type: application/json" \
   -d '{"user_request": "制作一个待办事项应用"}'
 
-# 审批（批准后自动生成执行计划）
+# 审批（只批准，不生成计划）
 curl -X POST http://127.0.0.1:8000/api/design/<design_id>/approve \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"approved": true}'
+
+# 生成执行计划
+curl -X POST http://127.0.0.1:8000/api/design/<design_id>/generate-plan \
+  -H "Authorization: Bearer $TOKEN"
 
 # 开始执行
 curl -X POST http://127.0.0.1:8000/api/plan/<plan_id>/execute \

@@ -20,8 +20,10 @@ cd frontend && npm run dev
 
 打开 http://localhost:3000。首次启动后端会自动生成 `config/api_token`。
 
-> 遗留入口 `python/api/main.py`（9000 端口）与 `scripts/dev*.bat` 不在主链路上，
-> 排查问题时不要混淆。
+> 遗留入口 `python/api/main.py`（9000 端口）与 `docs/archive/startup/` 里的旧 bat
+>（一键启动/启动选择/scripts/start.bat 等）不在主链路上，排查时不要混淆。
+>
+> Windows 日常入口：根目录三个 bat，或本页上面的两条命令。
 
 ## 测试（改代码后必须跑）
 

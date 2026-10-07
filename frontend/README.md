@@ -4,38 +4,20 @@
 
 ## 快速开始
 
-### 方式 1：一键启动（推荐）
+### 方式 1：完整系统（推荐）
 
-双击运行：
-```
-启动完整系统.bat
-```
-
-这会自动启动后端 API 服务器和前端开发服务器。
-
-- 前端地址：http://localhost:3000
-- 后端地址：http://localhost:8000
+在仓库根目录双击 `启动完整系统.bat`（后端 8000 + 前端 3000）。
 
 ### 方式 2：分别启动
 
-**启动后端：**
 ```bash
-# 方式 A：使用批处理
-启动后端.bat
-
-# 方式 B：手动启动
-python scripts/start_api.py
+# 根目录
+启动后端.bat          # 或 python scripts/start_api.py
+启动前端.bat          # 或 cd frontend && npm run dev
 ```
 
-**启动前端：**
-```bash
-# 方式 A：使用批处理
-启动前端.bat
-
-# 方式 B：手动启动
-cd frontend
-npm run dev
-```
+- 前端：http://localhost:3000  
+- 后端：http://localhost:8000
 
 ## 功能特性
 

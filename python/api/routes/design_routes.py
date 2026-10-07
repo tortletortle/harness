@@ -164,16 +164,33 @@ async def fulfill_design_tools(design_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _read_project_memory() -> str:
+    try:
+        from tools.workspace import resolve_workspace_root as _rwr
+        _mem_path = _rwr() / "PROJECT_MEMORY.md"
+        return _mem_path.read_text(encoding="utf-8", errors="replace")[-3000:] if _mem_path.exists() else ""
+    except Exception:
+        return ""
+
+
+def _secrets_prompt_for(design) -> dict:
+    try:
+        from api.secrets_hook import build_secrets_prompt
+        return build_secrets_prompt(design)
+    except Exception:
+        return {"prompt_shown": False, "available": False, "pending": [], "already_set": []}
+
+
 @router.post("/api/design/{design_id}/approve", dependencies=[Depends(require_token)])
 async def approve_design(design_id: str, request: ApprovalRequest):
-    """审批设计书"""
+    """审批设计书：批准只落 user_approval，不生成计划（少绕路）。"""
     try:
         design = state.database.get_design(design_id)
         if not design:
             raise HTTPException(status_code=404, detail="设计书不存在")
         
         if request.approved:
-            # 审批前对齐一次工具目录（generate_plan 跳过二次 fulfill）。
+            # 审批前对齐一次工具目录；出计划走独立端点并 skip_fulfill。
             if state.designer is not None:
                 design = await state.designer._fulfill_required_tools(design)
             missing = [
@@ -187,7 +204,7 @@ async def approve_design(design_id: str, request: ApprovalRequest):
                     content={
                         "success": False,
                         "code": "tools_incomplete",
-                        "detail": "工具未齐，无法批准并生成计划：" + ", ".join(missing),
+                        "detail": "工具未齐，无法批准：" + ", ".join(missing),
                         "design": format_design_for_frontend(design),
                         "missing_tools": missing,
                     },
@@ -196,37 +213,13 @@ async def approve_design(design_id: str, request: ApprovalRequest):
             design.user_approval = True
             state.database.save_design(design)
 
-            await broadcast_log(f"设计书 {design_id} 已批准，开始生成执行计划...")
-            
-            # 生成执行计划
-            # 项目工作记忆：注入上次执行状态，让计划"接着干"而不是从零开始
-            try:
-                from tools.workspace import resolve_workspace_root as _rwr
-                _mem_path = _rwr() / "PROJECT_MEMORY.md"
-                _project_memory = _mem_path.read_text(encoding="utf-8", errors="replace")[-3000:] if _mem_path.exists() else ""
-            except Exception:
-                _project_memory = ""
-            plan = await state.designer.generate_plan(
-                design, project_memory=_project_memory, skip_fulfill=True,
-            )
-            
-            # 保存到数据库
-            state.database.save_plan(plan)
-            
-            await broadcast_log(f"执行计划生成完成: {plan.plan_id}", "success")
-            
-            # 设计书声明了项目密钥且还没写全时，附上一次性本地录入入口；任何失败都不改变既有行为。
-            try:
-                from api.secrets_hook import build_secrets_prompt
-                secrets_prompt = build_secrets_prompt(design)
-            except Exception:
-                secrets_prompt = {"prompt_shown": False, "available": False, "pending": [], "already_set": []}
-            
+            await broadcast_log(f"设计书 {design_id} 已批准（待生成执行计划）", "success")
+
             return {
                 "success": True,
-                "plan": format_plan_for_frontend(plan),
+                "approved": True,
                 "design": format_design_for_frontend(design),
-                "secrets_prompt": secrets_prompt
+                "secrets_prompt": _secrets_prompt_for(design),
             }
         else:
             # 拒绝设计书：如果有反馈，让AI重新修订设计书
@@ -264,6 +257,56 @@ async def approve_design(design_id: str, request: ApprovalRequest):
         logger.exception("审批设计书端点失败: {}", e)
         await broadcast_log(f"审批失败: {str(e)}", "error")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/design/{design_id}/generate-plan", dependencies=[Depends(require_token)])
+async def generate_plan_from_design(design_id: str):
+    """已批准设计书 → 生成并保存执行计划（与审批解耦）。"""
+    try:
+        design = state.database.get_design(design_id)
+        if not design:
+            raise HTTPException(status_code=404, detail="设计书不存在")
+        if not bool(getattr(design, "user_approval", False)):
+            raise HTTPException(status_code=409, detail="设计书尚未批准，无法生成计划")
+        if state.designer is None:
+            raise HTTPException(status_code=503, detail="Designer 未就绪")
+
+        missing = [
+            t.tool_id for t in design.part2_tool_assessment.required_tools
+            if (getattr(t, "availability", None) or "").lower() != "available"
+        ]
+        if missing:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "success": False,
+                    "code": "tools_incomplete",
+                    "detail": "工具未齐，无法生成计划：" + ", ".join(missing),
+                    "design": format_design_for_frontend(design),
+                    "missing_tools": missing,
+                },
+            )
+
+        await broadcast_log(f"开始为设计书 {design_id} 生成执行计划...")
+        plan = await state.designer.generate_plan(
+            design, project_memory=_read_project_memory(), skip_fulfill=True,
+        )
+        state.database.save_plan(plan)
+        await broadcast_log(f"执行计划生成完成: {plan.plan_id}", "success")
+
+        return {
+            "success": True,
+            "plan": format_plan_for_frontend(plan),
+            "design": format_design_for_frontend(design),
+            "secrets_prompt": _secrets_prompt_for(design),
+        }
+    except (GenerationError, HTTPException):
+        raise
+    except Exception as e:
+        logger.exception("生成执行计划失败: {}", e)
+        await broadcast_log(f"生成计划失败: {str(e)}", "error")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.delete("/api/design/{design_id}", dependencies=[Depends(require_token)])
 async def delete_design(design_id: str):

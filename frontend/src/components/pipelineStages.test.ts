@@ -61,4 +61,15 @@ describe('derivePipelineStages', () => {
     });
     expect(stages.find((s) => s.id === 'request')?.state).toBe('current');
   });
+
+  it('after approve without plan, focuses plan while on design view', () => {
+    const stages = derivePipelineStages({
+      currentView: 'design',
+      design: { ...designReady, user_approval: true },
+      plan: null,
+    });
+    expect(stages.find((s) => s.id === 'approve')?.state).toBe('done');
+    expect(stages.find((s) => s.id === 'plan')?.state).toBe('current');
+  });
 });
+

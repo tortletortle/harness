@@ -125,6 +125,9 @@ def _run_flow(client, user_request):
     r = client.post(f"/api/design/{design_id}/approve",
                     json={"design_id": design_id, "approved": True}, headers=headers)
     assert r.status_code == 200, r.text
+    assert r.json().get("approved") or (r.json().get("design") or {}).get("user_approval")
+    r = client.post(f"/api/design/{design_id}/generate-plan", headers=headers)
+    assert r.status_code == 200, r.text
     plan_id = r.json()["plan"]["plan_id"]
 
     r = client.post(f"/api/plan/{plan_id}/execute", headers=headers)

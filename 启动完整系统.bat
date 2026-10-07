@@ -51,11 +51,11 @@ REM 等待后端启动
 timeout /t 3 /nobreak > nul
 
 REM 启动前端开发服务器（前台）
-echo 🚀 启动前端界面 (http://localhost:5173)...
+echo 🚀 启动前端界面 (http://localhost:3000)...
 echo.
 echo ========================================
 echo   访问地址:
-echo   前端: http://localhost:5173
+echo   前端: http://localhost:3000
 echo   后端: http://localhost:8000
 echo ========================================
 echo.

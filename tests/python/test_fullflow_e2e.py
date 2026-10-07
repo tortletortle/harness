@@ -131,8 +131,11 @@ def executed_plan(server):
         body={"design_id": design_id, "approved": True},
     )
     assert code == 200, f"approve design -> {code} {data!r}"
+    assert data.get("approved") or (data.get("design") or {}).get("user_approval"), data
+    code, data = _req(f"/api/design/{design_id}/generate-plan", method="POST")
+    assert code == 200, f"generate plan -> {code} {data!r}"
     plan = data.get("plan") or data.get("design", {}).get("plan")
-    assert plan, f"approve response missing plan: {data!r}"
+    assert plan, f"generate-plan response missing plan: {data!r}"
     plan_id = plan["plan_id"]
 
     # 计划里应出现 coding_agent 与 test_runner 步骤（设计期契约已允许并引导）

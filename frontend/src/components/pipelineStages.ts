@@ -67,8 +67,12 @@ export function derivePipelineStages(input: PipelineInput): PipelineStage[] {
   let focus: PipelineStageId = 'request';
   if (currentView === 'execution' && hasPlan) focus = 'execute';
   else if (currentView === 'plan' && hasPlan) focus = 'plan';
-  else if (currentView === 'design' && hasDesign) focus = toolsReady ? 'approve' : 'tools';
-  else if (currentView === 'input') focus = 'request';
+  else if (currentView === 'design' && hasDesign) {
+    if (!toolsReady) focus = 'tools';
+    else if (!approved) focus = 'approve';
+    else if (!hasPlan) focus = 'plan';
+    else focus = 'approve';
+  } else if (currentView === 'input') focus = 'request';
   else if (!hasRequest) focus = 'request';
   else if (!hasDesign) focus = 'design';
   else if (!toolsReady) focus = 'tools';

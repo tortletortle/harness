@@ -37,7 +37,15 @@ npm run dev
 
 开发服务器把 `/api` 和 `/ws` 代理到 8000 端口。打开 **http://localhost:3000** 即可使用。
 
-Windows 下也可以直接双击 `启动完整系统.bat`（同时启动前后端），或分别用 `启动后端.bat` / `启动前端.bat`。
+Windows 根目录只保留三个启动入口：
+
+| 文件 | 作用 |
+|------|------|
+| `启动完整系统.bat` | 后端 8000 + 前端 3000 |
+| `启动后端.bat` | 仅 `python scripts/start_api.py` |
+| `启动前端.bat` | 仅 `frontend` 开发服 |
+
+重启后端、热重载开发、打开浏览器分别在 `scripts/restart_api.bat`、`scripts/dev_reload.bat`、`scripts/open-helm.cmd`。旧的一键/菜单/9000 端口脚本已进 `docs/archive/startup/`。
 
 ### 3.（可选）CLI 设计助手
 
@@ -82,7 +90,6 @@ harness/
 
 | 文档 | 内容 |
 |------|------|
-| [开始使用_WEB界面.md](开始使用_WEB界面.md) | Web 界面使用指南（推荐入门） |
 | [docs/STATUS.md](docs/STATUS.md) | 当前完成度与待办 |
 | [docs/API.md](docs/API.md) | 后端 API 参考 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 开发环境与测试指南 |

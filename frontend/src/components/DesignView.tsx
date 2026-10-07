@@ -7,9 +7,20 @@ import { CheckCircle, XCircle, Loader2, ChevronDown, ChevronRight, MessageSquare
 import { apiClient } from '../api/client';
 import { useAppStore } from '../stores/appStore';
 
+function openSecretsIfNeeded(
+  secrets: { prompt_shown?: boolean; entry_url?: string } | undefined,
+  addLog: (entry: { type: 'log'; level: 'info' | 'success' | 'error'; message: string }) => void,
+) {
+  if (secrets?.prompt_shown && secrets.entry_url) {
+    window.open(secrets.entry_url, '_blank', 'noopener,noreferrer');
+    addLog({ type: 'log', level: 'info', message: '该设计声明了项目密钥，已打开本地录入页面' });
+  }
+}
+
 export function DesignView() {
   const { currentDesign, setCurrentDesign, setCurrentPlan, setCurrentView, addLog } = useAppStore();
   const [isApproving, setIsApproving] = useState(false);
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
   const [isFulfilling, setIsFulfilling] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['architecture', 'tools']));
   const [showFeedbackDialog, setShowFeedbackDialog] = useState(false);
@@ -43,7 +54,8 @@ export function DesignView() {
 
   const missingTools = currentDesign.part2?.missing_tools ?? [];
   const toolsIncomplete = missingTools.length > 0;
-  const busy = isApproving || isFulfilling;
+  const approved = Boolean(currentDesign.user_approval);
+  const busy = isApproving || isGeneratingPlan || isFulfilling;
 
   const handleFulfillTools = async () => {
     setIsFulfilling(true);
@@ -69,28 +81,12 @@ export function DesignView() {
     }
   };
 
-  const handleApprove = async (approved: boolean) => {
-    if (!approved && !showFeedbackDialog) {
-      // 拒绝时，先显示反馈对话框
-      setShowFeedbackDialog(true);
-      return;
-    }
-    
-    setIsApproving(true);
-    addLog({ 
-      type: 'log', 
-      level: 'info', 
-      message: approved ? '批准设计书...' : '拒绝设计书...' 
-    });
-
+  const handleGeneratePlan = async () => {
+    setIsGeneratingPlan(true);
+    addLog({ type: 'log', level: 'info', message: '正在生成执行计划…' });
     try {
-      const response = await apiClient.approveDesign(
-        currentDesign.design_id, 
-        approved,
-        !approved ? feedback : undefined
-      );
-
-      if (approved && response.toolsIncomplete) {
+      const response = await apiClient.generatePlanFromDesign(currentDesign.design_id);
+      if (response.toolsIncomplete) {
         if (response.design) setCurrentDesign(response.design);
         addLog({
           type: 'log',
@@ -99,51 +95,84 @@ export function DesignView() {
         });
         return;
       }
-      
-      if (approved && response.plan) {
-        if (response.design) setCurrentDesign(response.design);
+      if (response.design) setCurrentDesign(response.design);
+      if (response.plan) {
         setCurrentPlan(response.plan);
         setCurrentView('plan');
-        addLog({ 
-          type: 'log', 
-          level: 'success', 
-          message: `执行计划已生成: ${response.plan.plan_id}` 
+        addLog({
+          type: 'log',
+          level: 'success',
+          message: `执行计划已生成: ${response.plan.plan_id}`,
         });
-        if (approved && response.secrets_prompt?.prompt_shown && response.secrets_prompt.entry_url) {
-          window.open(response.secrets_prompt.entry_url, '_blank', 'noopener,noreferrer');
-          addLog({ 
-            type: 'log', 
-            level: 'info', 
-            message: '该设计声明了项目密钥，已打开本地录入页面' 
-          });
-        }
-      } else if (!approved && response.revised && response.design) {
-        // AI已根据反馈修订设计书
+      }
+      openSecretsIfNeeded(response.secrets_prompt, addLog);
+    } catch (error) {
+      addLog({
+        type: 'log',
+        level: 'error',
+        message: `生成计划失败: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    } finally {
+      setIsGeneratingPlan(false);
+    }
+  };
+
+  const handleApprove = async (doApprove: boolean) => {
+    if (!doApprove && !showFeedbackDialog) {
+      setShowFeedbackDialog(true);
+      return;
+    }
+
+    setIsApproving(true);
+    addLog({
+      type: 'log',
+      level: 'info',
+      message: doApprove ? '批准设计书...' : '拒绝设计书...',
+    });
+
+    try {
+      const response = await apiClient.approveDesign(
+        currentDesign.design_id,
+        doApprove,
+        !doApprove ? feedback : undefined,
+      );
+
+      if (doApprove && response.toolsIncomplete) {
+        if (response.design) setCurrentDesign(response.design);
+        addLog({
+          type: 'log',
+          level: 'error',
+          message: response.message || `工具未齐：${(response.missing_tools || []).join(', ')}`,
+        });
+        return;
+      }
+
+      if (doApprove) {
+        if (response.design) setCurrentDesign(response.design);
+        else setCurrentDesign({ ...currentDesign, user_approval: true });
+        addLog({ type: 'log', level: 'success', message: '设计书已批准，可生成执行计划' });
+        openSecretsIfNeeded(response.secrets_prompt, addLog);
+      } else if (response.revised && response.design) {
         setCurrentDesign(response.design);
         setShowFeedbackDialog(false);
         setFeedback('');
-        addLog({ 
-          type: 'log', 
-          level: 'success', 
-          message: 'AI已根据您的反馈修订设计书，请重新审阅' 
+        addLog({
+          type: 'log',
+          level: 'success',
+          message: 'AI已根据您的反馈修订设计书，请重新审阅',
         });
       } else {
-        // 拒绝且无反馈或修订失败
         setCurrentDesign(null);
         setCurrentView('input');
         setShowFeedbackDialog(false);
         setFeedback('');
-        addLog({ 
-          type: 'log', 
-          level: 'info', 
-          message: '设计书已拒绝' 
-        });
+        addLog({ type: 'log', level: 'info', message: '设计书已拒绝' });
       }
     } catch (error) {
-      addLog({ 
-        type: 'log', 
-        level: 'error', 
-        message: `审批失败: ${error}` 
+      addLog({
+        type: 'log',
+        level: 'error',
+        message: `审批失败: ${error instanceof Error ? error.message : String(error)}`,
       });
     } finally {
       setIsApproving(false);
@@ -360,31 +389,51 @@ export function DesignView() {
             </button>
           </div>
         )}
-        <div className="flex gap-4">
-          <button
-            onClick={() => handleApprove(true)}
-            disabled={busy}
-            className="helm-btn-primary flex-1 flex items-center justify-center gap-2 font-medium py-3 rounded-lg disabled:opacity-40"
-          >
-            {isApproving ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <>
-                <CheckCircle className="w-4 h-4" />
-                <span>批准并生成计划</span>
-              </>
-            )}
-          </button>
+        <div className="flex flex-wrap gap-3">
+          {!approved ? (
+            <button
+              onClick={() => handleApprove(true)}
+              disabled={busy}
+              className="helm-btn-primary flex flex-1 items-center justify-center gap-2 rounded-lg py-3 font-medium disabled:opacity-40"
+            >
+              {isApproving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <>
+                  <CheckCircle className="h-4 w-4" />
+                  <span>批准</span>
+                </>
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={() => void handleGeneratePlan()}
+              disabled={busy}
+              className="helm-btn-primary flex flex-1 items-center justify-center gap-2 rounded-lg py-3 font-medium disabled:opacity-40"
+            >
+              {isGeneratingPlan ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <>
+                  <CheckCircle className="h-4 w-4" />
+                  <span>生成执行计划</span>
+                </>
+              )}
+            </button>
+          )}
 
           <button
             onClick={() => handleApprove(false)}
-            disabled={busy}
-            className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-medium py-3 rounded-lg transition-colors"
+            disabled={busy || approved}
+            className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-red-600 py-3 font-medium text-white transition-colors hover:bg-red-700 disabled:bg-zinc-800 disabled:text-zinc-600"
           >
-            <XCircle className="w-4 h-4" />
+            <XCircle className="h-4 w-4" />
             <span>拒绝</span>
           </button>
         </div>
+        {approved && (
+          <p className="text-center text-xs text-zinc-500">设计书已批准 · 过程条「计划」一步等待生成</p>
+        )}
       </div>
     </div>
   );

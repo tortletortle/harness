@@ -1,12 +1,19 @@
 # EAS 2.0 项目状态
 
-> 本文记录当前实现状态（2026-09-21）。历史测试报告以 archive/ 中的日期版本为准。
+> 本文记录当前实现状态（2026-10-07）。历史测试报告与过期文档见 `docs/archive/`。
 
 ## 一句话现状
 
-EAS 2.0 是面向个人本地开发助手的任务编排与执行系统：需求 → Designer 生成设计书 → 人工审批 → 执行计划 → Executor 分步调用工具 → SQLite 持久化与 React 控制台展示。
+EAS 2.0（星舵 Helm）是面向个人本地开发助手的任务编排与执行系统：需求 → 设计书 → 工具对齐/合成 → **批准** → **生成计划** → 执行；过程用流水线条 + Dify 风格步骤图可见。
 
 当前 Python/FastAPI 是生产任务执行的唯一权威运行时；Rust workspace 已产品化为桌面控制台、契约校验/工具伴随服务及迁移基础，不重复实现或伪装成第二套完整 Executor。
+
+## 最近增量（2026-10）
+
+- 工具优先闭环：`tool_catalog`、计划工具白名单（registry ∪ PLAN_CORE ∪ skill_*）、合成/别名、执行前 `tool_is_resolvable`、空 PLAN_DENYLIST。
+- 过程可见：`PlanFlowGraph`（步骤 DAG）+ `PipelineOverview`（需求→设计→工具→批准→计划→执行）。
+- **批准与出计划解耦**：`POST /api/design/{id}/approve` 只落 `user_approval`；`POST /api/design/{id}/generate-plan` 单独生成计划。
+- 过期报告/脚本/日期文档归档至 `docs/archive/`，`docs/` 只留现行说明。
 
 ## 已完成能力
 

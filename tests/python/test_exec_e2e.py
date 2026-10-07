@@ -130,8 +130,11 @@ def plan_fixture(server, workdir):
 
     code, data = _req(f"/api/design/{design_id}/approve", method="POST", body={"design_id": design_id, "approved": True})
     assert code == 200, f"approve design -> {code} {data!r}"
+    assert data.get("approved") or (data.get("design") or {}).get("user_approval"), data
+    code, data = _req(f"/api/design/{design_id}/generate-plan", method="POST")
+    assert code == 200, f"generate plan -> {code} {data!r}"
     plan = data.get("plan") or data.get("design", {}).get("plan")
-    assert plan, f"approve response missing plan: {data!r}"
+    assert plan, f"generate-plan response missing plan: {data!r}"
     plan_id = plan["plan_id"]
 
     return {"plan_id": plan_id, "workdir": workdir}

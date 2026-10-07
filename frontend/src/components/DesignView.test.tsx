@@ -1,9 +1,5 @@
 /**
- * DesignView 组件测试
- *
- * 使用真实 zustand store + mock api/client，覆盖 approve 成功后解析并响应
- * secrets_prompt 的逻辑：设计声明了项目密钥且 prompt_shown=true 时应打开本地
- * 录入页并写日志；否则不弹窗、不影响既有批准流程。
+ * DesignView：批准与生成计划解耦后的交互。
  */
 
 import { render, screen, waitFor } from '@testing-library/react';
@@ -17,6 +13,7 @@ vi.mock('../api/client', () => ({
   apiClient: {
     approveDesign: vi.fn(),
     fulfillDesignTools: vi.fn(),
+    generatePlanFromDesign: vi.fn(),
   },
 }));
 
@@ -24,6 +21,7 @@ vi.mock('../api/client', () => ({
 const design: any = {
   design_id: 'design-1',
   user_request: '构建一个需要 SECRET_API_TOKEN 的工具',
+  user_approval: false,
   part1: {
     difficulty: { level: 'medium', reasoning: '中' },
     architecture: { components: ['后端'], tech_stack: ['python'], data_flow: ['req -> api'] },
@@ -36,8 +34,13 @@ const design: any = {
   },
 };
 
-function setDesign() {
-  useAppStore.setState({ currentDesign: design, currentPlan: null, currentView: 'design', logs: [] });
+function setDesign(overrides: Record<string, unknown> = {}) {
+  useAppStore.setState({
+    currentDesign: { ...design, ...overrides },
+    currentPlan: null,
+    currentView: 'design',
+    logs: [],
+  });
 }
 
 beforeEach(() => {
@@ -45,41 +48,44 @@ beforeEach(() => {
   setDesign();
 });
 
-describe('DesignView secrets_prompt 处理', () => {
-  it('批准且 prompt_shown+entry_url 时打开本地录入页并记日志', async () => {
+describe('DesignView 批准 / 生成计划', () => {
+  it('批准成功只落批准态，不立刻出计划', async () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(apiClient.approveDesign).mockResolvedValue({
-      plan: { plan_id: 'plan-1' } as any,
+      approved: true,
+      design: { ...design, user_approval: true },
       secrets_prompt: {
-        prompt_shown: true, available: true,
+        prompt_shown: true,
+        available: true,
         entry_url: 'http://localhost/secret-entry',
-        pending: ['SECRET_API_TOKEN'], already_set: [],
+        pending: ['SECRET_API_TOKEN'],
+        already_set: [],
       },
     } as any);
 
     render(<DesignView />);
-    await userEvent.setup().click(screen.getByRole('button', { name: '批准并生成计划' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: '批准' }));
 
     await waitFor(() =>
-      expect(open).toHaveBeenCalledWith('http://localhost/secret-entry', '_blank', 'noopener,noreferrer'));
-    expect(useAppStore.getState().logs.some((l) => l.message.includes('已打开本地录入页面'))).toBe(true);
-    expect(useAppStore.getState().currentPlan).toMatchObject({ plan_id: 'plan-1' });
+      expect(open).toHaveBeenCalledWith('http://localhost/secret-entry', '_blank', 'noopener,noreferrer'),
+    );
+    expect(useAppStore.getState().currentPlan).toBeNull();
+    expect(useAppStore.getState().currentDesign?.user_approval).toBe(true);
+    expect(apiClient.generatePlanFromDesign).not.toHaveBeenCalled();
   });
 
-  it('prompt_shown=false 时不打开录入页', async () => {
-    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    vi.mocked(apiClient.approveDesign).mockResolvedValue({
-      plan: { plan_id: 'plan-2' } as any,
-      secrets_prompt: { prompt_shown: false, available: false, entry_url: '', pending: [], already_set: [] },
+  it('已批准后可单独生成计划', async () => {
+    setDesign({ user_approval: true });
+    vi.mocked(apiClient.generatePlanFromDesign).mockResolvedValue({
+      plan: { plan_id: 'plan-1' } as any,
+      secrets_prompt: { prompt_shown: false },
     } as any);
 
     render(<DesignView />);
-    await userEvent.setup().click(screen.getByRole('button', { name: '批准并生成计划' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: '生成执行计划' }));
 
-    await waitFor(() => expect(useAppStore.getState().currentPlan).toBeTruthy());
-    expect(open).not.toHaveBeenCalled();
+    await waitFor(() => expect(useAppStore.getState().currentPlan).toMatchObject({ plan_id: 'plan-1' }));
+    expect(useAppStore.getState().currentView).toBe('plan');
   });
 
   it('有缺失工具时显示重试补齐，批准仍可点', async () => {
@@ -102,7 +108,7 @@ describe('DesignView secrets_prompt 处理', () => {
     } as any);
 
     render(<DesignView />);
-    expect(screen.getByRole('button', { name: '批准并生成计划' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: '批准' })).not.toBeDisabled();
     expect(screen.getByText(/还有 1 个工具未就绪/)).toBeTruthy();
     await userEvent.setup().click(screen.getByRole('button', { name: '重试补齐工具' }));
     await waitFor(() => expect(apiClient.fulfillDesignTools).toHaveBeenCalledWith('design-1'));
@@ -126,7 +132,7 @@ describe('DesignView secrets_prompt 处理', () => {
     } as any);
 
     render(<DesignView />);
-    await userEvent.setup().click(screen.getByRole('button', { name: '批准并生成计划' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: '批准' }));
     await waitFor(() =>
       expect(useAppStore.getState().currentDesign?.part2?.missing_tools?.[0]?.tool_id).toBe('csv_convert'),
     );

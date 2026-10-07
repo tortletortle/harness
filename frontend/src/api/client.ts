@@ -168,14 +168,14 @@ export class ApiClient {
   }
 
   /**
-   * 审批设计书
+   * 审批设计书（只落批准状态，不生成计划）
    */
   async approveDesign(
     designId: string,
     approved: boolean,
     feedback?: string
   ): Promise<{
-    plan?: ExecutionPlan;
+    approved?: boolean;
     revised?: boolean;
     design?: Design;
     rejected?: boolean;
@@ -196,7 +196,7 @@ export class ApiClient {
         toolsIncomplete: true,
         design: data.design,
         missing_tools: Array.isArray(data.missing_tools) ? data.missing_tools : [],
-        message: typeof data.detail === 'string' ? data.detail : '工具未齐，无法生成计划',
+        message: typeof data.detail === 'string' ? data.detail : '工具未齐，无法批准',
       };
     }
 
@@ -209,6 +209,46 @@ export class ApiClient {
       throw new Error(data.detail || data.error || '审批失败');
     }
 
+    return data;
+  }
+
+  /**
+   * 已批准设计书 → 生成执行计划
+   */
+  async generatePlanFromDesign(designId: string): Promise<{
+    plan?: ExecutionPlan;
+    design?: Design;
+    toolsIncomplete?: boolean;
+    missing_tools?: string[];
+    message?: string;
+    secrets_prompt?: { prompt_shown: boolean; available?: boolean; entry_url?: string; pending?: string[]; already_set?: string[] };
+  }> {
+    const response = await authFetch(
+      `${API_BASE}/api/design/${encodeURIComponent(designId)}/generate-plan`,
+      { method: 'POST' },
+    );
+
+    if (response.status === 409) {
+      const data = await response.json().catch(() => ({}));
+      if (data.code === 'tools_incomplete') {
+        return {
+          toolsIncomplete: true,
+          design: data.design,
+          missing_tools: Array.isArray(data.missing_tools) ? data.missing_tools : [],
+          message: typeof data.detail === 'string' ? data.detail : '工具未齐，无法生成计划',
+        };
+      }
+      await throwResponseError(response, '生成计划失败');
+    }
+
+    if (!response.ok) {
+      await throwResponseError(response, '生成计划失败');
+    }
+
+    const data = await response.json();
+    if (!data.success || !data.plan) {
+      throw new Error(data.detail || data.error || '生成计划失败');
+    }
     return data;
   }
 
