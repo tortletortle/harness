@@ -95,7 +95,7 @@ export function AuditView() {
             <select
               value={limit}
               onChange={(e) => setLimit(Number(e.target.value))}
-              className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-blue-600"
+              className="helm-field bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 focus:outline-none"
             >
               {LIMIT_OPTIONS.map((n) => (
                 <option key={n} value={n}>最近 {n} 条</option>
@@ -119,7 +119,7 @@ export function AuditView() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="搜索指令、工具或计划 ID..."
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-10 pr-4 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-blue-600"
+            className="helm-field w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-10 pr-4 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none"
           />
         </div>
 

@@ -89,7 +89,7 @@ export function WorktreePanel({ planId, planStatus }: { planId: string; planStat
       <div className="flex items-center justify-between gap-3 px-4 py-3">
         <button type="button" onClick={() => setOpen((v) => !v)} className="flex min-w-0 items-center gap-2 text-left">
           {open ? <ChevronDown className="h-4 w-4 text-zinc-500" /> : <ChevronRight className="h-4 w-4 text-zinc-500" />}
-          <GitBranch className="h-4 w-4 text-violet-300" />
+          <GitBranch className="h-4 w-4 helm-accent" />
           <span className="text-sm font-medium text-white">隔离分支</span>
           <span className="truncate text-xs text-zinc-500">
             {busy === 'load' && !status ? '读取中…' : wt ? wt.branch : '未启用'}
@@ -102,7 +102,7 @@ export function WorktreePanel({ planId, planStatus }: { planId: string; planStat
           </button>
           {!wt && status && (
             <button type="button" onClick={() => void create()} disabled={busy !== null}
-              className={`${btn} border-violet-400/30 bg-violet-400/10 text-violet-200 hover:bg-violet-400/20`}>
+              className={`${btn} helm-chip helm-hover-brand`}>
               {busy === 'create' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}创建隔离分支
             </button>
           )}

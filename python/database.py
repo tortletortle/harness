@@ -323,8 +323,216 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_worktrees_plan_status ON worktrees(plan_id, status, created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_sessions_plan ON agent_sessions(plan_id, started_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_turns_session ON agent_turns(session_id, turn_no)")
+
+            # 计划可用工具目录：磁盘 skills/ + 内存注册表之外的库内索引（闭环可见性）。
+            # 脚本仍在磁盘；此处只存 tool_id / 路径 / 状态，便于重启对账与审计。
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tool_catalog (
+                    tool_id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    name TEXT,
+                    description TEXT,
+                    skill_dir TEXT,
+                    status TEXT NOT NULL,
+                    source TEXT,
+                    design_id TEXT,
+                    metadata_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tool_catalog_status ON tool_catalog(status, kind)"
+            )
             conn.commit()
-    
+
+    def upsert_tool_catalog(
+        self,
+        tool_id: str,
+        *,
+        kind: str = "skill",
+        name: str = None,
+        description: str = None,
+        skill_dir: str = None,
+        status: str = "ready",
+        source: str = None,
+        design_id: str = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """登记或更新计划工具目录条目。"""
+        tid = str(tool_id or "").strip()
+        if not tid:
+            return False
+        now = utcnow_iso()
+        meta_json = json.dumps(metadata or {}, ensure_ascii=False)
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                conn.execute(
+                    """
+                    INSERT INTO tool_catalog (
+                        tool_id, kind, name, description, skill_dir, status,
+                        source, design_id, metadata_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(tool_id) DO UPDATE SET
+                        kind=excluded.kind,
+                        name=COALESCE(excluded.name, tool_catalog.name),
+                        description=COALESCE(excluded.description, tool_catalog.description),
+                        skill_dir=COALESCE(excluded.skill_dir, tool_catalog.skill_dir),
+                        status=excluded.status,
+                        source=COALESCE(excluded.source, tool_catalog.source),
+                        design_id=COALESCE(excluded.design_id, tool_catalog.design_id),
+                        metadata_json=excluded.metadata_json,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        tid,
+                        str(kind or "skill"),
+                        name,
+                        description,
+                        skill_dir,
+                        str(status or "ready"),
+                        source,
+                        str(design_id) if design_id else None,
+                        meta_json,
+                        now,
+                        now,
+                    ),
+                )
+                return True
+        except Exception as exc:
+            logger.exception("登记工具目录失败: {}", exc)
+            raise DatabaseError(f"登记工具目录失败: {exc}") from exc
+
+    def list_tool_catalog(
+        self, *, status: str = None, kind: str = None
+    ) -> List[Dict[str, Any]]:
+        clauses = []
+        params: list = []
+        if status:
+            clauses.append("status = ?")
+            params.append(str(status))
+        if kind:
+            clauses.append("kind = ?")
+            params.append(str(kind))
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        try:
+            with closing(self._get_connection()) as conn:
+                rows = conn.execute(
+                    f"SELECT * FROM tool_catalog{where} ORDER BY tool_id",
+                    params,
+                ).fetchall()
+                out = []
+                for row in rows:
+                    item = dict(row)
+                    raw = item.pop("metadata_json", None)
+                    try:
+                        item["metadata"] = json.loads(raw) if raw else {}
+                    except Exception:
+                        item["metadata"] = {}
+                    out.append(item)
+                return out
+        except Exception as exc:
+            logger.exception("查询工具目录失败: {}", exc)
+            raise DatabaseError(f"查询工具目录失败: {exc}") from exc
+
+    def get_tool_catalog(self, tool_id: str) -> Optional[Dict[str, Any]]:
+        tid = str(tool_id or "").strip()
+        if not tid:
+            return None
+        try:
+            with closing(self._get_connection()) as conn:
+                row = conn.execute(
+                    "SELECT * FROM tool_catalog WHERE tool_id = ?", (tid,)
+                ).fetchone()
+                if not row:
+                    return None
+                item = dict(row)
+                raw = item.pop("metadata_json", None)
+                try:
+                    item["metadata"] = json.loads(raw) if raw else {}
+                except Exception:
+                    item["metadata"] = {}
+                return item
+        except Exception as exc:
+            logger.exception("查询工具目录条目失败: {}", exc)
+            raise DatabaseError(f"查询工具目录条目失败: {exc}") from exc
+
+    def sync_tool_catalog_registry(self, tools: List[Dict[str, Any]]) -> int:
+        """把当前 ToolRegistry/Capability 清单写入 tool_catalog（内置 + 已加载 skill）。"""
+        n = 0
+        for tool in tools or []:
+            tid = str((tool or {}).get("tool_id") or "").strip()
+            if not tid:
+                continue
+            kind = "skill" if tid.startswith("skill_") else "builtin"
+            self.upsert_tool_catalog(
+                tid,
+                kind=kind,
+                name=(tool or {}).get("name") or tid,
+                description=(tool or {}).get("description"),
+                status="ready",
+                source="registry",
+            )
+            n += 1
+        return n
+
+    def sync_tool_catalog_skills(
+        self,
+        packages: List[Any],
+        *,
+        repo_root: Optional[Path] = None,
+    ) -> Dict[str, int]:
+        """启动对账：磁盘已加载技能 → ready；库内有、盘上无 → missing。"""
+        root = Path(repo_root) if repo_root else None
+        loaded: Dict[str, Any] = {}
+        for package in packages or []:
+            tid = getattr(package, "tool_id", None)
+            if not tid or not getattr(package, "has_entry", False):
+                continue
+            skill_dir = getattr(package, "dir", None)
+            rel = None
+            if skill_dir is not None:
+                path = Path(skill_dir)
+                if root is not None:
+                    try:
+                        rel = str(path.resolve().relative_to(root.resolve()))
+                    except Exception:
+                        rel = str(path)
+                else:
+                    rel = str(path)
+            self.upsert_tool_catalog(
+                str(tid),
+                kind="skill",
+                name=getattr(package, "name", None),
+                description=getattr(package, "description", None),
+                skill_dir=rel,
+                status="ready",
+                source="disk",
+            )
+            loaded[str(tid)] = package
+
+        missing_n = 0
+        for row in self.list_tool_catalog(kind="skill"):
+            tid = row.get("tool_id")
+            if not tid or tid in loaded:
+                continue
+            if (row.get("status") or "") == "missing":
+                continue
+            # 仅标记曾登记过、本次未加载到的技能
+            self.upsert_tool_catalog(
+                tid,
+                kind="skill",
+                name=row.get("name"),
+                description=row.get("description"),
+                skill_dir=row.get("skill_dir"),
+                status="missing",
+                source=row.get("source") or "disk",
+                design_id=row.get("design_id"),
+                metadata=row.get("metadata") or {},
+            )
+            missing_n += 1
+        return {"ready": len(loaded), "missing": missing_n}
+
     def create_artifact(
         self, artifact_id: str, kind: str, uri: str, *, plan_id: str = None,
         run_id: str = None, step_id: str = None, content_hash: str = None,

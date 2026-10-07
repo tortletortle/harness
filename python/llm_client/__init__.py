@@ -21,6 +21,36 @@ class LLMRequestError(RuntimeError):
         self.retryable = retryable
 
 
+def _sdk_int(obj: Any, name: str) -> Optional[int]:
+    val = getattr(obj, name, None)
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return None
+    return int(val)
+
+
+def _sdk_usage_dict(usage: Any) -> Dict[str, Any]:
+    """把 SDK usage 对象收成记账 dict；MagicMock/缺字段不写入，避免污染。"""
+    if usage is None:
+        return {}
+    if isinstance(usage, dict):
+        return usage
+    out: Dict[str, Any] = {}
+    for key in (
+        "prompt_tokens", "completion_tokens", "total_tokens",
+        "input_tokens", "output_tokens",
+        "cached_tokens", "prompt_cache_hit_tokens",
+        "cache_read_input_tokens", "cache_creation_input_tokens",
+    ):
+        val = _sdk_int(usage, key)
+        if val is not None:
+            out[key] = val
+    details = getattr(usage, "prompt_tokens_details", None)
+    cached = _sdk_int(details, "cached_tokens") if details is not None else None
+    if cached is not None:
+        out["prompt_tokens_details"] = {"cached_tokens": cached}
+    return out
+
+
 def _retry_after(response):
     from datetime import datetime, timezone
     from email.utils import parsedate_to_datetime
@@ -197,10 +227,7 @@ class AnthropicProvider(LLMProvider):
             return LLMResponse(
                 content=response.content[0].text,
                 model=model,
-                usage={
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens,
-                },
+                usage=_sdk_usage_dict(response.usage),
                 finish_reason=response.stop_reason,
             )
         except Exception as e:
@@ -262,10 +289,7 @@ class OpenAIProvider(LLMProvider):
             return LLMResponse(
                 content=response.choices[0].message.content,
                 model=model,
-                usage={
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "completion_tokens": response.usage.completion_tokens,
-                },
+                usage=_sdk_usage_dict(response.usage),
                 finish_reason=response.choices[0].finish_reason,
             )
         except Exception as e:

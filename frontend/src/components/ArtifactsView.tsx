@@ -11,7 +11,7 @@ import { useAppStore } from '../stores/appStore';
 import type { Artifact } from '../types';
 
 const KIND_LABELS: Record<string, { label: string; tone: string }> = {
-  delivery_report: { label: '交付报告', tone: 'border-violet-400/25 bg-violet-400/10 text-violet-200' },
+  delivery_report: { label: '交付报告', tone: 'helm-chip' },
   desktop_screenshot: { label: '窗口截图', tone: 'border-sky-400/25 bg-sky-400/10 text-sky-200' },
   file: { label: '文件', tone: 'border-sky-400/25 bg-sky-400/10 text-sky-200' },
   test_report: { label: '测试报告', tone: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' },
@@ -118,7 +118,7 @@ export function ArtifactsView() {
         className="flex w-full items-center gap-3 rounded-xl border border-white/[0.08] bg-[#111419]/90 px-4 py-3 text-left transition-colors hover:bg-white/[0.03]"
       >
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.05] text-zinc-400">
-          {artifact.kind === 'delivery_report' ? <ShieldCheck className="h-4 w-4 text-violet-300" /> : <FileText className="h-4 w-4" />}
+          {artifact.kind === 'delivery_report' ? <ShieldCheck className="h-4 w-4 helm-accent" /> : <FileText className="h-4 w-4" />}
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -133,7 +133,7 @@ export function ArtifactsView() {
             {artifact.created_at && <span>{artifact.created_at.slice(0, 19).replace('T', ' ')}</span>}
           </div>
         </div>
-        {previewLoading === artifact.artifact_id && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-violet-300" />}
+        {previewLoading === artifact.artifact_id && <Loader2 className="h-4 w-4 shrink-0 animate-spin helm-accent" />}
       </button>
     );
   };
@@ -152,7 +152,7 @@ export function ArtifactsView() {
               onChange={(event) => setPlanFilter(event.target.value)}
               placeholder="按 plan_id 过滤（留空显示全部）"
               aria-label="按 plan_id 过滤产物"
-              className="w-64 rounded-lg border border-white/[0.1] bg-white/[0.04] px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-violet-400/40 focus:outline-none"
+              className="helm-field w-64 rounded-lg border border-white/[0.1] bg-white/[0.04] px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none"
             />
             <button
               onClick={() => void refresh()}
@@ -177,7 +177,7 @@ export function ArtifactsView() {
 
         {reports.length > 0 && (
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-300">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] helm-accent">
               <ShieldCheck className="h-3.5 w-3.5" />交付报告
             </div>
             {reports.map(renderRow)}

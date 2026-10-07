@@ -1,4 +1,4 @@
-﻿"""
+"""
 Designer AI - 设计师
 
 职责：
@@ -42,7 +42,15 @@ class GenerationError(Exception):
 class DefaultDesigner(Designer):
     """默认Designer实现"""
     
-    def __init__(self, llm_client: LLMClient, model_config: Dict[str, Any], dispatcher=None) -> None:
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        model_config: Dict[str, Any],
+        dispatcher=None,
+        skill_manager=None,
+        capability_registry=None,
+        database=None,
+    ) -> None:
         """
         初始化设计器
         
@@ -50,15 +58,104 @@ class DefaultDesigner(Designer):
             llm_client: LLM客户端
             model_config: 模型配置
             dispatcher: 调度器（用于访问工具库）
+            skill_manager: 技能包管理器；提供时设计阶段可按缺口写工具
+            capability_registry: 能力注册表；合成工具要同时挂上
+            database: 可选；合成技能落 tool_catalog
         """
         self.llm_client = llm_client
         self.model_config = model_config
         self.dispatcher = dispatcher
+        self.skill_manager = skill_manager
+        self.capability_registry = capability_registry
+        self.database = database
         
         # 初始化缓存
         from cache import DesignCache, PlanCache
         self.design_cache = DesignCache()
         self.plan_cache = PlanCache()
+
+    async def _known_tool_ids(self) -> set:
+        ids = set()
+        if not self.dispatcher:
+            return ids
+        try:
+            for item in await self.dispatcher.request_tool_info():
+                tool_id = item.get("tool_id")
+                if tool_id:
+                    ids.add(str(tool_id))
+        except Exception as exc:
+            logger.warning("读取工具目录失败: {}", exc)
+        return ids
+
+    async def _design_tools_catalog(self) -> str:
+        """设计提示列出当前 Capability/工具目录（计划可用集 = 注册表 − 显式禁用）。"""
+        from tool_synthesis import PLAN_CORE, allowed_plan_tools
+
+        lines: list = []
+        known: set = set()
+        if self.dispatcher:
+            try:
+                for tool in await self.dispatcher.request_tool_info():
+                    tid = tool.get("tool_id")
+                    if not tid:
+                        continue
+                    known.add(str(tid))
+                    lines.append((str(tid), tool.get("category", "other"), tool.get("description", "无描述")))
+            except Exception as exc:
+                logger.warning("获取工具信息失败: {}", exc)
+                return "（工具信息不可用）"
+        else:
+            return "（未配置dispatcher）"
+
+        extras = []
+        if self.skill_manager:
+            for skill in self.skill_manager.entry_skills():
+                extras.append(skill.tool_id)
+                if skill.tool_id not in known:
+                    lines.append((skill.tool_id, "skill", (skill.description or "")[:80] or "技能包"))
+
+        allowed = allowed_plan_tools(known, extras)
+        filtered = [
+            f"  - {tid} [{cat}]: {desc}"
+            for tid, cat, desc in lines
+            if tid in allowed
+        ]
+        if not filtered:
+            filtered = [f"  - {tid} [core]" for tid in sorted(PLAN_CORE)]
+        return "\n".join(filtered)
+
+    async def _fulfill_required_tools(self, design):
+        from tool_synthesis import fulfill_design_tools
+
+        registry = getattr(self.dispatcher, "tool_registry", None) if self.dispatcher else None
+        return await fulfill_design_tools(
+            design,
+            known_ids=await self._known_tool_ids(),
+            llm_client=self.llm_client,
+            model_config=self.model_config,
+            skill_manager=self.skill_manager,
+            tool_registry=registry,
+            capability_registry=self.capability_registry,
+            database=self.database,
+        )
+
+    def _plan_skill_lines(self, design) -> str:
+        extras = []
+        for req in design.part2_tool_assessment.required_tools:
+            if req.availability == "available" and str(req.tool_id).startswith("skill_"):
+                extras.append(f"- {req.tool_id}: {req.limitations or req.impact or req.tool_id}")
+        if self.skill_manager:
+            known = {req.tool_id for req in design.part2_tool_assessment.required_tools}
+            for skill in self.skill_manager.entry_skills():
+                if skill.tool_id not in known:
+                    extras.append(f"- {skill.tool_id}: {skill.description[:80]}")
+        if not extras:
+            return ""
+        return (
+            "\n- 设计阶段已补齐或目录中已有的技能工具（计划里必须用这些 tool_id，不要另起名字）：\n"
+            + "\n".join(extras)
+            + "\n"
+        )
     
     @property
     def name(self) -> str:
@@ -146,20 +243,8 @@ class DefaultDesigner(Designer):
         """
         
         # 通过dispatcher获取工具信息（先于缓存查询：工具目录指纹参与缓存校验）
-        tools_info = ""
-        if self.dispatcher:
-            try:
-                available_tools = await self.dispatcher.request_tool_info()
-                tools_info_lines = []
-                for tool in available_tools:
-                    category = tool.get('category', 'other')
-                    tools_info_lines.append(f"  - {tool['tool_id']} [{category}]: {tool.get('description', '无描述')}")
-                tools_info = "\n".join(tools_info_lines)
-            except Exception as e:
-                logger.warning("获取工具信息失败: {}", e)
-                tools_info = "（工具信息不可用）"
-        else:
-            tools_info = "（未配置dispatcher）"
+        # 只展示计划白名单，与 fulfill / validate_plan_tools 同一真相。
+        tools_info = await self._design_tools_catalog()
 
         # 工具目录指纹：目录或模型变化时缓存失效，防止"工具清单变了还返回旧设计书"。
         import hashlib
@@ -175,7 +260,7 @@ class DefaultDesigner(Designer):
         cached_design = self.design_cache.get(user_request, fingerprint=fingerprint)
         if cached_design:
             logger.info("使用缓存的设计书（工具目录指纹一致）")
-            return DesignDocument(**cached_design)
+            return await self._fulfill_required_tools(DesignDocument(**cached_design))
         
         # P2 记忆编排：相关历史经验/知识笔记/代码检索注入设计上下文。
         # fail-open：注入失败只降级，绝不阻断设计生成；to_thread 防止索引/检索阻塞事件循环。
@@ -192,19 +277,22 @@ class DefaultDesigner(Designer):
         # 构建详细的prompt
         system_prompt = f"""你是一个资深的系统架构师和技术专家。
 
-系统中当前可用的工具（仅供参考）：
+系统中当前可用的工具（Capability 目录，执行时由 Grant 授权）：
 {tools_info}
 {locals().get("memory_section", "")}
 
-注意：这些工具在设计阶段不可执行，仅作为设计参考。你可以在设计书中提及需要使用哪些工具，但现在不要执行它们。
+注意：这些工具在设计阶段默认不执行。工具优先——能用清单里的确定性工具就不要发明同义工具
+（例如有 super_search 就不要写 web-search / search；有 coding_agent 就不要写 code-generator）。
+清单没有、又确实需要的能力，把 tool_id 写成 snake_case 并标 availability=unavailable，
+系统可在设计后补写 skill_gen_* 技能包；有现成内置工具时不要合成。
 
 【任务类型判别（先做这一步，重要）】
 - 先判断需求类型，再决定设计方向：
   A. 信息检索/调研类——用户要的是信息、答案、清单、对比（动词如：搜索/查找/调研/了解/汇总/对比/看看）
   B. 系统构建类——用户要的是软件、工具、系统（动词如：开发/构建/实现/制作/搭建/写一个）
-- 检索类需求：设计书必须是轻量的"信息获取方案"——用 super_search / deep_search 步骤获取信息、
-  用 file_creator 输出汇总报告即可；不要设计软件架构、不要发明系统组件和模块
-- 开发类需求：按常规架构设计
+- 检索类需求：轻量方案——用 super_search / code_context 获取信息，用 file_creator 落盘汇总；
+  不要设计软件架构、不要发明系统组件和模块
+- 开发类需求：按常规架构设计（搜索 → 修改 → 测试，必要时 coding_agent）
 - 类型模糊时：在设计中明确写出你的类型判断与依据，并选择更轻的方案
 
 你的任务是根据用户需求，生成一份详细的技术设计书。
@@ -222,7 +310,7 @@ class DefaultDesigner(Designer):
 
 **Part 2: 工具评估**
 1. required_tools: 列出需要的工具，每个包含：
-   - tool_id: 工具标识（如 "code-generator", "image-generator"）
+   - tool_id: 工具标识（优先用清单里的 id，如 file_creator / coding_agent）
    - availability: 可用性（available/unavailable/partial）
    - quality: 质量评估（high/medium/low）
    - limitations: 限制说明（可选）
@@ -473,7 +561,8 @@ class DefaultDesigner(Designer):
                 ),
             )
             
-            # 保存到缓存
+            design = await self._fulfill_required_tools(design)
+            # 保存到缓存（补工具之后，避免缺口设计被缓存钉死）
             self.design_cache.set(user_request, design.model_dump(mode="json"), fingerprint=fingerprint)
             
             return design
@@ -498,21 +587,7 @@ class DefaultDesigner(Designer):
         """
         logger.info("根据反馈修订设计书: {}", feedback)
         
-        # 获取工具信息
-        tools_info = ""
-        if self.dispatcher:
-            try:
-                available_tools = await self.dispatcher.request_tool_info()
-                tools_info_lines = []
-                for tool in available_tools:
-                    category = tool.get('category', 'other')
-                    tools_info_lines.append(f"  - {tool['tool_id']} [{category}]: {tool.get('description', '无描述')}")
-                tools_info = "\n".join(tools_info_lines)
-            except Exception as e:
-                logger.warning("获取工具信息失败: {}", e)
-                tools_info = "（工具信息不可用）"
-        else:
-            tools_info = "（未配置dispatcher）"
+        tools_info = await self._design_tools_catalog()
         
         # 构建原始设计书的文本表示
         original_design_text = f"""
@@ -531,8 +606,10 @@ class DefaultDesigner(Designer):
         # 构建修订prompt
         system_prompt = f"""你是一个资深的系统架构师和技术专家。
 
-系统中当前可用的工具（仅供参考）：
+系统中当前可用的工具（Capability 目录）：
 {tools_info}
+
+修订时优先用清单内已有工具；仅当清单确实没有该能力时才标 unavailable 以便合成技能包。
 
 你的任务是根据用户的反馈，修订已有的技术设计书。
 
@@ -557,7 +634,7 @@ class DefaultDesigner(Designer):
 
 **Part 2: 工具评估**
 1. required_tools: 列出需要的工具，每个包含：
-   - tool_id: 工具标识（如 "code-generator", "image-generator"）
+   - tool_id: 工具标识（优先用清单里的 id，如 file_creator / coding_agent）
    - availability: 可用性（available/unavailable/partial）
    - quality: 质量评估（high/medium/low）
    - limitations: 限制说明（可选）
@@ -661,6 +738,7 @@ class DefaultDesigner(Designer):
             # 反馈必须跟随修订后的设计书进入计划生成，否则用户在拒绝时
             # 给出的具体要求（如文件名、路径）会在下一环节丢失。
             revised_design.user_comments = feedback
+            revised_design = await self._fulfill_required_tools(revised_design)
             # 同 design_id 的旧计划缓存作废：反馈改变了计划应当遵守的约束
             self.plan_cache.remove(str(original_design.design_id))
             return revised_design
@@ -753,14 +831,46 @@ class DefaultDesigner(Designer):
                 logger.error("生成修复步骤失败: {}", e)
         raise GenerationError(f"修复步骤生成失败: {last_error}")
 
-    async def generate_plan(self, design: DesignDocument, project_memory: str = "") -> ExecutionPlan:
-        """生成执行计划（带重试机制）"""
+    async def generate_plan(
+        self,
+        design: DesignDocument,
+        project_memory: str = "",
+        *,
+        skip_fulfill: bool = False,
+    ) -> ExecutionPlan:
+        """生成执行计划（带重试机制）。
+
+        skip_fulfill=True：调用方已对齐工具（如审批路径），避免二次合成烧 token。
+        """
+        if not skip_fulfill:
+            before_ids = [req.tool_id for req in design.part2_tool_assessment.required_tools]
+            design = await self._fulfill_required_tools(design)
+            if before_ids != [req.tool_id for req in design.part2_tool_assessment.required_tools]:
+                self.plan_cache.remove(str(design.design_id))
+        missing = [
+            req.tool_id for req in design.part2_tool_assessment.required_tools
+            if (req.availability or "").lower() != "available"
+        ]
+        if missing:
+            raise GenerationError(
+                "工具未齐，无法生成执行计划：" + ", ".join(missing)
+            )
+        from tool_synthesis import allowed_plan_tools
+        from utils.json_fixer import validate_plan_tools
+        known_ids = await self._known_tool_ids()
+        skill_ids = [
+            req.tool_id for req in design.part2_tool_assessment.required_tools
+            if str(req.tool_id).startswith("skill_")
+        ]
+        plan_allowed = allowed_plan_tools(known_ids, skill_ids)
+        skill_tool_note = self._plan_skill_lines(design)
+        allowed_list = ", ".join(sorted(plan_allowed)) or "（空）"
         
         # 检查缓存（使用 design_id 作为键）
         cache_key = str(design.design_id)
         cached_plan = self.plan_cache.get(cache_key)
         if cached_plan:
-            logger.info("使用缓存的执行计划")
+            logger.info("尝试复用缓存的执行计划")
             cached = dict(cached_plan)
             # 重新审批是一次重新规划，不能复用已被真实执行过的计划身份：
             # 若直接返回缓存的旧 plan_id/step_id，save_plan 会幂等重建已执行计划，
@@ -807,16 +917,22 @@ class DefaultDesigner(Designer):
             cached["current_branch"] = 1
             cached["resume_from_step_id"] = None
             cached["paused_at_step_id"] = None
-            # 缓存计划也必须经过同一套图校验，避免旧缓存绕过契约。
+            # 缓存计划必须过图校验 + 注册表白名单；旧缓存含禁用工具则作废重生成。
             cached_steps = [
                 step
                 for segment in segments
                 for step in segment.get("steps") or []
             ]
             graph_result = validate_graph(cached_steps)
-            if not graph_result.valid:
-                raise GenerationError(f"缓存执行计划图校验失败: {graph_result.error}")
-            return ExecutionPlan(**cached)
+            reg_ok, reg_err = validate_plan_tools({"segments": segments}, plan_allowed)
+            if graph_result.valid and reg_ok:
+                return ExecutionPlan(**cached)
+            self.plan_cache.remove(cache_key)
+            logger.warning(
+                "缓存执行计划作废（将重生成）: graph={} tools={}",
+                None if graph_result.valid else graph_result.error,
+                None if reg_ok else reg_err,
+            )
         
         system_prompt = """你是一个执行计划专家。根据设计书生成详细的、可执行的步骤计划。
 
@@ -873,7 +989,13 @@ class DefaultDesigner(Designer):
 - 目录路径以 / 结尾（如 "output/"），文件路径带扩展名
 
 【约束（重要）】
-- 允许使用的工具：file_creator（创建新文件/目录）、coding_agent（修改已存在的代码文件）、test_runner（运行登记过的测试模板验证代码）、lint_gate（对 .py 文件做语法检查）、browser_check（用无头浏览器检查页面：文本/选择器断言+截图）。不要执行任何 shell 命令；text_editor 不作为独立顶层工具使用，只能作为 coding_agent 的 allowed_tools 值（见 coding_agent 契约），其余顶层禁用 command_runner / package_installer / git_operator / web_fetcher。
+- 本计划允许的 tool 只能从下列集合选取（注册表为准，禁止发明其它名字）：
+""" + allowed_list + """
+- 核心工具含义：file_creator（创建新文件/目录）、coding_agent（修改已存在代码）、test_runner（跑登记测试）、lint_gate（.py 语法检查）、browser_check（无头浏览器只读检查）。
+- text_editor 不能作顶层 tool，只能出现在 coding_agent 的 inputs.allowed_tools。
+- 顶层禁用：command_runner / package_installer / git_operator / web_fetcher / github_operator / http_api。
+- skill_ 工具：inputs 按该技能说明传入；acceptance 可用 exit_code 或 file_exists。
+""" + skill_tool_note + """
 - 创建新文件用 file_creator；修改已存在文件的内容用 coding_agent（它能先读原文再做受控修改）；代码改完后优先在该 coding_agent 步骤的 acceptance 直接挂 test_passes 由 pytest 判定行为（见下方验收写法要求），也可用独立 test_runner 步骤跑测试。
 - test_runner 步骤契约：inputs 必含 suite（已登记模板名，如 "pytest"，可用 test_path 指定测试文件或目录）；acceptance 必含 {"type":"test_passes","suite":"<同 inputs.suite>"}（推荐，行为级）或 {"type":"exit_code","equals":0}；不要用 test_runner 执行非测试命令。
 - lint_gate 步骤契约：inputs 必含 path（要检查的 .py 文件，相对路径）；acceptance 必含 {"type":"exit_code","equals":0}；只做语法检查，不能替代测试。
@@ -1052,29 +1174,51 @@ class DefaultDesigner(Designer):
                 # 尝试修复并验证 JSON
                 plan_data, error = fix_and_validate_plan_json(response_text)
                 
+                def _reject_plan(reason: str, *, contract: bool = True) -> None:
+                    nonlocal last_error, agent_contract_error, messages
+                    last_error = reason
+                    if contract:
+                        agent_contract_error = reason
+                    logger.error("{}", reason)
+                    # 短反馈重试：把拒绝原因塞回对话，避免下一次整包瞎改仍踩同一错误。
+                    messages = list(messages) + [
+                        Message(role="assistant", content=(response_text or "")[:6000]),
+                        Message(
+                            role="user",
+                            content=(
+                                f"上一份计划被拒绝：{reason}\n"
+                                f"允许的 tool 只能是：{allowed_list}\n"
+                                "请只改违规处，重新输出完整合法 JSON（不要 markdown）。"
+                            ),
+                        ),
+                    ]
+
                 if plan_data is None:
-                    last_error = error
-                    logger.error("JSON 解析/修复失败: {}", error)
-                    # 如果响应很短，打印出来帮助调试
                     if len(response_text) < 200:
                         logger.debug("API 返回内容: {}", response_text)
-                    continue  # 重试
+                    _reject_plan(f"JSON 解析/修复失败: {error}", contract=False)
+                    continue
                 
                 # 步骤契约校验（fail-closed）：agent_tool 步骤与轻契约普通工具
                 # （test_runner）的非法计划在设计期直接打回重试，不进入执行期。
-                from utils.json_fixer import validate_agent_steps, validate_tool_contracts
+                from utils.json_fixer import (
+                    validate_agent_steps,
+                    validate_tool_contracts,
+                    validate_plan_tools,
+                )
+
                 agent_ok, agent_error = validate_agent_steps(plan_data)
                 if not agent_ok:
-                    last_error = f"agent 步骤契约校验失败: {agent_error}"
-                    agent_contract_error = agent_error
-                    logger.error("{}", last_error)
-                    continue  # 重试
+                    _reject_plan(f"agent 步骤契约校验失败: {agent_error}")
+                    continue
                 tool_ok, tool_error = validate_tool_contracts(plan_data)
                 if not tool_ok:
-                    last_error = f"工具步骤契约校验失败: {tool_error}"
-                    agent_contract_error = tool_error
-                    logger.error("{}", last_error)
-                    continue  # 重试
+                    _reject_plan(f"工具步骤契约校验失败: {tool_error}")
+                    continue
+                reg_ok, reg_error = validate_plan_tools(plan_data, plan_allowed)
+                if not reg_ok:
+                    _reject_plan(f"工具注册表校验失败: {reg_error}")
+                    continue
                 
                 # 成功解析，构建 ExecutionPlan
                 from uuid import UUID, uuid4

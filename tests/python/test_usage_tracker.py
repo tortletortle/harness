@@ -116,4 +116,75 @@ def test_llmclient_hook_records_usage(tmp_usage_ws):
     summary = get_summary(plan_id="hook-plan")
     assert summary["calls"] == 1
     assert summary["total_tokens"] == 20
+    assert summary["cached_tokens"] == 0
     assert summary["recent"][0]["model"] == "m-1"
+
+
+def test_openai_nested_cached_tokens():
+    record_usage("openai", "gpt-4o", {
+        "prompt_tokens": 1000,
+        "completion_tokens": 50,
+        "prompt_tokens_details": {"cached_tokens": 800},
+    })
+    summary = get_summary()
+    assert summary["input_tokens"] == 1000
+    assert summary["cached_tokens"] == 800
+    assert summary["cache_write_tokens"] == 0
+    assert summary["cache_hit_rate"] == 0.8
+    assert summary["recent"][0]["cached_tokens"] == 800
+
+
+def test_deepseek_prompt_cache_hit_tokens():
+    record_usage("deepseek", "deepseek-chat", {
+        "prompt_tokens": 200,
+        "completion_tokens": 10,
+        "prompt_cache_hit_tokens": 150,
+    })
+    summary = get_summary()
+    assert summary["cached_tokens"] == 150
+    assert summary["cache_hit_rate"] == 0.75
+
+
+def test_anthropic_cache_read_counts_as_input():
+    record_usage("anthropic", "claude", {
+        "input_tokens": 20,
+        "output_tokens": 5,
+        "cache_read_input_tokens": 100,
+        "cache_creation_input_tokens": 30,
+    })
+    summary = get_summary()
+    assert summary["input_tokens"] == 150
+    assert summary["cached_tokens"] == 100
+    assert summary["cache_write_tokens"] == 30
+    assert summary["total_tokens"] == 155
+
+
+def test_legacy_usage_db_gains_cache_columns(tmp_path, monkeypatch):
+    import sqlite3
+    from utils.usage_tracker import close_thread_conn
+
+    close_thread_conn()
+    db_dir = tmp_path / "data" / "usage"
+    db_dir.mkdir(parents=True)
+    conn = sqlite3.connect(db_dir / "llm_usage.db")
+    conn.execute(
+        "CREATE TABLE llm_usage ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, provider TEXT, model TEXT, "
+        "phase TEXT, plan_id TEXT, input_tokens INTEGER, output_tokens INTEGER, total_tokens INTEGER)"
+    )
+    conn.execute(
+        "INSERT INTO llm_usage (ts, provider, model, phase, plan_id, input_tokens, output_tokens, total_tokens) "
+        "VALUES ('t', 'p', 'm', 'adhoc', NULL, 1, 1, 2)"
+    )
+    conn.commit()
+    conn.close()
+
+    record_usage("p", "m", {
+        "prompt_tokens": 10,
+        "completion_tokens": 1,
+        "prompt_tokens_details": {"cached_tokens": 4},
+    })
+    summary = get_summary()
+    assert summary["calls"] == 2
+    assert summary["cached_tokens"] == 4
+    close_thread_conn()

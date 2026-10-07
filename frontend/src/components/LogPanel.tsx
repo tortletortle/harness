@@ -34,7 +34,7 @@ export function LogPanel() {
   }, [autoScroll, visibleLogs]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#0b0d11]">
+    <div className="helm-log-panel flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-white/[0.07] px-4">
         <div className="flex items-center gap-2 text-[12px] font-medium text-zinc-200">
           <TerminalSquare className="h-3.5 w-3.5 text-emerald-300" />

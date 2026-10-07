@@ -26,6 +26,7 @@ import { apiClient } from '../api/client';
 import { useAppStore } from '../stores/appStore';
 import { usePlanPolling } from '../hooks/usePlanPolling';
 import { WorktreePanel } from './WorktreePanel';
+import { PlanFlowGraph } from './PlanFlowGraph';
 import type { ExecutionPlan, PlanStatus, Step, StepStatus } from '../types';
 
 const TERMINAL_PLAN_STATUSES: PlanStatus[] = ['Completed', 'Failed', 'Paused', 'RolledBack'];
@@ -42,31 +43,6 @@ const PLAN_STATUS_LABELS: Record<PlanStatus, string> = {
 };
 
 type ControlAction = 'pause' | 'resume' | 'input' | 'skip' | 'rollback' | 'replan' | null;
-
-/** 计算每个步骤的拓扑层级（依赖链长度）：同层步骤无依赖关系，可受控并行。 */
-function computeLevels(steps: Step[]): Map<string, number> {
-  const byId = new Map(steps.map((step) => [step.step_id, step]));
-  const levels = new Map<string, number>();
-  const visiting = new Set<string>();
-
-  const levelOf = (step: Step): number => {
-    if (levels.has(step.step_id)) return levels.get(step.step_id)!;
-    if (visiting.has(step.step_id)) return 0; // 环依赖已被后端拒绝，防御性回落
-    visiting.add(step.step_id);
-    const deps = step.depends_on || [];
-    let level = 0;
-    for (const dep of deps) {
-      const depStep = byId.get(dep);
-      if (depStep) level = Math.max(level, levelOf(depStep) + 1);
-    }
-    visiting.delete(step.step_id);
-    levels.set(step.step_id, level);
-    return level;
-  };
-
-  steps.forEach(levelOf);
-  return levels;
-}
 
 function isTerminalPlan(plan: ExecutionPlan): boolean {
   return plan.status ? TERMINAL_PLAN_STATUSES.includes(plan.status) : false;
@@ -101,7 +77,11 @@ export function PlanView() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [stepInputDraft, setStepInputDraft] = useState({ planId: '', stepId: '', text: '' });
   const [allExpanded, setAllExpanded] = useState(false);
-  const [graphView, setGraphView] = useState(false);
+  /** 默认流程图（Dify 风格节点连线）；可切回阶段列表。测试环境默认列表，避免 jsdom+ReactFlow 噪音。 */
+  const [viewMode, setViewMode] = useState<'flow' | 'list'>(
+    import.meta.env.MODE === 'test' ? 'list' : 'flow',
+  );
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   usePlanPolling();
 
   if (!currentPlan) {
@@ -111,7 +91,7 @@ export function PlanView() {
           <p className="mb-2">暂无执行计划</p>
           <button
             onClick={() => useAppStore.getState().setCurrentView('design')}
-            className="text-sm text-violet-300 transition-colors hover:text-violet-200"
+            className="text-sm helm-link"
           >
             去审批设计书
           </button>
@@ -372,29 +352,18 @@ export function PlanView() {
 
   const canRollback = (step: Step) => step.status === 'Success' || step.status === 'Failed';
 
-  // ===== WorkGraph 依赖可视化（1.15/1.16）=====
   const stepDeps = (step: Step): Step[] =>
     (step.depends_on || [])
       .map((depId) => allSteps.find((s) => s.step_id === depId))
       .filter((s): s is Step => Boolean(s));
   const hasDependencies = allSteps.some((step) => (step.depends_on || []).length > 0);
-  const levels = hasDependencies ? computeLevels(allSteps) : new Map<string, number>();
-  const maxLevel = hasDependencies ? Math.max(0, ...Array.from(levels.values())) : 0;
-  const levelBuckets: Step[][] = Array.from({ length: maxLevel + 1 }, (_, level) =>
-    allSteps
-      .filter((step) => (levels.get(step.step_id) ?? 0) === level)
-      .sort((a, b) => (a.branch_version ?? 1) - (b.branch_version ?? 1)),
-  );
-  const levelStatus = (steps: Step[]) => {
-    if (steps.some((step) => step.status === 'Failed')) return { label: '存在失败', tone: 'border-red-400/25 bg-red-400/10 text-red-200' };
-    if (steps.some((step) => step.status === 'Running' || step.status === 'Retry')) return { label: '执行中', tone: 'border-blue-400/25 bg-blue-400/10 text-blue-200' };
-    if (steps.every((step) => step.status === 'Success' || step.status === 'Skipped')) return { label: '已完成', tone: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' };
-    return { label: '就绪/等待', tone: 'border-white/[0.1] bg-white/[0.05] text-zinc-300' };
-  };
   const stepDepsLabel = (step: Step): string =>
     stepDeps(step)
       .map((dep, index) => `${index + 1}. ${dep.description}`)
       .join('\n');
+  const selectedStep = selectedStepId
+    ? allSteps.find((s) => s.step_id === selectedStepId) ?? null
+    : null;
 
   return (
     <div className="min-h-full px-4 py-6 sm:px-8 sm:py-8">
@@ -403,7 +372,7 @@ export function PlanView() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
               <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-violet-400/20 bg-violet-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-200">
+                <span className="helm-chip rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]">
                   执行计划
                 </span>
                 {planStatus && (
@@ -435,7 +404,7 @@ export function PlanView() {
                   onClick={() => void handleResume()}
                   disabled={controlInFlight !== null}
                   title="恢复执行"
-                  className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-violet-500 disabled:opacity-40"
+                  className="helm-btn-primary inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold disabled:opacity-40"
                 >
                   {controlInFlight === 'resume' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
                   恢复执行
@@ -456,7 +425,7 @@ export function PlanView() {
                 <button
                   onClick={() => void handleExecute()}
                   disabled={isExecuting || controlInFlight !== null}
-                  className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-3.5 py-2 text-xs font-semibold text-white shadow-lg shadow-violet-950/25 transition-colors hover:bg-violet-500 disabled:opacity-40"
+                  className="helm-btn-primary inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold disabled:opacity-40"
                 >
                   {isExecuting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
                   {isExecuting ? '执行中...' : planStatus === 'Failed' ? '重试执行' : '开始执行'}
@@ -465,7 +434,7 @@ export function PlanView() {
             </div>
           </div>
 
-          <div className="mt-4 grid max-w-md grid-cols-3 gap-2">
+          <div className="helm-plan-mini-metrics mt-4 grid max-w-md grid-cols-3 gap-2">
             <div className="rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 py-2">
               <div className="text-[10px] text-zinc-600">完成数</div>
               <div className="mt-1 text-sm font-semibold text-emerald-300">{completedSteps}<span className="ml-1 text-[10px] font-normal text-zinc-600">/ {totalSteps}</span></div>
@@ -483,7 +452,7 @@ export function PlanView() {
           {hasProgress && (
             <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/[0.07]">
               <div
-                className={`h-full rounded-full transition-all duration-500 ${failedSteps ? 'bg-red-400' : 'bg-gradient-to-r from-violet-500 to-indigo-400'}`}
+                className={`h-full rounded-full transition-all duration-500 ${failedSteps ? 'bg-red-400' : 'bg-gradient-to-r from-teal-600 to-emerald-300'}`}
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
@@ -507,12 +476,12 @@ export function PlanView() {
                 planId: currentPlan.plan_id, stepId: inputTargetStepId, text: event.target.value,
               })}
               disabled={controlInFlight !== null}
-              className="mt-2 w-full resize-y rounded-lg border border-white/[0.12] bg-black/25 p-3 text-sm text-white outline-none focus:border-violet-400 disabled:opacity-40"
+              className="helm-field mt-2 w-full resize-y rounded-lg border border-white/[0.12] bg-black/25 p-3 text-sm text-white outline-none disabled:opacity-40"
             />
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <button type="button" onClick={() => void handleSupplyInput()}
                 disabled={!inputDraft.trim() || controlInFlight !== null}
-                className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-40">
+                className="helm-btn-primary rounded-lg px-4 py-2 text-xs font-semibold disabled:opacity-40">
                 {controlInFlight === 'input' ? '保存中...' : '保存补充信息'}
               </button>
               <p className="text-xs text-zinc-400">保存后仍需点击上方「恢复执行」；不会自动执行步骤。</p>
@@ -520,67 +489,57 @@ export function PlanView() {
           </section>
         )}
 
-        <WorktreePanel planId={currentPlan.plan_id} planStatus={planStatus} />
-
+        <div className="helm-plan-body">
+          <div className="helm-plan-context"><WorktreePanel planId={currentPlan.plan_id} planStatus={planStatus} /></div>
+          <div className="helm-plan-steps">
         {totalSteps === 0 ? (
           <div className="rounded-xl border border-dashed border-amber-400/20 bg-amber-400/[0.04] p-6 text-center text-sm text-zinc-400">这个计划还没有可执行步骤。</div>
-        ) : hasDependencies && graphView ? (
+        ) : viewMode === 'flow' ? (
           <div>
-            <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-xs text-zinc-500">
-                <GitBranch className="h-3.5 w-3.5 text-violet-300" />
-                依赖分层视图 · 同层步骤无依赖关系，可并行执行
+                <GitBranch className="h-3.5 w-3.5 helm-accent" />
+                流程图 · 节点=步骤，箭头=依赖
+                {hasDependencies ? '（可并行同层）' : '（按顺序）'}
               </div>
-              <button type="button" onClick={() => setGraphView(false)} className="text-xs text-violet-300 hover:text-violet-200">返回列表视图</button>
+              <button type="button" onClick={() => setViewMode('list')} className="text-xs helm-link">
+                阶段列表
+              </button>
             </div>
-            <div className="space-y-3">
-              {levelBuckets.map((bucket, level) => {
-                const meta = levelStatus(bucket);
-                return (
-                  <div key={level} className="rounded-xl border border-white/[0.08] bg-[#111419]/90 p-4">
-                    <div className="mb-3 flex items-center gap-2">
-                      <span className="rounded-md border border-violet-400/20 bg-violet-400/10 px-2 py-0.5 text-[10px] font-semibold text-violet-200">层级 {level + 1}</span>
-                      <span className={`rounded-full border px-2 py-0.5 text-[10px] ${meta.tone}`}>{meta.label}</span>
-                      <span className="text-[11px] text-zinc-600">{bucket.length} 个步骤</span>
-                      {level > 0 && <span className="text-[11px] text-zinc-700">← 依赖上一层完成</span>}
-                    </div>
-                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {bucket.map((step) => {
-                        const status = step.status ?? 'Pending';
-                        return (
-                          <div key={step.step_id} className={`rounded-lg border border-white/[0.07] border-l-2 bg-black/20 p-3 ${stepBorder(status)}`}>
-                            <div className="flex items-center gap-2">
-                              {stepIcon(status)}
-                              <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-100">{step.description}</span>
-                            </div>
-                            <div className="mt-2 flex items-center justify-between gap-2">
-                              <span className="rounded-md border border-violet-400/15 bg-violet-400/[0.08] px-1.5 py-0.5 text-[10px] text-violet-200">{step.tool}</span>
-                              <span className="font-mono text-[10px] text-zinc-600">{String(step.order ?? '').padStart(2, '0')}</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <PlanFlowGraph steps={allSteps} onSelectStep={setSelectedStepId} />
+            {selectedStep && (
+              <div className="mt-3 rounded-xl border border-white/[0.08] bg-[#111419]/90 p-4 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  {stepIcon(selectedStep.status ?? 'Pending')}
+                  <span className="font-medium text-white">{selectedStep.description}</span>
+                  <span className="helm-chip rounded-md px-1.5 py-0.5 text-[10px]">{selectedStep.tool}</span>
+                </div>
+                {(selectedStep.depends_on || []).length > 0 && (
+                  <p className="mt-2 whitespace-pre-wrap text-xs text-zinc-500" title={stepDepsLabel(selectedStep)}>
+                    依赖：{stepDeps(selectedStep).map((d) => d.description).join(' → ') || selectedStep.depends_on?.join(', ')}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div>
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="text-xs text-zinc-500">阶段列表</div>
               <div className="flex items-center gap-3">
-                {hasDependencies && (
-                  <button type="button" onClick={() => setGraphView(true)} className="inline-flex items-center gap-1.5 text-xs text-violet-300 hover:text-violet-200">
-                    <GitBranch className="h-3.5 w-3.5" />依赖分层视图
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setViewMode('flow')}
+                  className="inline-flex items-center gap-1.5 text-xs helm-link"
+                >
+                  <GitBranch className="h-3.5 w-3.5" />
+                  流程图
+                </button>
                 <button type="button" onClick={() => {
                   const next = !allExpanded;
                   setAllExpanded(next);
                   setExpandedSegments(next ? new Set(currentPlan.segments.map((segment) => segment.segment_id)) : new Set());
-                }} className="text-xs text-violet-300 hover:text-violet-200">{allExpanded ? '全部收起' : '全部展开'}</button>
+                }} className="text-xs helm-link">{allExpanded ? '全部收起' : '全部展开'}</button>
               </div>
             </div>
             <div className="relative space-y-3 pl-0 before:absolute before:bottom-5 before:left-[13px] before:top-5 before:hidden before:w-px before:bg-white/[0.08] sm:pl-7 sm:before:block">
@@ -629,7 +588,7 @@ export function PlanView() {
                                     <span className="font-mono text-[10px] text-zinc-600">{String(stepIndex + 1).padStart(2, '0')}</span>
                                     <h4 className="text-sm font-medium text-zinc-100">{step.description}</h4>
                                   </div>
-                                  <span className="mt-1 inline-flex rounded-md border border-violet-400/15 bg-violet-400/[0.08] px-2 py-0.5 text-[10px] text-violet-200">{step.tool}</span>
+                                  <span className="helm-chip mt-1 inline-flex rounded-md px-2 py-0.5 text-[10px]">{step.tool}</span>
                                   {(step.depends_on || []).length > 0 && (
                                     <span
                                       title={stepDepsLabel(step)}
@@ -694,6 +653,8 @@ export function PlanView() {
             </div>
           </div>
         )}
+          </div>
+        </div>
       </div>
 
       {rollbackTarget && (

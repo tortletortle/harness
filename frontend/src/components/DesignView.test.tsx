@@ -16,6 +16,7 @@ import { apiClient } from '../api/client';
 vi.mock('../api/client', () => ({
   apiClient: {
     approveDesign: vi.fn(),
+    fulfillDesignTools: vi.fn(),
   },
 }));
 
@@ -79,5 +80,56 @@ describe('DesignView secrets_prompt 处理', () => {
 
     await waitFor(() => expect(useAppStore.getState().currentPlan).toBeTruthy());
     expect(open).not.toHaveBeenCalled();
+  });
+
+  it('有缺失工具时显示重试补齐，批准仍可点', async () => {
+    useAppStore.setState({
+      currentDesign: {
+        ...design,
+        part2: {
+          ...design.part2,
+          missing_tools: [{ tool_id: 'csv_convert', purpose: '导出' }],
+        },
+      },
+    });
+    vi.mocked(apiClient.fulfillDesignTools).mockResolvedValue({
+      design: {
+        ...design,
+        part2: { ...design.part2, missing_tools: [] },
+      },
+      missing_tools: [],
+      ready: true,
+    } as any);
+
+    render(<DesignView />);
+    expect(screen.getByRole('button', { name: '批准并生成计划' })).not.toBeDisabled();
+    expect(screen.getByText(/还有 1 个工具未就绪/)).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole('button', { name: '重试补齐工具' }));
+    await waitFor(() => expect(apiClient.fulfillDesignTools).toHaveBeenCalledWith('design-1'));
+    await waitFor(() =>
+      expect(useAppStore.getState().currentDesign?.part2?.missing_tools?.length ?? -1).toBe(0),
+    );
+  });
+
+  it('批准返回 toolsIncomplete 时刷新设计书', async () => {
+    vi.mocked(apiClient.approveDesign).mockResolvedValue({
+      toolsIncomplete: true,
+      message: '工具未齐：csv_convert',
+      missing_tools: ['csv_convert'],
+      design: {
+        ...design,
+        part2: {
+          ...design.part2,
+          missing_tools: [{ tool_id: 'csv_convert', purpose: '导出' }],
+        },
+      },
+    } as any);
+
+    render(<DesignView />);
+    await userEvent.setup().click(screen.getByRole('button', { name: '批准并生成计划' }));
+    await waitFor(() =>
+      expect(useAppStore.getState().currentDesign?.part2?.missing_tools?.[0]?.tool_id).toBe('csv_convert'),
+    );
+    expect(useAppStore.getState().currentPlan).toBeNull();
   });
 });

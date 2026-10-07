@@ -43,6 +43,42 @@ from logging_config import get_logger
 logger = get_logger(__name__)
 
 
+def step_tool_id(raw_tool: Any) -> str:
+    """计划步骤 tool 字段 → 主工具 id（去掉 instruction 后缀）。"""
+    return str(raw_tool or "").split(":")[0].strip()
+
+
+def tool_is_resolvable(
+    tool_id: str,
+    *,
+    tool_registry: Any = None,
+    capability_registry: Any = None,
+) -> bool:
+    """执行前：工具必须在 ToolRegistry 或 CapabilityRegistry 中（工具优先 + fail-closed）。"""
+    tid = str(tool_id or "").strip()
+    if not tid:
+        return False
+    if tool_registry is not None:
+        tools = getattr(tool_registry, "tools", None) or {}
+        aliases = getattr(tool_registry, "aliases", None) or {}
+        if tid in tools or tid in aliases:
+            return True
+        resolve = getattr(tool_registry, "resolve_alias", None)
+        if callable(resolve):
+            try:
+                if resolve(tid) in tools:
+                    return True
+            except Exception:
+                pass
+    if capability_registry is not None:
+        try:
+            if capability_registry.get(tid) is not None:
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def _is_retryable_exit_code_acceptance(step: Dict[str, Any], result: Dict[str, Any]) -> bool:
     """Return true only for a transient command exit-code mismatch."""
     if step.get("tool") != "command_runner" or not isinstance(result, dict):
@@ -338,7 +374,30 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
     # ===== P0-a 工具级审批闸门 =====
     # 高风险工具在执行前挂起等待人工批准（Cline 式 asyncio.Event 挂起，非轮询）。
     # 拒绝/超时 → 返回结构化 blocked 结果，由调用方走 Failed 路径（重试无意义）。
-    tool_id_for_approval = str(step.get("tool", "")).split(":")[0]
+    tool_id_for_approval = step_tool_id(step.get("tool"))
+    # 未知工具：在审批/Grant 之前 fail-closed，避免对不存在的 id 等人批。
+    if not tool_is_resolvable(
+        tool_id_for_approval,
+        tool_registry=getattr(state, "tool_registry", None),
+        capability_registry=getattr(state, "capability_registry", None),
+    ):
+        logger.error("步骤 {} 工具未注册: {}", step_id, tool_id_for_approval)
+        state.database.add_step_event(
+            step_id, plan_id, "tool_unregistered",
+            {"tool_id": tool_id_for_approval},
+            branch_version=step_model.branch_version,
+        )
+        return {
+            "success": False,
+            "output": None,
+            "check_status": "unverified",
+            "check_passed": False,
+            "error": f"工具未注册，无法执行: {tool_id_for_approval or '(空)'}",
+            "blocked": True,
+            "blocked_reason": "tool_unregistered",
+            "retryable": False,
+            "duration_ms": 0,
+        }
     step_capability = (
         state.capability_registry.get(tool_id_for_approval)
         if state.capability_registry is not None

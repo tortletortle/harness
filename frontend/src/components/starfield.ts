@@ -15,7 +15,7 @@ export function startStarfield(canvas: HTMLCanvasElement): Starfield {
   var ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
   var dpr = Math.min(window.devicePixelRatio || 1, 2);
   var W = 0, H = 0, raf = 0, start = performance.now(), last = start;
-  var hues = ['255,255,255', '255,255,255', '200,215,255', '190,180,255', '160,210,255', '255,236,210'];
+  var hues = ['255,255,255', '255,255,255', '180,230,215', '160,220,200', '160,210,210', '255,236,210'];
   var stars: Star[] = [];
   var meteors: Meteor[] = [];
   var nextMeteor = 700;

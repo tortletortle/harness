@@ -95,7 +95,7 @@ def _snapshot(merged, revision, runtime, directory: Path):
     models = _public_models(merged)
     overridden = [p for p in urls if os.getenv(f"EAS_LLM_BASE_URL_{p.upper()}")]
     effective_urls = {p: os.getenv(f"EAS_LLM_BASE_URL_{p.upper()}") or url for p, url in urls.items()}
-    env_configured = {p: bool(os.getenv(f"EAS_LLM_API_KEY_{p.upper()}")) for p in urls}
+    env_configured = {p: bool(os.getenv(secret_store.env_key_name(p))) for p in urls}
     # Persisted keys live in an encrypted, account-local file; report only
     # presence, never the value, and never let a read failure break the page.
     try:
@@ -108,6 +108,7 @@ def _snapshot(merged, revision, runtime, directory: Path):
         "api_keys_configured": {p: env_configured[p] or p in persisted for p in urls},
         "api_keys_persisted": {p: p in persisted and not env_configured[p] for p in urls},
         "environment_overrides": overridden,
+        "api_key_environment_overrides": [p for p, flag in env_configured.items() if flag],
         "requires_restart": effective_urls != runtime.get("base_urls", {}) or models != _public_models(runtime),
     }
 
@@ -123,7 +124,7 @@ def save_api_key(directory: Path, request: KeyUpdateRequest):
         except secret_store.SecretStoreError as exc:
             raise ConfigProblem(str(exc), exc.status) from None
         value = request.value.strip()
-        env_set = bool(os.getenv(f"EAS_LLM_API_KEY_{request.provider.upper()}"))
+        env_set = bool(os.getenv(secret_store.env_key_name(request.provider)))
         return {
             "provider": request.provider,
             "persisted": bool(value),

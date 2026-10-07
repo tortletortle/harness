@@ -2401,12 +2401,10 @@ impl eframe::App for EasApp {
                             if ui
                                 .add_sized(
                                     [40.0, 40.0],
-                                    egui::Button::new(
-                                        egui::RichText::new(egui_phosphor::regular::GEAR)
-                                            .size(17.0)
-                                            .color(egui::Color32::LIGHT_GRAY),
-                                    )
-                                    .frame(false),
+                                    theme::activity_button(
+                                        egui_phosphor::regular::GEAR,
+                                        self.settings_open,
+                                    ),
                                 )
                                 .on_hover_text("设置")
                                 .clicked()

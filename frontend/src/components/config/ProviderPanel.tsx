@@ -113,6 +113,7 @@ export function ProviderPanel({
   const keyConfigured = !!baseline.api_keys_configured[name];
   const keyPersisted = !!baseline.api_keys_persisted?.[name];
   const envOverride = !!baseline.environment_overrides?.includes(name);
+  const keyEnvOverride = !!baseline.api_key_environment_overrides?.includes(name);
   const preset = matchPreset(url) || presetById(name);
   const pendingKey = keyDraft.trim().length > 0;
   const needsSave = dirty || pendingKey;
@@ -305,7 +306,7 @@ export function ProviderPanel({
           )}
           {envOverride && (
             <span className="mc-inline-warning">
-              环境变量 {envUrlName(name)} 优先于此地址；修改后可能不会生效。
+              环境变量 {envUrlName(name)} 正在覆盖此地址。点底部「保存配置」会改用输入框中的地址，并停用 .env 中的对应项。
             </span>
           )}
           {preset && !url.trim() && preset.baseUrl && (
@@ -368,9 +369,14 @@ export function ProviderPanel({
             )}
           </div>
           <p className="mc-field-note">
-            仅在后台加密落盘、不回显；环境变量优先。保存后需重启后台。
+            仅在后台加密落盘、不回显。保存后立即用于当前会话。
             {isNew ? ' 新提供商会在「保存并检测」时先保存配置，再保存密钥。' : ''}
           </p>
+          {keyEnvOverride && (
+            <span className="mc-inline-warning">
+              环境变量 {envKeyName(name)} 正在覆盖配置页密钥。点「保存」会改用你刚输入的密钥，并停用 .env 中的对应项。
+            </span>
+          )}
           {keyState?.message && (
             <p
               className={keyState.failed ? 'mc-field-error' : 'mc-key-confirm'}

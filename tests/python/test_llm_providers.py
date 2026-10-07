@@ -163,6 +163,25 @@ async def test_openai_chat_converts_messages_and_usage():
     ]
 
 
+async def test_openai_chat_forwards_cached_tokens():
+    provider = _openai_with_mock_client()
+    fake_choice = MagicMock()
+    fake_choice.message.content = "hello"
+    fake_choice.finish_reason = "stop"
+    details = MagicMock()
+    details.cached_tokens = 7
+    fake_response = MagicMock()
+    fake_response.choices = [fake_choice]
+    fake_response.usage = MagicMock(
+        prompt_tokens=10, completion_tokens=20, prompt_tokens_details=details,
+    )
+    provider.client.chat.completions.create = AsyncMock(return_value=fake_response)
+
+    response = await provider.chat([Message(role="user", content="q")], model="gpt-x")
+    assert response.usage["prompt_tokens"] == 10
+    assert response.usage["prompt_tokens_details"]["cached_tokens"] == 7
+
+
 async def test_openai_chat_error_wrapped():
     provider = _openai_with_mock_client()
     provider.client.chat.completions.create = AsyncMock(side_effect=RuntimeError("boom"))

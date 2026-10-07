@@ -9,10 +9,10 @@
   --mc-input: #0c1119;
   --mc-soft: #1a2230;
   --mc-border: #354155;
-  --mc-brand: #c0b3ff;
-  --mc-brand-soft: #26243c;
-  --mc-action: #b9a8ff;
-  --mc-on-action: #19112f;
+  --mc-brand: #77e2c4;
+  --mc-brand-soft: rgba(80, 216, 183, .13);
+  --mc-action: #64dbb8;
+  --mc-on-action: #08251f;
   --mc-warning: #f1c681;
   --mc-warning-soft: #30291d;
   --mc-success: #8bddb5;
@@ -29,9 +29,9 @@
   --mc-input: #f7f9fd;
   --mc-soft: #f0f3f8;
   --mc-border: #ccd5e2;
-  --mc-brand: #6043c5;
-  --mc-brand-soft: #f1edff;
-  --mc-action: #6448ce;
+  --mc-brand: #0d826b;
+  --mc-brand-soft: #e1f5ee;
+  --mc-action: #12866d;
   --mc-on-action: #ffffff;
   --mc-warning: #81500c;
   --mc-warning-soft: #fff5e2;
@@ -217,6 +217,12 @@
   background: var(--mc-action);
   border-color: var(--mc-action);
   color: var(--mc-on-action);
+}
+.mc-button.mc-save:disabled {
+  background: var(--mc-soft);
+  border-color: var(--mc-border);
+  color: var(--mc-muted);
+  opacity: 1;
 }
 .mc-button.mc-ghost {
   background: transparent;

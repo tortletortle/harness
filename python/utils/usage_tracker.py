@@ -73,10 +73,25 @@ def _get_conn() -> sqlite3.Connection:
         "CREATE TABLE IF NOT EXISTS llm_usage ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
         "ts TEXT, provider TEXT, model TEXT, phase TEXT, plan_id TEXT, "
-        "input_tokens INTEGER, output_tokens INTEGER, total_tokens INTEGER)"
+        "input_tokens INTEGER, output_tokens INTEGER, total_tokens INTEGER, "
+        "cached_tokens INTEGER, cache_write_tokens INTEGER)"
     )
+    _ensure_cache_columns(conn)
     _local.conn_info = (path, conn)
     return conn
+
+
+def _ensure_cache_columns(conn: sqlite3.Connection) -> None:
+    """旧库补列：缓存命中 / 写入缓存。失败忽略，记账仍走原三列。"""
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(llm_usage)").fetchall()}
+        if "cached_tokens" not in cols:
+            conn.execute("ALTER TABLE llm_usage ADD COLUMN cached_tokens INTEGER DEFAULT 0")
+        if "cache_write_tokens" not in cols:
+            conn.execute("ALTER TABLE llm_usage ADD COLUMN cache_write_tokens INTEGER DEFAULT 0")
+        conn.commit()
+    except Exception as e:
+        logger.debug("usage 补列失败（忽略）: {}", e)
 
 
 def close_thread_conn() -> None:
@@ -98,16 +113,69 @@ def _to_int(value: Any) -> int:
         return 0
 
 
+def _as_usage_dict(usage: Any) -> Dict[str, Any]:
+    if usage is None:
+        return {}
+    if isinstance(usage, dict):
+        return usage
+    dumped = getattr(usage, "model_dump", None)
+    if callable(dumped):
+        try:
+            data = dumped()
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    raw = getattr(usage, "__dict__", None)
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _nested_int(obj: Any, *keys: str) -> int:
+    cur: Any = obj
+    for key in keys:
+        if not isinstance(cur, dict):
+            return 0
+        cur = cur.get(key)
+    return _to_int(cur)
+
+
+def _extract_cache_tokens(usage: Dict[str, Any]) -> tuple:
+    """从各家 usage 里抽出缓存命中 / 写入。
+
+    OpenAI / 多数网关：prompt_tokens_details.cached_tokens（含在 prompt_tokens 内）
+    DeepSeek：prompt_cache_hit_tokens
+    Anthropic：cache_read_input_tokens / cache_creation_input_tokens
+    """
+    cached = max(
+        _to_int(usage.get("cached_tokens")),
+        _to_int(usage.get("prompt_cache_hit_tokens")),
+        _to_int(usage.get("cache_read_input_tokens")),
+        _nested_int(usage, "prompt_tokens_details", "cached_tokens"),
+        _nested_int(usage, "input_tokens_details", "cached_tokens"),
+    )
+    write = max(
+        _to_int(usage.get("cache_write_tokens")),
+        _to_int(usage.get("cache_creation_input_tokens")),
+        _nested_int(usage, "cache_creation", "ephemeral_5m_input_tokens")
+        + _nested_int(usage, "cache_creation", "ephemeral_1h_input_tokens"),
+    )
+    return cached, write
+
+
 def _normalize_tokens(usage: Any) -> tuple:
     """归一化 OpenAI（prompt/completion/total）与 Anthropic（input/output）两种口径。"""
-    if usage is None:
-        usage = {}
-    if not isinstance(usage, dict):
-        usage = dict(getattr(usage, "__dict__", {}) or {})
+    usage = _as_usage_dict(usage)
     input_t = _to_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
     output_t = _to_int(usage.get("completion_tokens") or usage.get("output_tokens"))
+    cached_t, write_t = _extract_cache_tokens(usage)
+    # Anthropic：input_tokens 通常不含 cache_read；把命中/写入加进输入总量，方便对照。
+    if "prompt_tokens" not in usage and (
+        usage.get("cache_read_input_tokens") is not None
+        or usage.get("cache_creation_input_tokens") is not None
+    ):
+        input_t = input_t + cached_t + write_t
     total = _to_int(usage.get("total_tokens")) or (input_t + output_t)
-    return input_t, output_t, total
+    return input_t, output_t, total, cached_t, write_t
 
 
 def record_usage(
@@ -119,7 +187,7 @@ def record_usage(
 ) -> None:
     """记录一次 LLM 调用的 token 用量。永不抛异常。"""
     try:
-        input_t, output_t, total = _normalize_tokens(usage)
+        input_t, output_t, total, cached_t, write_t = _normalize_tokens(usage)
         ctx = get_context()
         phase = phase or ctx.get("phase") or "adhoc"
         plan_id = plan_id or ctx.get("plan_id")
@@ -128,9 +196,11 @@ def record_usage(
             conn = _get_conn()
             conn.execute(
                 "INSERT INTO llm_usage (ts, provider, model, phase, plan_id, "
-                "input_tokens, output_tokens, total_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "input_tokens, output_tokens, total_tokens, cached_tokens, cache_write_tokens) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (ts, str(provider or ""), str(model or ""), str(phase),
-                 str(plan_id) if plan_id else None, input_t, output_t, total),
+                 str(plan_id) if plan_id else None, input_t, output_t, total,
+                 cached_t, write_t),
             )
             conn.commit()
     except Exception as e:  # 观察性副作用：失败只记日志
@@ -159,7 +229,8 @@ def get_summary(plan_id: Optional[str] = None, limit: int = 50) -> Dict[str, Any
     params = (str(plan_id),) if plan_id else ()
     row = conn.execute(
         f"SELECT COUNT(*), COALESCE(SUM(input_tokens), 0), "
-        f"COALESCE(SUM(output_tokens), 0), COALESCE(SUM(total_tokens), 0) "
+        f"COALESCE(SUM(output_tokens), 0), COALESCE(SUM(total_tokens), 0), "
+        f"COALESCE(SUM(cached_tokens), 0), COALESCE(SUM(cache_write_tokens), 0) "
         f"FROM llm_usage {where}",
         params,
     ).fetchone()
@@ -176,20 +247,30 @@ def get_summary(plan_id: Optional[str] = None, limit: int = 50) -> Dict[str, Any
             "ts": r[0], "provider": r[1], "model": r[2], "phase": r[3],
             "plan_id": r[4], "input_tokens": int(r[5] or 0),
             "output_tokens": int(r[6] or 0), "total_tokens": int(r[7] or 0),
+            "cached_tokens": int(r[8] or 0), "cache_write_tokens": int(r[9] or 0),
         }
         for r in conn.execute(
             f"SELECT ts, provider, model, phase, plan_id, input_tokens, "
-            f"output_tokens, total_tokens FROM llm_usage {where} "
+            f"output_tokens, total_tokens, "
+            f"COALESCE(cached_tokens, 0), COALESCE(cache_write_tokens, 0) "
+            f"FROM llm_usage {where} "
             f"ORDER BY id DESC LIMIT {int(limit)}",
             params,
         ).fetchall()
     ]
+    input_tokens = int(row[1] or 0)
+    cached_tokens = int(row[4] or 0)
+    cache_write_tokens = int(row[5] or 0)
+    hit_rate = (cached_tokens / input_tokens) if input_tokens > 0 else 0.0
     return {
         "plan_id": plan_id,
         "calls": int(row[0] or 0),
-        "input_tokens": int(row[1] or 0),
+        "input_tokens": input_tokens,
         "output_tokens": int(row[2] or 0),
         "total_tokens": int(row[3] or 0),
+        "cached_tokens": cached_tokens,
+        "cache_write_tokens": cache_write_tokens,
+        "cache_hit_rate": round(min(1.0, hit_rate), 4),
         "by_phase": by_phase,
         "recent": recent,
     }

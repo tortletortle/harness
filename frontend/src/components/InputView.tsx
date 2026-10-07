@@ -85,7 +85,7 @@ export function InputView() {
     <div className="min-h-full px-4 py-8 sm:px-8 sm:py-12">
       <div className="mx-auto max-w-5xl">
         <section className="mb-8 max-w-2xl">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-violet-400/20 bg-violet-400/10 px-3 py-1.5 text-[11px] font-medium text-violet-200">
+          <div className="helm-chip mb-4 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-medium">
             <Sparkles className="h-3.5 w-3.5" />
             从需求到可执行计划
           </div>
@@ -101,7 +101,7 @@ export function InputView() {
           <form onSubmit={handleSubmit} className="panel-surface overflow-hidden shadow-2xl shadow-black/10">
             <div className="border-b border-white/[0.07] px-5 py-4 sm:px-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-500/15 text-violet-300">
+                <div className="helm-icon-well flex h-9 w-9 items-center justify-center rounded-xl">
                   <FileText className="h-4 w-4" />
                 </div>
                 <div>
@@ -115,8 +115,14 @@ export function InputView() {
               <textarea
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    void runDesign();
+                  }
+                }}
                 placeholder="描述你想要实现的功能和技术要求..."
-                className="min-h-[250px] w-full resize-none rounded-xl border border-white/[0.1] bg-black/20 p-4 text-sm leading-6 text-white placeholder:text-zinc-600 transition-colors focus:border-violet-400/60 focus:bg-black/30 focus:outline-none sm:min-h-[300px]"
+                className="helm-field min-h-[250px] w-full resize-none rounded-xl border border-white/[0.1] bg-black/20 p-4 text-sm leading-6 text-white placeholder:text-zinc-600 transition-colors focus:bg-black/30 focus:outline-none sm:min-h-[300px]"
                 disabled={isLoading}
               />
 
@@ -126,7 +132,7 @@ export function InputView() {
               </div>
 
               <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <span className="text-xs text-zinc-600">⌘ Enter 也可以提交设计书</span>
+                <span className="text-xs text-zinc-600">{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctrl Enter'} 也可以提交设计书</span>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <button
                     type="button"
@@ -141,7 +147,7 @@ export function InputView() {
                   <button
                     type="submit"
                     disabled={isLoading || !inputText.trim()}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-violet-950/30 transition-all hover:bg-violet-500 disabled:cursor-not-allowed disabled:bg-white/[0.07] disabled:text-zinc-600 disabled:shadow-none"
+                    className="helm-btn-primary inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold disabled:cursor-not-allowed"
                   >
                     {isLoading ? (
                       <>
@@ -168,14 +174,14 @@ export function InputView() {
                   {quickResult.mode === 'graph' ? (
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-xs leading-5 text-zinc-400">
-                        识别为<span className="mx-1 text-violet-300">开发任务</span>
+                        识别为<span className="mx-1 helm-accent">开发任务</span>
                         <span className="text-zinc-600">{quickResult.reason}</span>
                       </div>
                       <button
                         type="button"
                         onClick={() => void runDesign()}
                         disabled={isLoading}
-                        className="shrink-0 rounded-lg bg-violet-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-violet-500 disabled:opacity-40"
+                        className="helm-btn-primary shrink-0 rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-40"
                       >
                         进入设计书流程
                       </button>
@@ -215,7 +221,7 @@ export function InputView() {
           <aside className="space-y-4">
             <div className="rounded-xl border border-white/[0.08] bg-white/[0.025] p-4">
               <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-zinc-300">
-                <Sparkles className="h-3.5 w-3.5 text-violet-300" />
+                <Sparkles className="h-3.5 w-3.5 helm-accent" />
                 试试这样描述
               </div>
               <div className="space-y-2">
@@ -225,10 +231,10 @@ export function InputView() {
                     type="button"
                     onClick={() => setInputText(example)}
                     disabled={isLoading}
-                    className="group w-full rounded-lg border border-white/[0.07] bg-black/15 p-3 text-left text-xs leading-5 text-zinc-400 transition-colors hover:border-violet-400/30 hover:bg-violet-400/[0.06] hover:text-zinc-200 disabled:opacity-40"
+                    className="helm-hover-brand group w-full rounded-lg border border-white/[0.07] bg-black/15 p-3 text-left text-xs leading-5 text-zinc-400 transition-colors hover:text-zinc-200 disabled:opacity-40"
                   >
                     <span>{example}</span>
-                    <ArrowUpRight className="mt-1 h-3.5 w-3.5 text-zinc-700 transition-colors group-hover:text-violet-300" />
+                    <ArrowUpRight className="mt-1 h-3.5 w-3.5 text-zinc-700 transition-colors group-hover:text-[var(--app-brand)]" />
                   </button>
                 ))}
               </div>

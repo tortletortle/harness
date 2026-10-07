@@ -14,8 +14,8 @@ export function buildHelmSvg(): string {
   var s: string = '';
   s += '<svg class="helm-w" viewBox="0 0 240 240" aria-hidden="true">';
   s += '<defs>'
-    + '<linearGradient id="hw-metal" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="var(--app-brand)"/><stop offset="55%" stop-color="#6f86ff"/><stop offset="100%" stop-color="#47bfff"/></linearGradient>'
-    + '<linearGradient id="hw-spoke" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#47bfff"/><stop offset="100%" stop-color="var(--app-brand)"/></linearGradient>'
+    + '<linearGradient id="hw-metal" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="var(--app-brand)"/><stop offset="55%" stop-color="#47d4b0"/><stop offset="100%" stop-color="#7ce5c8"/></linearGradient>'
+    + '<linearGradient id="hw-spoke" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#7ce5c8"/><stop offset="100%" stop-color="var(--app-brand)"/></linearGradient>'
     + '<radialGradient id="hw-hub" cx="50%" cy="40%" r="60%"><stop offset="0%" stop-color="var(--app-brand-soft)"/><stop offset="100%" stop-color="var(--app-bg)"/></radialGradient>'
     + '<filter id="hw-glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>'
     + '</defs>';

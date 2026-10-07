@@ -17,6 +17,8 @@ export interface UsageRecord {
   input_tokens: number;
   output_tokens: number;
   total_tokens: number;
+  cached_tokens: number;
+  cache_write_tokens: number;
 }
 
 export interface UsageSummary {
@@ -25,6 +27,9 @@ export interface UsageSummary {
   input_tokens: number;
   output_tokens: number;
   total_tokens: number;
+  cached_tokens: number;
+  cache_write_tokens: number;
+  cache_hit_rate: number;
   by_phase: { phase: string; total_tokens: number; calls: number }[];
   recent: UsageRecord[];
   budget_max_tokens_per_plan: number;

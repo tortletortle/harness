@@ -4,21 +4,22 @@
 
 :root {
   color-scheme: dark;
-  --app-bg: #08090b;
-  --app-surface: #101216;
-  --app-surface-raised: #15181e;
-  --app-surface-soft: #1b1f27;
-  --app-border: rgba(255, 255, 255, 0.09);
-  --app-border-strong: rgba(255, 255, 255, 0.15);
-  --app-text: #f4f5f7;
-  --app-text-muted: #9aa1ad;
-  --app-text-subtle: #68707d;
-  --app-brand: #8b7cff;
-  --app-brand-soft: rgba(139, 124, 255, 0.15);
-  --app-success: #42d392;
-  --app-warning: #f0b35b;
+  --app-bg: #090d13;
+  --app-surface: #11161e;
+  --app-surface-raised: #161c26;
+  --app-surface-soft: #1b2330;
+  --app-border: #222b36;
+  --app-border-strong: #33414f;
+  --app-text: #ecf4f2;
+  --app-text-muted: #94a4ad;
+  --app-text-subtle: #65727f;
+  --app-brand: #56d9b8;
+  --app-brand-soft: rgba(80, 216, 183, 0.12);
+  --app-success: #56d9b8;
+  --app-warning: #dda856;
   --app-danger: #f07178;
-  --app-radius: 12px;
+  --app-radius: 10px;
+  --app-on-brand: #062118;
 }
 
 * {
@@ -61,7 +62,7 @@ button:disabled {
 
 ::selection {
   color: #fff;
-  background: rgba(139, 124, 255, 0.4);
+  background: rgba(46, 139, 116, 0.55);
 }
 
 :focus-visible {
@@ -96,19 +97,19 @@ button:disabled {
   /* 暗色主题：淡淡的星点 + 网格，呼应开屏星空 */
   background-image:
     radial-gradient(1px 1px at 23px 41px, rgba(255, 255, 255, 0.35), transparent 60%),
-    radial-gradient(1px 1px at 137px 89px, rgba(200, 215, 255, 0.28), transparent 60%),
-    radial-gradient(1.5px 1.5px at 211px 173px, rgba(190, 180, 255, 0.32), transparent 60%),
+    radial-gradient(1px 1px at 137px 89px, rgba(180, 230, 215, 0.28), transparent 60%),
+    radial-gradient(1.5px 1.5px at 211px 173px, rgba(120, 220, 195, 0.28), transparent 60%),
     radial-gradient(1px 1px at 71px 229px, rgba(255, 255, 255, 0.22), transparent 60%),
-    radial-gradient(1px 1px at 301px 57px, rgba(160, 210, 255, 0.25), transparent 60%),
+    radial-gradient(1px 1px at 301px 57px, rgba(160, 210, 200, 0.25), transparent 60%),
     linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-    radial-gradient(circle at 50% -15%, rgba(139, 124, 255, 0.12), transparent 42%);
+    radial-gradient(circle at 50% -15%, rgba(80, 216, 183, 0.1), transparent 42%);
   background-size: 331px 263px, 331px 263px, 331px 263px, 331px 263px, 331px 263px,
     32px 32px, 32px 32px, 100% 100%;
 }
 
 .panel-surface {
-  background: rgba(16, 18, 22, 0.92);
+  background: var(--app-surface);
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
 }
@@ -133,20 +134,21 @@ button:disabled {
 
 [data-theme='light'] {
   color-scheme: light;
-  --app-bg: #f4f6fb;
+  --app-bg: #f3f7f6;
   --app-surface: #ffffff;
   --app-surface-raised: #ffffff;
-  --app-surface-soft: #eef1f7;
-  --app-border: rgba(15, 23, 42, 0.1);
-  --app-border-strong: rgba(15, 23, 42, 0.16);
-  --app-text: #182033;
-  --app-text-muted: #5d687d;
-  --app-text-subtle: #8a95a8;
-  --app-brand: #6657d9;
-  --app-brand-soft: rgba(102, 87, 217, 0.12);
-  --app-success: #18845b;
+  --app-surface-soft: #e7f0ed;
+  --app-border: rgba(23, 75, 67, 0.12);
+  --app-border-strong: rgba(23, 75, 67, 0.2);
+  --app-text: #22313d;
+  --app-text-muted: #5e6d7c;
+  --app-text-subtle: #7a8a96;
+  --app-brand: #087b69;
+  --app-brand-soft: rgba(8, 123, 105, 0.12);
+  --app-success: #087b69;
   --app-warning: #b56b12;
   --app-danger: #c53f4d;
+  --app-on-brand: #ffffff;
 }
 
 [data-theme='light'] body {
@@ -158,7 +160,7 @@ button:disabled {
   background-color: var(--app-bg);
   background-image: linear-gradient(rgba(15, 23, 42, 0.035) 1px, transparent 1px),
     linear-gradient(90deg, rgba(15, 23, 42, 0.035) 1px, transparent 1px),
-    radial-gradient(circle at 50% -15%, rgba(102, 87, 217, 0.12), transparent 42%);
+    radial-gradient(circle at 50% -15%, rgba(8, 123, 105, 0.1), transparent 42%);
 }
 
 [data-theme='light'] .panel-surface {

@@ -96,14 +96,19 @@ export function SystemView() {
           </button>
         </div>
 
-        <Card icon={<Gauge className="h-4 w-4 text-violet-300" />} title="模型用量"
-          extra={u && u.budget_max_tokens_per_plan > 0 ? <span className="text-[11px] text-zinc-500">单计划预算 {fmt(u.budget_max_tokens_per_plan)} tokens</span> : null}>
+        <Card icon={<Gauge className="h-4 w-4 helm-accent" />} title="模型用量"
+          extra={u ? (
+            <span className="text-[11px] text-zinc-500">
+              {u.budget_max_tokens_per_plan > 0 ? `单计划预算 ${fmt(u.budget_max_tokens_per_plan)} tokens · ` : ''}
+              缓存命中率 {((u.cache_hit_rate ?? 0) * 100).toFixed(1)}%
+            </span>
+          ) : null}>
           {err(usage.error)}
           {!u && !usage.error && <Loader2 className="h-4 w-4 animate-spin text-zinc-600" />}
           {u && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {[['调用次数', u.calls], ['总 tokens', u.total_tokens], ['输入', u.input_tokens], ['输出', u.output_tokens]].map(([label, value]) => (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {[['调用次数', u.calls], ['总 tokens', u.total_tokens], ['输入', u.input_tokens], ['输出', u.output_tokens], ['缓存命中', u.cached_tokens ?? 0], ['写入缓存', u.cache_write_tokens ?? 0]].map(([label, value]) => (
                   <div key={label as string} className="rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 py-2">
                     <div className="text-[10px] text-zinc-500">{label}</div>
                     <div className="mt-1 text-lg font-semibold text-white">{fmt(value as number)}</div>
@@ -116,7 +121,7 @@ export function SystemView() {
                     <div key={p.phase} className="flex items-center gap-3 text-xs">
                       <span className="w-20 shrink-0 text-zinc-400">{PHASE_LABELS[p.phase] ?? p.phase}</span>
                       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
-                        <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-sky-400" style={{ width: `${(p.total_tokens / maxPhase) * 100}%` }} />
+                        <div className="h-full rounded-full bg-gradient-to-r from-[var(--app-brand)] to-sky-400" style={{ width: `${(p.total_tokens / maxPhase) * 100}%` }} />
                       </div>
                       <span className="w-36 shrink-0 text-right font-mono text-zinc-500">{fmt(p.total_tokens)} · {p.calls} 次</span>
                     </div>
@@ -129,6 +134,7 @@ export function SystemView() {
                     <thead className="text-zinc-500"><tr>
                       <th className="py-1.5 pr-3 font-medium">时间</th><th className="py-1.5 pr-3 font-medium">模型</th>
                       <th className="py-1.5 pr-3 font-medium">阶段</th><th className="py-1.5 text-right font-medium">tokens（入/出）</th>
+                      <th className="py-1.5 pl-3 text-right font-medium">缓存</th>
                     </tr></thead>
                     <tbody>
                       {u.recent.map((r, i) => (
@@ -137,6 +143,7 @@ export function SystemView() {
                           <td className="py-1.5 pr-3"><span className="text-zinc-500">{r.provider}/</span>{r.model}</td>
                           <td className="py-1.5 pr-3 text-zinc-400">{PHASE_LABELS[r.phase] ?? r.phase}</td>
                           <td className="py-1.5 text-right font-mono">{fmt(r.total_tokens)} <span className="text-zinc-600">({fmt(r.input_tokens)}/{fmt(r.output_tokens)})</span></td>
+                          <td className="py-1.5 pl-3 text-right font-mono text-zinc-500">{fmt(r.cached_tokens ?? 0)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -148,7 +155,7 @@ export function SystemView() {
         </Card>
 
         <div className="grid gap-5 lg:grid-cols-2">
-          <Card icon={<Puzzle className="h-4 w-4 text-violet-300" />} title={`技能包${skills.data ? `（${skills.data.skills.length}）` : ''}`}>
+          <Card icon={<Puzzle className="h-4 w-4 helm-accent" />} title={`技能包${skills.data ? `（${skills.data.skills.length}）` : ''}`}>
             {err(skills.error)}
             {skills.data && skills.data.skills.length === 0 && <p className="text-xs text-zinc-500">没有加载任何技能包（放在项目的 skills/ 目录下）</p>}
             <ul className="space-y-2.5">
@@ -174,7 +181,7 @@ export function SystemView() {
             )}
           </Card>
 
-          <Card icon={<ShieldCheck className="h-4 w-4 text-violet-300" />} title={`能力清单${caps.data ? `（${caps.data.length}）` : ''}`}>
+          <Card icon={<ShieldCheck className="h-4 w-4 helm-accent" />} title={`能力清单${caps.data ? `（${caps.data.length}）` : ''}`}>
             {err(caps.error)}
             {caps.data && caps.data.length === 0 && <p className="text-xs text-zinc-500">能力注册表为空</p>}
             <div className="max-h-80 overflow-y-auto">
@@ -197,7 +204,7 @@ export function SystemView() {
         </div>
 
         <div className="grid gap-5 lg:grid-cols-3">
-          <Card icon={<KeyRound className="h-4 w-4 text-violet-300" />} title="项目密钥">
+          <Card icon={<KeyRound className="h-4 w-4 helm-accent" />} title="项目密钥">
             {err(secrets.error)}
             {secrets.data && !secrets.data.available && <p className="text-xs text-zinc-500">密钥仓未启用</p>}
             {secrets.data?.available && secrets.data.count === 0 && <p className="text-xs text-zinc-500">还没有写入项目密钥。审批设计书时如需密钥会提示录入。</p>}
@@ -210,7 +217,7 @@ export function SystemView() {
             <p className="mt-3 text-[11px] text-zinc-600">只显示名称，不会返回密钥值。</p>
           </Card>
 
-          <Card icon={<MessagesSquare className="h-4 w-4 text-violet-300" />} title="AI 对话会话">
+          <Card icon={<MessagesSquare className="h-4 w-4 helm-accent" />} title="AI 对话会话">
             {err(chats.error)}
             {chats.data && (
               <>
@@ -223,10 +230,10 @@ export function SystemView() {
             )}
           </Card>
 
-          <Card icon={<Bell className="h-4 w-4 text-violet-300" />} title="通知通道">
+          <Card icon={<Bell className="h-4 w-4 helm-accent" />} title="通知通道">
             <p className="text-xs text-zinc-500">发送一条测试消息，检查 IM 通知是否配置成功。</p>
             <button type="button" onClick={() => void testNotify()} disabled={notifying}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-violet-400/30 bg-violet-400/10 px-3 py-1.5 text-xs font-medium text-violet-200 transition-colors hover:bg-violet-400/20 disabled:opacity-50">
+              className="helm-chip helm-hover-brand mt-3 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50">
               {notifying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bell className="h-3.5 w-3.5" />}发送测试通知
             </button>
             {notifyResult && <p className="mt-2 text-xs text-zinc-300">{notifyResult}</p>}

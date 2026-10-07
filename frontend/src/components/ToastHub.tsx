@@ -34,6 +34,7 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: number)
       )}
       <p className="flex-1 text-sm break-words">{toast.message}</p>
       <button
+        type="button"
         onClick={() => onDismiss(toast.id)}
         className="opacity-70 hover:opacity-100 transition-opacity"
         aria-label="关闭"

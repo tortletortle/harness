@@ -110,6 +110,87 @@ def _unprotect(blob: bytes) -> bytes:
         kernel32.LocalFree(blob_out.pbData)
 
 
+def env_key_name(provider: str) -> str:
+    return f"EAS_LLM_API_KEY_{provider.upper()}"
+
+
+def env_url_name(provider: str) -> str:
+    return f"EAS_LLM_BASE_URL_{provider.upper()}"
+
+
+def clear_process_env_var(name: str) -> bool:
+    removed = False
+    for key in [item for item in os.environ if item == name]:
+        os.environ.pop(key, None)
+        removed = True
+    return removed
+
+
+def clear_process_env_key(provider: str) -> bool:
+    """Drop the process-level override so a just-saved store key can take effect."""
+    return clear_process_env_var(env_key_name(provider))
+
+
+def clear_process_env_url(provider: str) -> bool:
+    return clear_process_env_var(env_url_name(provider))
+
+
+def retire_dotenv_var(dotenv_path: Path, env_name: str) -> bool:
+    """Comment out ``env_name=`` in ``.env`` so restart does not revive it."""
+    try:
+        original = dotenv_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    changed = False
+    lines = []
+    for line in original.splitlines(keepends=True):
+        body = line.lstrip(" \t")
+        newline = ""
+        core = body
+        if body.endswith("\n"):
+            newline = "\n"
+            core = body[:-1]
+            if core.endswith("\r"):
+                core = core[:-1]
+                newline = "\r\n"
+        stripped = core.strip()
+        if stripped.startswith("#") or not stripped:
+            lines.append(line)
+            continue
+        if stripped.startswith("export "):
+            assignment = stripped[7:].lstrip()
+            prefix = core[: core.find(assignment)]
+        else:
+            assignment = stripped
+            prefix = core[: core.find(assignment)]
+        if "=" not in assignment:
+            lines.append(line)
+            continue
+        name = assignment.split("=", 1)[0].strip()
+        if name != env_name:
+            lines.append(line)
+            continue
+        indent = line[: len(line) - len(body)]
+        lines.append(f"{indent}# retired-by-config-ui {prefix}{assignment}{newline or os.linesep}")
+        changed = True
+    if not changed:
+        return False
+    try:
+        dotenv_path.write_text("".join(lines), encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
+def retire_dotenv_assignment(dotenv_path: Path, provider: str) -> bool:
+    """Comment out ``EAS_LLM_API_KEY_<PROVIDER>=`` in ``.env``."""
+    return retire_dotenv_var(dotenv_path, env_key_name(provider))
+
+
+def retire_dotenv_url(dotenv_path: Path, provider: str) -> bool:
+    return retire_dotenv_var(dotenv_path, env_url_name(provider))
+
+
 def keys_path(directory: Path) -> Path:
     return directory / _FILENAME
 
@@ -178,7 +259,7 @@ def save_api_keys(directory: Path, updates: dict) -> None:
 
 def effective_key(directory: Path, provider: str) -> str:
     """Runtime key for a provider: environment wins, else persisted store."""
-    env = os.getenv(f"EAS_LLM_API_KEY_{provider.upper()}")
+    env = os.getenv(env_key_name(provider))
     if env:
         return env
     try:

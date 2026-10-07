@@ -1,5 +1,6 @@
 """Non-secret configuration contract; every file and HTTP app is disposable."""
 import copy
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -147,6 +148,7 @@ def test_http_roundtrip_auth_and_revision(config, monkeypatch):
     from api.auth import reset_token_cache
     root, runtime = config
     monkeypatch.setattr(misc_routes, '_config_dir', lambda: root)
+    monkeypatch.setattr(misc_routes, '_dotenv_path', lambda: root / '.env')
     monkeypatch.setattr(misc_routes, 'state', SimpleNamespace(config=runtime))
     monkeypatch.setenv('EAS_API_TOKEN', 'model-config-test-token')
     reset_token_cache()
@@ -160,10 +162,58 @@ def test_http_roundtrip_auth_and_revision(config, monkeypatch):
             payload = request(config).model_dump()
             response = client.post('/api/config', headers=headers, json=payload)
             assert response.status_code == 200
-            assert response.json()['config']['requires_restart']
+            assert response.json()['config']['requires_restart'] is False
+            assert response.json()['config']['models']['designer']['primary']['model'] == 'new/custom'
             assert client.post('/api/config', headers=headers, json=payload).status_code == 409
     finally:
         reset_token_cache()
+
+
+def test_http_config_save_releases_base_url_override(config, monkeypatch):
+    from api.routes import misc_routes
+    from api.auth import reset_token_cache
+    root, runtime = config
+    monkeypatch.setattr(misc_routes, '_config_dir', lambda: root)
+    monkeypatch.setattr(misc_routes, '_dotenv_path', lambda: root / '.env')
+    monkeypatch.setattr(misc_routes, 'state', SimpleNamespace(config=runtime, llm_client=None))
+    monkeypatch.setenv('EAS_API_TOKEN', 'model-config-test-token')
+    monkeypatch.setenv('EAS_LLM_BASE_URL_ALPHA', 'https://override.invalid/v1')
+    (root / '.env').write_text('EAS_LLM_BASE_URL_ALPHA=https://override.invalid/v1\n', encoding='utf-8')
+    reset_token_cache()
+    app = FastAPI(); app.include_router(misc_routes.router)
+    try:
+        with TestClient(app) as client:
+            headers = {'Authorization': 'Bearer model-config-test-token'}
+            payload = request(config).model_dump()
+            response = client.post('/api/config', headers=headers, json=payload)
+            assert response.status_code == 200
+            body = response.json()['config']
+            assert os.getenv('EAS_LLM_BASE_URL_ALPHA') is None
+            assert body['environment_overrides'] == []
+            assert body['base_urls']['alpha'] == 'https://alpha.invalid/v1'
+            assert runtime['base_urls']['alpha'] == 'https://alpha.invalid/v1'
+            commented = (root / '.env').read_text(encoding='utf-8')
+            assert commented.startswith('# retired-by-config-ui ')
+            assert 'https://override.invalid' not in str(body)
+    finally:
+        reset_token_cache()
+
+
+def test_apply_runtime_models_hot_loads_and_keeps_role_dict_identity(config):
+    from types import SimpleNamespace
+    from api.model_runtime import apply_runtime_models
+
+    root, runtime = config
+    designer = runtime['models']['designer']
+    primary = designer['primary']
+    save_configuration(root, runtime, request(config))
+    assert primary['model'] == 'custom-main'
+    holder = SimpleNamespace(config=runtime, llm_client=None)
+    apply_runtime_models(root, holder)
+    assert designer is runtime['models']['designer']
+    assert primary is runtime['models']['designer']['primary']
+    assert primary['model'] == 'new/custom'
+    assert read_configuration(root, runtime)['requires_restart'] is False
 
 
 def test_unversioned_legacy_save_is_rejected(config):

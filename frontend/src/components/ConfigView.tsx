@@ -318,13 +318,13 @@ export function ConfigView() {
       setConfig(cfg);
       setNotice(
         cfg.requires_restart
-          ? '配置已保存到本地。运行中的配置尚未切换，请在任务结束后手动重启后台。'
-          : '配置已保存，与当前运行配置一致。',
+          ? '配置已保存。部分运行项仍待切换，请再保存一次或重启后台。'
+          : '配置已保存，并已应用到当前会话。',
       );
       addLog({
         type: 'log',
         level: 'success',
-        message: '模型配置已保存；未自动重启服务。',
+        message: '模型配置已保存并热加载。',
       });
       return cfg;
     } catch (failure) {
@@ -361,14 +361,28 @@ export function ConfigView() {
                 ...current.api_keys_persisted,
                 [name]: !value.trim() ? false : !!result.persisted,
               },
+              api_key_environment_overrides: (
+                current.api_key_environment_overrides || []
+              ).filter((provider) =>
+                result.env_released ? provider !== name : true,
+              ),
             }
           : current,
       );
+      const live = result.applied && !result.environment_override;
       setKeyState((current) => ({
         ...current,
         [name]: {
           saving: false,
-          message: value.trim() ? '已加密保存；重启后台后生效。' : '已清除本地密钥。',
+          message: value.trim()
+            ? live
+              ? result.env_released
+                ? '密钥已生效，并已停用环境变量中的旧密钥。'
+                : '密钥已生效，当前会话无需重启。'
+              : result.environment_override
+                ? '已加密保存，但环境变量仍优先，当前不会使用这份密钥。'
+                : '已加密保存；当前进程未能热加载，请重启后台。'
+            : '已清除本地密钥。',
         },
       }));
       setKeyDraft((current) => {
@@ -501,7 +515,7 @@ export function ConfigView() {
         <div className="mc-message mc-warning">
           <AlertCircle size={17} />
           <span>
-            已保存配置与运行中配置不同。请在任务结束后手动重启后台；此页面不会自动中断任务。
+            磁盘配置与运行中配置仍不一致。再保存一次可热加载；此页面不会中断进行中的任务。
           </span>
         </div>
       )}
@@ -644,7 +658,7 @@ export function ConfigView() {
             <p>
               {blocked
                 ? `有 ${Object.keys(validation).length} 处配置需要检查，请查看提供商与角色路由中的字段提示。`
-                : '保存不重启服务，不触发模型请求，也不影响当前任务。密钥在提供商面板单独加密保存。'}
+                : '保存后立即用于新的模型调用。进行中的任务仍使用开始时的提供商。密钥在提供商面板单独加密保存。'}
             </p>
           </div>
         </div>

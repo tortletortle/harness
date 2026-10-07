@@ -183,7 +183,9 @@ class SkillManager:
             return cls(Path("__skills_disabled__"), cfg)
         d = Path(str(cfg.get("dir") or "skills"))
         if not d.is_absolute():
-            d = (base_dir or Path.cwd()) / d
+            # 默认锚定仓库根（paths.REPO_ROOT），不依赖进程 cwd，避免 gen_* 写到别处。
+            from paths import REPO_ROOT
+            d = (base_dir or REPO_ROOT) / d
         return cls(d, cfg)
 
     # ---- 加载 ----

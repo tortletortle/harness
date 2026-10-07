@@ -169,3 +169,11 @@ def test_disabled_config_yields_empty_manager(tmp_path):
     mgr = SkillManager.from_config({"skills": {"enabled": False}}, base_dir=tmp_path)
     mgr.load()
     assert mgr.skills == []
+
+
+def test_from_config_relative_dir_uses_repo_root_not_cwd(tmp_path, monkeypatch):
+    from paths import REPO_ROOT
+
+    monkeypatch.chdir(tmp_path)
+    mgr = SkillManager.from_config({"skills": {"enabled": True, "dir": "skills"}})
+    assert mgr.skills_dir.resolve() == (REPO_ROOT / "skills").resolve()

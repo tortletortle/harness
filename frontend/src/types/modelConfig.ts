@@ -21,6 +21,8 @@ export interface ModelConfiguration {
   /** Key comes from the encrypted local store rather than an environment variable. */
   api_keys_persisted?: Record<string, boolean>;
   environment_overrides?: string[];
+  /** Providers whose API key currently comes from the process environment. */
+  api_key_environment_overrides?: string[];
   requires_restart?: boolean;
 }
 export interface ModelConfigUpdate {

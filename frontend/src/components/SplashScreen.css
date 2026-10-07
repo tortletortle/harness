@@ -13,8 +13,8 @@
   --app-text: #f4f5f7;
   --app-text-muted: #aab1c4;
   --app-text-subtle: #6f7890;
-  --app-brand: #8b7cff;
-  --app-brand-soft: rgba(139, 124, 255, 0.16);
+  --app-brand: #56d9b8;
+  --app-brand-soft: rgba(80, 216, 183, 0.16);
   --app-success: #42d392;
   background: radial-gradient(ellipse at 50% 42%, #0c0f24 0%, #06071a 45%, #020308 100%);
   color: var(--app-text);
@@ -42,9 +42,9 @@
   opacity: 0;
   filter: blur(40px);
   background:
-    radial-gradient(38% 30% at 30% 35%, rgba(126, 20, 255, 0.28), transparent 70%),
-    radial-gradient(34% 28% at 72% 60%, rgba(71, 191, 255, 0.18), transparent 70%),
-    radial-gradient(28% 22% at 55% 25%, rgba(236, 110, 200, 0.12), transparent 70%);
+    radial-gradient(38% 30% at 30% 35%, rgba(46, 180, 150, 0.28), transparent 70%),
+    radial-gradient(34% 28% at 72% 60%, rgba(71, 191, 210, 0.16), transparent 70%),
+    radial-gradient(28% 22% at 55% 25%, rgba(90, 220, 190, 0.12), transparent 70%);
   animation: helm-fade 1.6s 0.4s ease forwards, helm-nebula 18s ease-in-out infinite alternate;
 }
 /* 银河带 */
@@ -55,7 +55,7 @@
   top: 30%;
   height: 34%;
   transform: rotate(-18deg);
-  background: radial-gradient(50% 50% at 50% 50%, rgba(190, 180, 255, 0.10), transparent 70%);
+  background: radial-gradient(50% 50% at 50% 50%, rgba(120, 220, 200, 0.12), transparent 70%);
   filter: blur(20px);
   opacity: 0;
   animation: helm-fade 2s 0.8s ease forwards;
@@ -149,7 +149,7 @@
   display: block;
   height: 100%;
   width: 0;
-  background: linear-gradient(90deg, var(--app-brand), #47bfff);
+  background: linear-gradient(90deg, var(--app-brand), #7ce5c8);
   animation: helm-load 2.6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
@@ -171,7 +171,7 @@
 }
 .hw-orbit { opacity: 0; animation: helm-fade 1s 0.5s forwards, hw-idle-rev 40s linear infinite; }
 .hw-orbit-ring { fill: none; stroke: var(--app-border); stroke-width: 1; stroke-dasharray: 1 5; }
-.hw-orbit-dot { fill: #47bfff; filter: drop-shadow(0 0 3px #47bfff); }
+.hw-orbit-dot { fill: var(--app-brand); filter: drop-shadow(0 0 3px var(--app-brand)); }
 
 .hw-spoke {
   fill: url(#hw-spoke);

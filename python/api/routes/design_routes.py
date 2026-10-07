@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 import asyncio
 from pydantic import BaseModel
 
@@ -130,6 +131,39 @@ async def get_design(design_id: str):
         logger.exception("查询设计书失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/api/design/{design_id}/fulfill-tools", dependencies=[Depends(require_token)])
+async def fulfill_design_tools(design_id: str):
+    """按缺口再跑一轮映射/合成，写回设计书；不生成计划。"""
+    try:
+        design = state.database.get_design(design_id)
+        if not design:
+            raise HTTPException(status_code=404, detail="设计书不存在")
+        if state.designer is None:
+            raise HTTPException(status_code=503, detail="设计器未就绪")
+        design = await state.designer._fulfill_required_tools(design)
+        state.database.save_design(design)
+        missing = [
+            t.tool_id for t in design.part2_tool_assessment.required_tools
+            if (getattr(t, "availability", None) or "").lower() != "available"
+        ]
+        await broadcast_log(
+            f"设计书 {design_id} 工具对齐完成"
+            + (f"，仍缺: {', '.join(missing)}" if missing else "，工具已齐"),
+            "warning" if missing else "success",
+        )
+        return {
+            "success": True,
+            "design": format_design_for_frontend(design),
+            "missing_tools": missing,
+            "ready": len(missing) == 0,
+        }
+    except (GenerationError, HTTPException):
+        raise
+    except Exception as e:
+        logger.exception("对齐设计工具失败: {}", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/api/design/{design_id}/approve", dependencies=[Depends(require_token)])
 async def approve_design(design_id: str, request: ApprovalRequest):
     """审批设计书"""
@@ -139,6 +173,29 @@ async def approve_design(design_id: str, request: ApprovalRequest):
             raise HTTPException(status_code=404, detail="设计书不存在")
         
         if request.approved:
+            # 审批前对齐一次工具目录（generate_plan 跳过二次 fulfill）。
+            if state.designer is not None:
+                design = await state.designer._fulfill_required_tools(design)
+            missing = [
+                t.tool_id for t in design.part2_tool_assessment.required_tools
+                if (getattr(t, "availability", None) or "").lower() != "available"
+            ]
+            if missing:
+                state.database.save_design(design)
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "success": False,
+                        "code": "tools_incomplete",
+                        "detail": "工具未齐，无法批准并生成计划：" + ", ".join(missing),
+                        "design": format_design_for_frontend(design),
+                        "missing_tools": missing,
+                    },
+                )
+
+            design.user_approval = True
+            state.database.save_design(design)
+
             await broadcast_log(f"设计书 {design_id} 已批准，开始生成执行计划...")
             
             # 生成执行计划
@@ -149,7 +206,9 @@ async def approve_design(design_id: str, request: ApprovalRequest):
                 _project_memory = _mem_path.read_text(encoding="utf-8", errors="replace")[-3000:] if _mem_path.exists() else ""
             except Exception:
                 _project_memory = ""
-            plan = await state.designer.generate_plan(design, project_memory=_project_memory)
+            plan = await state.designer.generate_plan(
+                design, project_memory=_project_memory, skip_fulfill=True,
+            )
             
             # 保存到数据库
             state.database.save_plan(plan)
@@ -166,6 +225,7 @@ async def approve_design(design_id: str, request: ApprovalRequest):
             return {
                 "success": True,
                 "plan": format_plan_for_frontend(plan),
+                "design": format_design_for_frontend(design),
                 "secrets_prompt": secrets_prompt
             }
         else:
@@ -175,6 +235,7 @@ async def approve_design(design_id: str, request: ApprovalRequest):
                 
                 # 调用Designer的revise_design方法
                 revised_design = await state.designer.revise_design(design, request.feedback)
+                revised_design.user_approval = False
                 
                 # 更新数据库中的设计书
                 state.database.save_design(revised_design)
@@ -188,6 +249,8 @@ async def approve_design(design_id: str, request: ApprovalRequest):
                 }
             else:
                 # 没有反馈，只是记录拒绝
+                design.user_approval = False
+                state.database.save_design(design)
                 await broadcast_log(f"设计书 {design_id} 被拒绝（无反馈）")
                 return {
                     "success": True,

@@ -8,6 +8,8 @@ export interface Design {
   part1: DesignPart1;
   part2: ToolAssessment;
   created_at?: string;
+  /** 设计书是否已批准（与出计划可分开） */
+  user_approval?: boolean;
 }
 
 export interface DesignPart1 {
@@ -100,6 +102,11 @@ export interface Tool {
   category?: 'generation' | 'search' | 'template' | 'other';
   capabilities: string[];
   requirements: string[];
+  /** 是否可出现在执行计划步骤里 */
+  plan_allowed?: boolean;
+  /** SQLite tool_catalog 状态：ready / missing / … */
+  catalog_status?: string | null;
+  catalog_source?: string | null;
 }
 
 export interface LogMessage {

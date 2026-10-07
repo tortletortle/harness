@@ -118,7 +118,7 @@ export const useAppStore = create<AppState>((set) => ({
   inputText: persisted.inputText ?? '',
   sidebarCollapsed: false,
   logPanelCollapsed: false,
-  aiPanelCollapsed: true,
+  aiPanelCollapsed: false,
   designs: [],
   currentDesign: null,
   plans: [],

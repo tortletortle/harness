@@ -25,6 +25,7 @@ import { SystemView } from './components/SystemView';
 import { ToastHub } from './components/ToastHub';
 import { ApprovalBanner } from './components/ApprovalBanner';
 import { SplashScreen, shouldShowSplash } from './components/SplashScreen';
+import { PipelineOverview } from './components/PipelineOverview';
 
 let lastPlanEventVersionByPlan = new Map<string, number>();
 
@@ -53,15 +54,39 @@ const viewMeta = {
 function App() {
   const { currentView, addLog, sidebarCollapsed, logPanelCollapsed, aiPanelCollapsed, currentPlan, isExecuting, connectionState, setConnectionState } = useAppStore();
   const [showSplash, setShowSplash] = useState(shouldShowSplash);
+  const [compact, setCompact] = useState(() => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 760px)').matches || false);
   const hideSplash = useCallback(() => setShowSplash(false), []);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return (localStorage.getItem('eas-theme') as 'dark' | 'light' | null) || 'dark';
   });
 
   useEffect(() => {
+    if (!window.matchMedia) return;
+    const query = window.matchMedia('(max-width: 760px)');
+    const update = () => setCompact(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    if (compact && !useAppStore.getState().aiPanelCollapsed) useAppStore.getState().toggleAiPanel();
+  }, [compact]);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('eas-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'n' || event.altKey) return;
+      event.preventDefault();
+      useAppStore.getState().setCurrentView('input');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     apiClient.onConnectionState(setConnectionState);
@@ -103,54 +128,52 @@ function App() {
   };
 
   const meta = viewMeta[currentView];
+  const compactSidebarSize = compact ? Math.min(16, Math.max(8, 60 / window.innerWidth * 100)) : 6;
 
   return (
-    <div className="surface-grid flex h-screen min-h-0 flex-col text-white">
+    <div className="helm-app surface-grid flex h-screen min-h-0 flex-col text-white">
       <ApprovalBanner />
-      <PanelGroup direction="vertical" className="min-h-0 flex-1">
-        <Panel defaultSize={85} minSize={35} className="min-h-0">
-          <PanelGroup direction="horizontal" className="min-h-0">
-            <Panel defaultSize={sidebarCollapsed ? 5 : 16} minSize={5} maxSize={28} className="min-w-0">
-              <Sidebar />
-            </Panel>
-            <PanelResizeHandle className="w-px bg-white/[0.06] transition-colors hover:bg-violet-400" />
+      <PanelGroup key={`${sidebarCollapsed}-${aiPanelCollapsed}-${compact}`} direction="horizontal" className="min-h-0 flex-1">
+        <Panel defaultSize={compact ? compactSidebarSize : sidebarCollapsed ? 6 : 17} minSize={compact ? compactSidebarSize : sidebarCollapsed ? 5 : 12} maxSize={27} className="min-w-0">
+          <Sidebar forceCollapsed={compact} />
+        </Panel>
+        <PanelResizeHandle className="helm-resize-handle is-vertical" />
 
-            <Panel defaultSize={aiPanelCollapsed ? 84 : 64} minSize={35} className="min-w-0">
-              <div className="flex h-full min-h-0 flex-col">
-                <header className="flex h-[72px] shrink-0 items-center justify-between border-b border-white/[0.08] bg-[#0d0f13]/80 px-6 backdrop-blur-xl">
+        <Panel defaultSize={compact ? 100 - compactSidebarSize : aiPanelCollapsed ? (sidebarCollapsed ? 94 : 83) : 63} minSize={35} className="min-w-0">
+          <PanelGroup direction="vertical" className="min-h-0">
+            <Panel defaultSize={logPanelCollapsed ? 100 : 82} minSize={35} className="min-h-0">
+              <div className="helm-main flex h-full min-h-0 flex-col">
+                <header className="helm-header">
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-[11px] text-zinc-600"><span>工作区</span><span className="text-zinc-700">/</span><span className="text-zinc-400">星舵 Helm</span></div>
-                    <div className="mt-1 flex items-center gap-3"><h1 className="text-[17px] font-semibold tracking-tight text-white">{meta.label}</h1><span className="hidden text-xs text-zinc-600 sm:inline">{meta.hint}</span></div>
+                    <div className="helm-breadcrumb"><span>工作区</span><span>/</span><span>星舵 Helm</span><span>/</span><span>{meta.label}</span></div>
+                    <div className="helm-header-title"><h1>{meta.label}</h1>{currentPlan && <span className="helm-plan-id">PLAN · {currentPlan.plan_id.slice(0, 8)}</span>}</div>
                   </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {currentPlan && <div className="hidden items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 md:flex"><Activity className={`h-3.5 w-3.5 ${isExecuting ? 'text-violet-300' : 'text-zinc-600'}`} /><span className="font-mono text-[10px] text-zinc-500">{currentPlan.plan_id.slice(0, 8)}</span></div>}
-                      <div className={`flex items-center gap-1.5 text-[11px] ${connectionMeta[connectionState].className}`} title={connectionMeta[connectionState].label}>
-                        {connectionState === 'connecting' || connectionState === 'reconnecting' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : connectionState === 'online' ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
-                        <span className="hidden sm:inline">{connectionMeta[connectionState].label}</span>
-                        <Circle className={`h-1.5 w-1.5 fill-current ${connectionState === 'online' ? '' : 'opacity-70'}`} />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
-                        title={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
-                        aria-label={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
-                        className="rounded-lg border border-white/[0.08] bg-white/[0.03] p-2 text-zinc-500 transition-colors hover:bg-white/[0.08] hover:text-white"
-                      >
-                        {theme === 'dark' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-                      </button>
-                      {!aiPanelCollapsed && <PanelRight className="h-4 w-4 text-violet-300" />}
+                  <div className="helm-header-actions">
+                    <div className={`helm-connection ${connectionState === 'online' ? 'is-online' : ''}`} title={connectionMeta[connectionState].label}>
+                      {connectionState === 'connecting' || connectionState === 'reconnecting' ? <Loader2 size={13} className="animate-spin" /> : connectionState === 'online' ? <Wifi size={13} /> : <WifiOff size={13} />}
+                      <span className="hidden sm:inline">{connectionMeta[connectionState].label}</span>
+                      <Circle size={5} fill="currentColor" />
                     </div>
+                    {currentPlan && <span className={`helm-run-status ${isExecuting ? 'is-live' : ''}`}><Activity size={14} />{isExecuting ? '执行中' : '已就绪'}</span>}
+                    <button type="button" className="helm-icon-button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} title={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'} aria-label={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}>{theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}</button>
+                    {(aiPanelCollapsed || compact) && <button type="button" className="helm-icon-button" onClick={() => useAppStore.getState().toggleAiPanel()} title="打开 AI Copilot" aria-label="打开 AI Copilot"><PanelRight size={17} /></button>}
+                    <div className="helm-avatar" title="本地工作区">我</div>
+                  </div>
                 </header>
-                <main className="min-h-0 flex-1 overflow-auto">{renderView()}</main>
+                <PipelineOverview />
+                <main className="helm-content min-h-0 flex-1 overflow-auto">{renderView()}</main>
               </div>
             </Panel>
-
-            {!aiPanelCollapsed && <><PanelResizeHandle className="w-px bg-white/[0.06] transition-colors hover:bg-violet-400" /><Panel defaultSize={20} minSize={16} maxSize={36} className="min-w-0"><AiPanel /></Panel></>}
+            {!logPanelCollapsed && <><PanelResizeHandle className="helm-resize-handle is-horizontal" /><Panel defaultSize={18} minSize={10} maxSize={40} className="min-h-0"><LogPanel /></Panel></>}
           </PanelGroup>
         </Panel>
 
-        {!logPanelCollapsed && <><PanelResizeHandle className="h-px bg-white/[0.06] transition-colors hover:bg-emerald-400" /><Panel defaultSize={15} minSize={10} maxSize={40} className="min-h-0"><LogPanel /></Panel></>}
+        {!aiPanelCollapsed && !compact && <><PanelResizeHandle className="helm-resize-handle is-vertical" /><Panel defaultSize={20} minSize={16} maxSize={36} className="min-w-0"><AiPanel /></Panel></>}
       </PanelGroup>
+      {compact && !aiPanelCollapsed && <>
+        <button type="button" className="helm-mobile-overlay" aria-label="关闭 AI 副驾" onClick={() => useAppStore.getState().toggleAiPanel()} />
+        <div className="helm-mobile-ai"><AiPanel /></div>
+      </>}
       <ToastHub />
       {showSplash && <SplashScreen onDone={hideSplash} />}
     </div>

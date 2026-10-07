@@ -19,7 +19,7 @@ const statusTone = (status: string) => {
   switch (status) {
     case 'Completed': return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200';
     case 'Failed': return 'border-red-400/25 bg-red-400/10 text-red-200';
-    case 'Running': return 'border-violet-400/25 bg-violet-400/10 text-violet-200';
+    case 'Running': return 'helm-chip';
     case 'Paused': return 'border-amber-400/25 bg-amber-400/10 text-amber-200';
     default: return 'border-white/[0.1] bg-white/[0.04] text-zinc-400';
   }
@@ -181,8 +181,8 @@ export function HistoryView() {
   }
 
   const tabClass = (active: boolean) =>
-    `px-4 py-2 text-sm font-medium border-b-2 transition-colors ${active ? 'border-violet-400 text-white' : 'border-transparent text-zinc-400 hover:text-white'}`;
-  const rowClass = 'group flex w-full cursor-pointer items-start gap-3 rounded-xl border border-white/[0.08] bg-[#111419]/90 p-4 text-left transition-colors hover:border-violet-400/25 hover:bg-white/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-400';
+    `px-4 py-2 text-sm font-medium border-b-2 transition-colors ${active ? 'helm-tab-active' : 'border-transparent text-zinc-400 hover:text-white'}`;
+  const rowClass = 'helm-hover-brand group flex w-full cursor-pointer items-start gap-3 rounded-xl border border-white/[0.08] bg-[#111419]/90 p-4 text-left hover:bg-white/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--app-brand)]';
 
   return (
     <div className="min-h-full px-4 py-6 sm:px-8 sm:py-8">
@@ -206,7 +206,7 @@ export function HistoryView() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="搜索设计书或执行计划（需求、名称、ID）..."
-              className="w-full rounded-xl border border-white/[0.1] bg-[#111419]/80 py-2.5 pl-10 pr-4 text-sm text-white placeholder:text-zinc-600 transition-colors focus:border-violet-400/50 focus:outline-none"
+              className="helm-field w-full rounded-xl border border-white/[0.1] bg-[#111419]/80 py-2.5 pl-10 pr-4 text-sm text-white placeholder:text-zinc-600 focus:outline-none"
             />
           </div>
         </div>
@@ -222,7 +222,7 @@ export function HistoryView() {
           </div>
           {activeTab === 'plans' && (
             <label className="mb-2 flex cursor-pointer items-center gap-2 text-xs text-zinc-400">
-              <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="accent-violet-500" />
+              <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="accent-[var(--app-brand)]" />
               显示已归档{archivedCount > 0 && `（${archivedCount}）`}
             </label>
           )}
@@ -252,11 +252,11 @@ export function HistoryView() {
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <code className="font-mono text-xs text-zinc-600">{design.design_id}</code>
-                        {linkedPlans > 0 && <span className="rounded bg-violet-400/10 px-2 py-0.5 text-[11px] text-violet-200">已生成 {linkedPlans} 个计划</span>}
+                        {linkedPlans > 0 && <span className="helm-chip rounded px-2 py-0.5 text-[11px]">已生成 {linkedPlans} 个计划</span>}
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1" onClick={stop}>
-                      {busy && <Loader2 className="h-4 w-4 animate-spin text-violet-300" />}
+                      {busy && <Loader2 className="h-4 w-4 animate-spin helm-accent" />}
                       <button type="button" disabled={busy || linkedPlans > 0}
                         onClick={() => void handleDeleteDesign(design)}
                         title={linkedPlans > 0 ? '已生成执行计划，需先删除对应计划' : '删除设计书'}
@@ -296,7 +296,7 @@ export function HistoryView() {
                               onChange={(e) => setRenaming({ planId: plan.plan_id, name: e.target.value })}
                               onKeyDown={(e) => { if (e.key === 'Enter') void submitRename(); if (e.key === 'Escape') setRenaming(null); }}
                               placeholder="给这个计划起个名字"
-                              className="w-64 rounded-md border border-violet-400/40 bg-black/30 px-2 py-1 text-sm text-white outline-none" />
+                              className="helm-field w-64 rounded-md border border-white/[0.12] bg-black/30 px-2 py-1 text-sm text-white outline-none" />
                             <button type="button" onClick={() => void submitRename()} aria-label="保存名称" className={iconBtn}><Check className="h-4 w-4 text-emerald-300" /></button>
                             <button type="button" onClick={() => setRenaming(null)} aria-label="取消重命名" className={iconBtn}><X className="h-4 w-4" /></button>
                           </div>
@@ -311,7 +311,7 @@ export function HistoryView() {
                       <code className="font-mono text-xs text-zinc-600">{plan.plan_id}</code>
                     </div>
                     <div className="flex shrink-0 items-center gap-1" onClick={stop}>
-                      {busy && <Loader2 className="h-4 w-4 animate-spin text-violet-300" />}
+                      {busy && <Loader2 className="h-4 w-4 animate-spin helm-accent" />}
                       <button type="button" disabled={busy} onClick={() => setRenaming({ planId: plan.plan_id, name: plan.display_name })}
                         title="重命名" aria-label="重命名计划" className={iconBtn}><Pencil className="h-4 w-4" /></button>
                       <button type="button" disabled={busy} onClick={() => void handleArchive(plan)}

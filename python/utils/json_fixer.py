@@ -385,3 +385,26 @@ def validate_agent_steps(data: dict) -> Tuple[bool, Optional[str]]:
                             "请在 instruction 中显式写出这些标识符，或改用指令中已有的标识符/宽松验收"
                         )
     return True, None
+
+
+def validate_plan_tools(data: dict, allowed: set) -> Tuple[bool, Optional[str]]:
+    """计划步骤的 tool 必须在允许集合内（注册表为准，禁止发明名字）。"""
+    allowed_set = {str(item) for item in allowed}
+    for i, segment in enumerate(data.get("segments") or []):
+        if not isinstance(segment, dict):
+            continue
+        for j, step in enumerate(segment.get("steps") or []):
+            if not isinstance(step, dict):
+                continue
+            tool = str(step.get("tool") or "").strip()
+            label = f"segment[{i}].steps[{j}]"
+            if not tool:
+                return False, f"{label}: 缺少 tool"
+            if tool not in allowed_set:
+                preview = ", ".join(sorted(allowed_set)[:12])
+                more = "…" if len(allowed_set) > 12 else ""
+                return False, (
+                    f"{label}: 未注册或不允许的工具 {tool!r}；"
+                    f"允许: {preview}{more}"
+                )
+    return True, None

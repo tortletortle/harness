@@ -10,6 +10,7 @@ import { useAppStore } from '../stores/appStore';
 export function DesignView() {
   const { currentDesign, setCurrentDesign, setCurrentPlan, setCurrentView, addLog } = useAppStore();
   const [isApproving, setIsApproving] = useState(false);
+  const [isFulfilling, setIsFulfilling] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['architecture', 'tools']));
   const [showFeedbackDialog, setShowFeedbackDialog] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -21,7 +22,7 @@ export function DesignView() {
           <p className="mb-2">暂无设计书</p>
           <button
             onClick={() => useAppStore.getState().setCurrentView('input')}
-            className="text-blue-500 hover:text-blue-400 text-sm"
+            className="helm-link text-sm"
           >
             去创建一个
           </button>
@@ -38,6 +39,34 @@ export function DesignView() {
       newExpanded.add(section);
     }
     setExpandedSections(newExpanded);
+  };
+
+  const missingTools = currentDesign.part2?.missing_tools ?? [];
+  const toolsIncomplete = missingTools.length > 0;
+  const busy = isApproving || isFulfilling;
+
+  const handleFulfillTools = async () => {
+    setIsFulfilling(true);
+    addLog({ type: 'log', level: 'info', message: '正在按缺口补齐/映射工具…' });
+    try {
+      const result = await apiClient.fulfillDesignTools(currentDesign.design_id);
+      setCurrentDesign(result.design);
+      addLog({
+        type: 'log',
+        level: result.ready ? 'success' : 'error',
+        message: result.ready
+          ? '工具已齐，可以批准'
+          : `仍有缺口：${result.missing_tools.join(', ') || '未知'}`,
+      });
+    } catch (error) {
+      addLog({
+        type: 'log',
+        level: 'error',
+        message: `对齐工具失败: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    } finally {
+      setIsFulfilling(false);
+    }
   };
 
   const handleApprove = async (approved: boolean) => {
@@ -60,8 +89,19 @@ export function DesignView() {
         approved,
         !approved ? feedback : undefined
       );
+
+      if (approved && response.toolsIncomplete) {
+        if (response.design) setCurrentDesign(response.design);
+        addLog({
+          type: 'log',
+          level: 'error',
+          message: response.message || `工具未齐：${(response.missing_tools || []).join(', ')}`,
+        });
+        return;
+      }
       
       if (approved && response.plan) {
+        if (response.design) setCurrentDesign(response.design);
         setCurrentPlan(response.plan);
         setCurrentView('plan');
         addLog({ 
@@ -122,13 +162,13 @@ export function DesignView() {
         </div>
 
         {/* 用户需求 */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+        <div className="panel-surface p-4">
           <h3 className="text-sm font-medium text-white mb-2">用户需求</h3>
           <p className="text-sm text-zinc-300">{currentDesign.user_request}</p>
         </div>
 
         {/* 架构设计 */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg">
+        <div className="panel-surface">
           <button
             onClick={() => toggleSection('architecture')}
             className="w-full flex items-center justify-between p-4 hover:bg-zinc-800/50 transition-colors"
@@ -171,7 +211,7 @@ export function DesignView() {
                   {part1.architecture.tech_stack.map((tech, i) => (
                     <span 
                       key={i}
-                      className="px-2 py-1 bg-blue-600/20 text-blue-400 text-xs rounded"
+                      className="helm-chip px-2 py-1 text-xs rounded"
                     >
                       {tech}
                     </span>
@@ -195,7 +235,7 @@ export function DesignView() {
         </div>
 
         {/* 工具评估 */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg">
+        <div className="panel-surface">
           <button
             onClick={() => toggleSection('tools')}
             className="w-full flex items-center justify-between p-4 hover:bg-zinc-800/50 transition-colors"
@@ -261,9 +301,9 @@ export function DesignView() {
         {/* 反馈对话框 */}
         {showFeedbackDialog && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="panel-surface p-6 max-w-md w-full mx-4">
               <div className="flex items-center gap-2 mb-4">
-                <MessageSquare className="w-5 h-5 text-blue-400" />
+                <MessageSquare className="w-5 h-5 helm-accent" />
                 <h3 className="text-lg font-medium text-white">请输入反馈意见</h3>
               </div>
               <p className="text-sm text-zinc-400 mb-4">
@@ -273,7 +313,7 @@ export function DesignView() {
                 value={feedback}
                 onChange={(e) => setFeedback(e.target.value)}
                 placeholder="例如：组件划分不够细致，需要进一步拆分..."
-                className="w-full h-32 bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500 resize-none"
+                className="helm-field w-full h-32 bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-white placeholder-zinc-500 focus:outline-none resize-none"
                 autoFocus
               />
               <div className="flex gap-3 mt-4">
@@ -282,15 +322,15 @@ export function DesignView() {
                     setShowFeedbackDialog(false);
                     setFeedback('');
                   }}
-                  disabled={isApproving}
+                  disabled={busy}
                   className="flex-1 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded transition-colors"
                 >
                   取消
                 </button>
                 <button
                   onClick={() => handleApprove(false)}
-                  disabled={isApproving || !feedback.trim()}
-                  className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded transition-colors flex items-center justify-center gap-2"
+                  disabled={busy || !feedback.trim()}
+                  className="helm-btn-primary flex-1 px-4 py-2 rounded flex items-center justify-center gap-2"
                 >
                   {isApproving ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -304,11 +344,27 @@ export function DesignView() {
         )}
 
         {/* 审批按钮 */}
+        {toolsIncomplete && (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-400/20 bg-amber-400/[0.05] px-3 py-2">
+            <p className="flex-1 text-xs text-amber-200">
+              还有 {missingTools.length} 个工具未就绪（{missingTools.map((t) => t.tool_id).join('、')}）。可先「重试补齐」，或直接批准让后端再对齐一次。
+            </p>
+            <button
+              type="button"
+              onClick={() => void handleFulfillTools()}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-md border border-amber-400/30 px-2.5 py-1 text-xs text-amber-100 hover:bg-amber-400/10 disabled:opacity-40"
+            >
+              {isFulfilling ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              重试补齐工具
+            </button>
+          </div>
+        )}
         <div className="flex gap-4">
           <button
             onClick={() => handleApprove(true)}
-            disabled={isApproving}
-            className="flex-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-medium py-3 rounded-lg transition-colors"
+            disabled={busy}
+            className="helm-btn-primary flex-1 flex items-center justify-center gap-2 font-medium py-3 rounded-lg disabled:opacity-40"
           >
             {isApproving ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -322,7 +378,7 @@ export function DesignView() {
 
           <button
             onClick={() => handleApprove(false)}
-            disabled={isApproving}
+            disabled={busy}
             className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-medium py-3 rounded-lg transition-colors"
           >
             <XCircle className="w-4 h-4" />

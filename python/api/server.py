@@ -124,7 +124,7 @@ def _load_models_config(config_root: Path | None = None) -> dict:
     except secret_store.SecretStoreError:
         stored_keys = {}
     for provider_name in list(base_urls):
-        env_key = os.getenv(f"EAS_LLM_API_KEY_{provider_name.upper()}")
+        env_key = os.getenv(secret_store.env_key_name(provider_name))
         env_url = os.getenv(f"EAS_LLM_BASE_URL_{provider_name.upper()}")
         api_key = env_key or stored_keys.get(provider_name, "")
         if api_key:
@@ -266,7 +266,8 @@ async def lifespan(app: FastAPI):
         
         # 技能包（生态层）：skills/ 目录 → ToolRegistry + Capability 目录双注册。
         # entry 技能成为普通工具：计划步骤可执行、Designer 工具评估可见、对话可调用。
-        state.skill_manager = SkillManager.from_config(state.config)
+        from paths import REPO_ROOT
+        state.skill_manager = SkillManager.from_config(state.config, base_dir=REPO_ROOT)
         state.skill_manager.load()
         for _skill_tool_id in state.skill_manager.register_into(state.tool_registry):
             state.capability_registry.register(
@@ -274,6 +275,32 @@ async def lifespan(app: FastAPI):
                     state.tool_registry, _skill_tool_id, state.skill_manager.by_tool_id(_skill_tool_id)
                 )
             )
+        # 工具目录落库：整份注册表索引 + 磁盘技能对账（脚本仍在 skills/，库内是索引）。
+        # coding_agent 等仅在 CapabilityRegistry 的项也一并登记。
+        try:
+            _reg_tools = list(state.tool_registry.list_tools() or [])
+            _seen_ids = {str(t.get("tool_id")) for t in _reg_tools if t.get("tool_id")}
+            if state.capability_registry is not None:
+                for _spec in state.capability_registry.list_specs():
+                    _cap_id = getattr(_spec, "id", None)
+                    if _cap_id and str(_cap_id) not in _seen_ids:
+                        _reg_tools.append({
+                            "tool_id": str(_cap_id),
+                            "name": str(_cap_id),
+                            "description": getattr(_spec, "description", None) or "capability",
+                        })
+                        _seen_ids.add(str(_cap_id))
+            _reg_n = state.database.sync_tool_catalog_registry(_reg_tools)
+            _sync = state.database.sync_tool_catalog_skills(
+                state.skill_manager.skills, repo_root=REPO_ROOT,
+            )
+            await broadcast_log(
+                f"工具目录已同步: registry={_reg_n} skills_ready={_sync.get('ready', 0)} "
+                f"missing={_sync.get('missing', 0)}",
+                "success" if not _sync.get("missing") else "warning",
+            )
+        except Exception as _sync_exc:
+            logger.warning("工具目录同步失败: {}", _sync_exc)
         await broadcast_log(
             f"技能包已加载: {len(state.skill_manager.entry_skills())} 个入口技能 / "
             f"{len(state.skill_manager.knowledge_skills())} 个知识包"
@@ -288,7 +315,14 @@ async def lifespan(app: FastAPI):
         
         # 初始化 Designer（传入dispatcher）
         designer_config = state.config.get("models", {}).get("designer", {})
-        state.designer = DefaultDesigner(state.llm_client, designer_config, state.dispatcher)
+        state.designer = DefaultDesigner(
+            state.llm_client,
+            designer_config,
+            state.dispatcher,
+            skill_manager=state.skill_manager,
+            capability_registry=state.capability_registry,
+            database=state.database,
+        )
         
         # 初始化 Executor
         executor_config = state.config.get("models", {}).get("executor", {})

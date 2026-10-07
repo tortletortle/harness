@@ -27,6 +27,20 @@ vi.mock('../api/client', () => ({
   },
 }));
 
+vi.mock('./PlanFlowGraph', () => ({
+  PlanFlowGraph: ({
+    steps,
+  }: {
+    steps: { step_id: string; description: string }[];
+  }) => (
+    <div data-testid="plan-flow-graph">
+      {steps.map((s) => (
+        <div key={s.step_id}>{s.description}</div>
+      ))}
+    </div>
+  ),
+}));
+
 const mockedApi = vi.mocked(apiClient, true);
 
 function makeStep(overrides: Partial<Step> & Pick<Step, 'step_id' | 'description'>): Step {
@@ -295,7 +309,7 @@ describe('PlanView Agent 补输入', () => {
 });
 
 describe('PlanView 依赖图', () => {
-  it('按服务端依赖与当前分支展示计划层级', async () => {
+  it('可切换到流程图并看到步骤节点', async () => {
     const plan = makePlan([
       makeStep({ step_id: 'step-1', description: '前置步骤', order: 1 }),
       makeStep({ step_id: 'step-2', description: '后续步骤', order: 2,
@@ -305,8 +319,12 @@ describe('PlanView 依赖图', () => {
 
     expect(screen.getByText(/分支 #3/)).toBeInTheDocument();
     expect(screen.getByText('依赖 1 步')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /依赖分层视图/ }));
-    expect(screen.getByText('层级 2')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /流程图/ }));
+    expect(screen.getByTestId('plan-flow-graph')).toBeInTheDocument();
+    expect(screen.getByText('前置步骤')).toBeInTheDocument();
+    expect(screen.getByText('后续步骤')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '阶段列表' })).toBeInTheDocument();
   });
 });
 

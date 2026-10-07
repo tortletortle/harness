@@ -123,7 +123,7 @@ def _load_models_config(config_root: Path | None = None) -> dict:
     except secret_store.SecretStoreError:
         stored_keys = {}
     for provider_name in list(base_urls):
-        env_key = os.getenv(f"EAS_LLM_API_KEY_{provider_name.upper()}")
+        env_key = os.getenv(secret_store.env_key_name(provider_name))
         env_url = os.getenv(f"EAS_LLM_BASE_URL_{provider_name.upper()}")
         api_key = env_key or stored_keys.get(provider_name, "")
         if api_key:
@@ -268,10 +268,14 @@ def format_design_for_frontend(design) -> dict:
     arch = part1.get('architecture', {})
     diff = part1.get('difficulty', {})
 
+    user_approval = (
+        design.user_approval if hasattr(design, 'user_approval') else design.get('user_approval')
+    )
     return {
         "design_id": str(design.design_id) if hasattr(design, 'design_id') else str(design.get('design_id', '')),
         "user_request": design.user_request if hasattr(design, 'user_request') else design.get('user_request', ''),
         "created_at": design.timestamp.isoformat() if hasattr(design, 'timestamp') else design.get('timestamp', ''),
+        "user_approval": bool(user_approval) if user_approval is not None else False,
         "part1": {
             "architecture": {
                 "components": arch.get('components', []),

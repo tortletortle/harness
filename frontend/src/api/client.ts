@@ -147,18 +147,58 @@ export class ApiClient {
   }
 
   /**
+   * 按缺口再对齐/合成工具，写回设计书（不生成计划）。
+   */
+  async fulfillDesignTools(designId: string): Promise<{ design: Design; missing_tools: string[]; ready: boolean }> {
+    const response = await authFetch(`${API_BASE}/api/design/${encodeURIComponent(designId)}/fulfill-tools`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      await throwResponseError(response, '对齐工具失败');
+    }
+    const data = await response.json();
+    if (!data.success || !data.design) {
+      throw new Error(data.detail || data.error || '对齐工具失败');
+    }
+    return {
+      design: data.design,
+      missing_tools: Array.isArray(data.missing_tools) ? data.missing_tools : [],
+      ready: Boolean(data.ready),
+    };
+  }
+
+  /**
    * 审批设计书
    */
   async approveDesign(
     designId: string,
     approved: boolean,
     feedback?: string
-  ): Promise<{ plan?: ExecutionPlan; revised?: boolean; design?: Design; rejected?: boolean; message?: string; secrets_prompt?: { prompt_shown: boolean; available?: boolean; entry_url?: string; pending?: string[]; already_set?: string[] } }> {
+  ): Promise<{
+    plan?: ExecutionPlan;
+    revised?: boolean;
+    design?: Design;
+    rejected?: boolean;
+    message?: string;
+    toolsIncomplete?: boolean;
+    missing_tools?: string[];
+    secrets_prompt?: { prompt_shown: boolean; available?: boolean; entry_url?: string; pending?: string[]; already_set?: string[] };
+  }> {
     const response = await authFetch(`${API_BASE}/api/design/${designId}/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ design_id: designId, approved, feedback }),
     });
+
+    if (response.status === 409) {
+      const data = await response.json().catch(() => ({}));
+      return {
+        toolsIncomplete: true,
+        design: data.design,
+        missing_tools: Array.isArray(data.missing_tools) ? data.missing_tools : [],
+        message: typeof data.detail === 'string' ? data.detail : '工具未齐，无法生成计划',
+      };
+    }
 
     if (!response.ok) {
       await throwResponseError(response, '审批失败');
@@ -456,7 +496,16 @@ export class ApiClient {
   async setConfigKey(
     provider: string,
     value: string,
-  ): Promise<{ configured: boolean; persisted?: boolean; cleared?: boolean; provider?: string }> {
+  ): Promise<{
+    configured: boolean;
+    persisted?: boolean;
+    cleared?: boolean;
+    provider?: string;
+    applied?: boolean;
+    env_released?: boolean;
+    environment_override?: boolean;
+    requires_restart?: boolean;
+  }> {
     const response = await authFetch(`${API_BASE}/api/config/key`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

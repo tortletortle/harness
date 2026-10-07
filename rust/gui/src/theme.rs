@@ -43,61 +43,61 @@ macro_rules! palette {
 
 palette!(
     page_bg,
-    Color32::from_rgb(243, 244, 246),
-    Color32::from_rgb(17, 20, 24)
+    Color32::from_rgb(243, 247, 246),
+    Color32::from_rgb(9, 13, 19)
 );
-palette!(surface, Color32::WHITE, Color32::from_rgb(26, 31, 38));
+palette!(surface, Color32::WHITE, Color32::from_rgb(17, 22, 30));
 palette!(
     hover_bg,
-    Color32::from_rgb(243, 244, 246),
-    Color32::from_rgb(36, 42, 51)
+    Color32::from_rgb(231, 240, 237),
+    Color32::from_rgb(27, 35, 48)
 );
 palette!(
     border,
-    Color32::from_rgb(229, 231, 235),
-    Color32::from_rgb(42, 49, 59)
+    Color32::from_rgb(219, 229, 226),
+    Color32::from_rgb(34, 43, 54)
 );
 palette!(
     border_strong,
-    Color32::from_rgb(209, 213, 219),
-    Color32::from_rgb(58, 66, 78)
+    Color32::from_rgb(196, 212, 207),
+    Color32::from_rgb(51, 65, 79)
 );
 
 palette!(
     accent,
-    Color32::from_rgb(37, 99, 235),
-    Color32::from_rgb(59, 130, 246)
+    Color32::from_rgb(8, 123, 105),
+    Color32::from_rgb(86, 217, 184)
 );
 palette!(
     accent_dark,
-    Color32::from_rgb(29, 78, 216),
-    Color32::from_rgb(37, 99, 235)
+    Color32::from_rgb(8, 123, 105),
+    Color32::from_rgb(20, 134, 111)
 );
 palette!(
     accent_soft,
-    Color32::from_rgb(219, 234, 254),
-    Color32::from_rgb(30, 47, 74)
+    Color32::from_rgb(225, 239, 237),
+    Color32::from_rgb(25, 45, 48)
 );
 palette!(
     accent_text,
-    Color32::from_rgb(29, 78, 216),
-    Color32::from_rgb(125, 170, 247)
+    Color32::from_rgb(8, 123, 105),
+    Color32::from_rgb(117, 221, 193)
 );
 
 palette!(
     text,
-    Color32::from_rgb(28, 35, 48),
-    Color32::from_rgb(229, 233, 240)
+    Color32::from_rgb(34, 49, 61),
+    Color32::from_rgb(236, 244, 242)
 );
 palette!(
     text_sec,
-    Color32::from_rgb(107, 114, 128),
-    Color32::from_rgb(148, 158, 172)
+    Color32::from_rgb(94, 109, 124),
+    Color32::from_rgb(148, 164, 173)
 );
 palette!(
     text_faint,
-    Color32::from_rgb(156, 163, 175),
-    Color32::from_rgb(100, 110, 124)
+    Color32::from_rgb(122, 138, 150),
+    Color32::from_rgb(101, 114, 127)
 );
 
 palette!(
@@ -147,19 +147,19 @@ palette!(
 );
 palette!(
     info_soft,
-    Color32::from_rgb(237, 233, 254),
-    Color32::from_rgb(45, 38, 74)
+    Color32::from_rgb(225, 239, 237),
+    Color32::from_rgb(21, 42, 40)
 );
 palette!(
     info_text,
-    Color32::from_rgb(109, 40, 217),
-    Color32::from_rgb(178, 152, 247)
+    Color32::from_rgb(8, 123, 105),
+    Color32::from_rgb(117, 221, 193)
 );
 
 palette!(
     log_bg,
-    Color32::from_rgb(243, 244, 246),
-    Color32::from_rgb(13, 16, 20)
+    Color32::from_rgb(243, 247, 246),
+    Color32::from_rgb(9, 13, 19)
 );
 palette!(
     notice_bg,
@@ -170,9 +170,9 @@ palette!(
 /// Activity Bar 底色在两种主题下都保持深色，维持工作台的锚点感。
 pub fn activity_bg() -> Color32 {
     if is_dark() {
-        Color32::from_rgb(13, 16, 20)
+        Color32::from_rgb(14, 19, 27)
     } else {
-        Color32::from_rgb(35, 39, 47)
+        Color32::from_rgb(20, 28, 36)
     }
 }
 
@@ -205,7 +205,7 @@ pub fn install(ctx: &egui::Context) {
         };
         v.hyperlink_color = accent_text();
         v.selection = egui::style::Selection {
-            bg_fill: Color32::from_rgba_unmultiplied(37, 99, 235, if is_dark() { 90 } else { 45 }),
+            bg_fill: Color32::from_rgba_unmultiplied(86, 217, 184, if is_dark() { 90 } else { 45 }),
             stroke: Stroke::new(1.0_f32, accent()),
         };
 
@@ -336,7 +336,7 @@ pub fn running_indicator(ui: &Ui, rect: egui::Rect) {
 /// 主操作按钮（填充主色）。
 pub fn primary_button(text: impl Into<String>) -> egui::Button<'static> {
     egui::Button::new(RichText::new(text.into()).color(Color32::WHITE).strong())
-        .fill(accent())
+        .fill(accent_dark())
         .corner_radius(CornerRadius::same(8))
         .min_size(egui::vec2(0.0, 30.0))
 }
@@ -374,7 +374,7 @@ pub fn activity_button(text: impl Into<String>, active: bool) -> egui::Button<'s
         Color32::from_rgb(190, 195, 205)
     };
     let background = if active {
-        Color32::from_rgb(55, 61, 73)
+        Color32::from_rgb(29, 69, 62)
     } else {
         Color32::TRANSPARENT
     };

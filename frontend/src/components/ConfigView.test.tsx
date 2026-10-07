@@ -91,10 +91,10 @@ describe('模型配置', () => {
       ...payload,
       schema_version: 2,
       revision: 'version-2',
-      requires_restart: true,
+      requires_restart: false,
     }));
     await user.click(screen.getByRole('button', { name: '保存配置' }));
-    await screen.findByText(/配置已保存到本地/);
+    await screen.findByText(/配置已保存，并已应用到当前会话/);
     const payload = api.updateModelConfig.mock.calls[0][0];
     expect(payload.revision).toBe('version-1');
     expect(payload.models.designer.primary.model).toBe('new-model');
@@ -125,7 +125,11 @@ describe('模型配置', () => {
     expect(field).toHaveAttribute('type', 'password');
     // A saved key is never rendered back into the field.
     expect(field).toHaveValue('');
-    api.setConfigKey.mockResolvedValue({ configured: true });
+    api.setConfigKey.mockResolvedValue({
+      configured: true,
+      persisted: true,
+      applied: true,
+    });
     await user.type(field, 'sk-typed-secret');
     await user.click(screen.getByRole('button', { name: '显示密钥' }));
     expect(field).toHaveAttribute('type', 'text');
@@ -136,6 +140,9 @@ describe('模型配置', () => {
       expect(api.setConfigKey).toHaveBeenCalledWith('alpha', 'sk-typed-secret'),
     );
     expect(field).toHaveValue('');
+    expect(
+      await screen.findByText('密钥已生效，当前会话无需重启。'),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'alpha 保存密钥' }));
     await waitFor(() => expect(api.setConfigKey).toHaveBeenCalledWith('alpha', ''));
   });

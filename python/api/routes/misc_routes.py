@@ -32,6 +32,8 @@ from api.configuration import (
     ConfigUpdateRequest, ConfigProblem, KeyUpdateRequest, read_configuration,
     save_configuration, save_api_key,
 )
+from api import secret_store
+from api.model_runtime import apply_runtime_models
 
 
 def _config_dir() -> Path:
@@ -46,6 +48,39 @@ def _config_dir() -> Path:
         if (candidate / "models.yaml").exists():
             return candidate.resolve()
     return (Path.cwd() / "config").resolve()
+
+
+def _dotenv_path() -> Path:
+    return Path(__file__).resolve().parents[3] / ".env"
+
+
+def _release_saved_endpoints(providers) -> None:
+    """Let the saved Base URL win: drop process/env-file overrides for these IDs."""
+    dotenv = _dotenv_path()
+    for name in providers:
+        secret_store.clear_process_env_url(name)
+        secret_store.retire_dotenv_url(dotenv, name)
+
+
+def _apply_runtime_credential(provider: str) -> dict:
+    """Release env overrides, then hot-load every provider from the saved store."""
+    env_released = secret_store.clear_process_env_key(provider)
+    dotenv_retired = secret_store.retire_dotenv_assignment(_dotenv_path(), provider)
+    apply_runtime_models(_config_dir(), state)
+    client = getattr(state, "llm_client", None)
+    runtime = getattr(state, "config", None) or {}
+    key = secret_store.effective_key(_config_dir(), provider)
+    urls = runtime.get("base_urls") or {}
+    providers = getattr(client, "providers", {}) if client is not None else {}
+    if not key:
+        applied = client is not None
+    else:
+        applied = bool(client is not None and provider in providers and urls.get(provider))
+    return {
+        "applied": applied,
+        "env_released": env_released or dotenv_retired,
+        "environment_override": bool(os.getenv(secret_store.env_key_name(provider))),
+    }
 
 
 @router.get("/")
@@ -118,29 +153,72 @@ async def get_usage(limit: int = 50, plan_id: Optional[str] = None):
 
 @router.get("/api/tools", dependencies=[Depends(require_token)])
 async def get_tools():
-    """获取工具列表"""
+    """获取工具列表（含计划白名单与 SQLite catalog 状态）。"""
     try:
+        from tool_synthesis import PLAN_CORE, PLAN_DENYLIST, allowed_plan_tools
+
         tools = state.tool_registry.list_tools()
-        # Format tools for frontend
+        catalog_rows = []
+        try:
+            catalog_rows = state.database.list_tool_catalog()
+        except Exception as exc:
+            logger.warning("读取工具目录失败: {}", exc)
+        catalog_by_id = {str(r.get("tool_id")): r for r in catalog_rows if r.get("tool_id")}
+
+        known_ids = [str(t.get("tool_id")) for t in tools if t.get("tool_id")]
+        skill_extras = []
+        if state.skill_manager is not None:
+            skill_extras = [s.tool_id for s in state.skill_manager.entry_skills()]
+        plan_allowed = allowed_plan_tools(known_ids, skill_extras)
+
         formatted_tools = []
+        seen = set()
         for tool in tools:
-            # Extract capabilities as a list of instruction names
+            tid = str(tool.get("tool_id") or "")
+            if not tid:
+                continue
+            seen.add(tid)
             capabilities = []
             if "capabilities" in tool and "instructions" in tool.get("capabilities", {}):
                 capabilities = [inst["name"] for inst in tool["capabilities"]["instructions"]]
-            
+            cat = catalog_by_id.get(tid) or {}
             formatted_tools.append({
-                "tool_id": tool.get("tool_id", ""),
+                "tool_id": tid,
                 "name": tool.get("name", ""),
                 "description": tool.get("description", ""),
                 "category": tool.get("category", "other"),
                 "capabilities": capabilities,
-                "requirements": []  # Can be populated from dependencies if needed
+                "requirements": [],
+                "plan_allowed": tid in plan_allowed,
+                "catalog_status": cat.get("status"),
+                "catalog_source": cat.get("source"),
             })
-        
+
+        # 库内有、内存未加载的缺失技能也列出，便于对账
+        for tid, cat in catalog_by_id.items():
+            if tid in seen:
+                continue
+            if (cat.get("status") or "") != "missing" and not str(tid).startswith("skill_"):
+                continue
+            formatted_tools.append({
+                "tool_id": tid,
+                "name": cat.get("name") or tid,
+                "description": cat.get("description") or "目录有记录，当前未加载到注册表",
+                "category": "other",
+                "capabilities": [],
+                "requirements": [],
+                "plan_allowed": False,
+                "catalog_status": cat.get("status") or "missing",
+                "catalog_source": cat.get("source"),
+            })
+
+        formatted_tools.sort(key=lambda t: (0 if t.get("plan_allowed") else 1, t.get("tool_id") or ""))
         return {
             "success": True,
-            "tools": formatted_tools
+            "tools": formatted_tools,
+            "plan_core": sorted(PLAN_CORE),
+            "plan_denylist": sorted(PLAN_DENYLIST),
+            "catalog": catalog_rows,
         }
     except Exception as e:
         logger.exception("查询工具列表失败: {}", e)
@@ -174,10 +252,16 @@ async def api_chat_sessions(_t: str = Depends(require_token)):
 
 @router.get("/api/skills", dependencies=[Depends(require_token)])
 async def api_skills(_t: str = Depends(require_token)):
-    """技能包清单（生态层）：入口技能 + 知识包 + 加载失败记录。"""
-    if state.skill_manager is None:
-        return {"success": True, "skills": [], "skipped": []}
-    return {"success": True, **state.skill_manager.describe_all()}
+    """技能包清单（生态层）：入口技能 + 知识包 + 加载失败记录 + SQLite 工具目录。"""
+    payload = {"skills": [], "skipped": []}
+    if state.skill_manager is not None:
+        payload.update(state.skill_manager.describe_all())
+    catalog = []
+    try:
+        catalog = state.database.list_tool_catalog()
+    except Exception as exc:
+        logger.warning("读取工具目录失败: {}", exc)
+    return {"success": True, **payload, "catalog": catalog}
 
 
 @router.post("/api/notify/test", dependencies=[Depends(require_token)])
@@ -281,20 +365,30 @@ async def get_config():
 
 @router.post("/api/config", dependencies=[Depends(require_token)])
 async def update_config(request: ConfigUpdateRequest):
-    """Atomically persist non-secret settings; leave running tasks/config untouched."""
+    """Persist non-secret settings and apply them to the running model module."""
     try:
-        config = save_configuration(_config_dir(), state.config, request)
+        directory = _config_dir()
+        save_configuration(directory, state.config, request)
+        _release_saved_endpoints(request.base_urls)
+        apply_runtime_models(directory, state)
+        config = read_configuration(directory, state.config)
         return {"success": True, "config": config,
-                "message": "配置已保存；未自动重启服务"}
+                "message": "配置已保存并已应用到当前会话"}
     except ConfigProblem as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from None
 
 
 @router.post("/api/config/key", dependencies=[Depends(require_token)])
 async def set_config_key(request: KeyUpdateRequest):
-    """Persist or clear one provider key in the encrypted account-local store."""
+    """Persist or clear one provider key, then apply it to the running LLM client."""
     try:
-        return {"success": True, "key": save_api_key(_config_dir(), request)}
+        result = save_api_key(_config_dir(), request)
+        result.update(_apply_runtime_credential(request.provider))
+        if result.get("env_released"):
+            result["configured"] = bool(result.get("persisted")) or result.get(
+                "environment_override", False
+            )
+        return {"success": True, "key": result}
     except ConfigProblem as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from None
 

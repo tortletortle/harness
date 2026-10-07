@@ -1,0 +1,233 @@
+/* 星舵 .make 工作台视觉系统。保留原有 React 视图、API 与开屏动画。 */
+:root:not([data-theme='light']) {
+  --app-bg: #090d13;
+  --app-surface: #11161e;
+  --app-surface-raised: #161c26;
+  --app-surface-soft: #1b2330;
+  --app-border: #222b36;
+  --app-border-strong: #33414f;
+  --app-text: #ecf4f2;
+  --app-text-muted: #94a4ad;
+  --app-text-subtle: #65727f;
+  --app-brand: #56d9b8;
+  --app-brand-soft: rgba(80, 216, 183, .12);
+  --app-success: #56d9b8;
+  --app-warning: #dda856;
+  --app-on-brand: #062118;
+  --app-radius: 10px;
+}
+:root[data-theme='light'] {
+  --app-brand: #087b69;
+  --app-brand-soft: rgba(8, 123, 105, .12);
+  --app-on-brand: #ffffff;
+}
+.helm-app { background: var(--app-bg); color: var(--app-text); }
+:root:not([data-theme='light']) .helm-app.surface-grid {
+  background: radial-gradient(ellipse at 54% 12%, rgba(29, 75, 69, .13), transparent 40%), var(--app-bg);
+}
+.helm-resize-handle { flex: none; position: relative; z-index: 3; background: var(--app-border); transition: background .15s; }
+.helm-resize-handle:hover { background: var(--app-brand); }
+.helm-resize-handle.is-vertical { width: 1px; }
+.helm-resize-handle.is-horizontal { height: 1px; }
+.helm-sidebar, .helm-main { background: var(--app-bg); }
+.helm-sidebar { display: flex; height: 100%; min-height: 0; flex-direction: column; background: #0e131b; overflow: hidden; }
+.helm-sidebar-brand { display: flex; flex: none; align-items: center; gap: 11px; height: 72px; padding: 0 19px; border-bottom: 1px solid var(--app-border); }
+.helm-brand-mark { display: grid; place-items: center; height: 36px; width: 36px; flex: none; color: #7ce5c8; background: #132e2d; border: 1px solid #27564b; border-radius: 9px; box-shadow: 0 0 19px rgba(38, 180, 145, .08); }
+.helm-sidebar-brand strong { display: block; font-size: 14px; font-weight: 700; line-height: 1.5; white-space: nowrap; }
+.helm-sidebar-brand small { display: block; color: #73818f; font-size: 10px; letter-spacing: .01em; white-space: nowrap; }
+.helm-sidebar-scroll { min-height: 0; flex: 1; overflow-y: auto; padding: 15px 11px; }
+.helm-new-task { display: flex; width: 100%; min-height: 39px; align-items: center; gap: 10px; padding: 0 11px; border: 1px solid #315a52; border-radius: 7px; background: linear-gradient(90deg, rgba(32, 120, 103, .17), rgba(29, 69, 62, .12)); color: #70e0bd; font-size: 12px; font-weight: 600; white-space: nowrap; transition: background .15s, border-color .15s; }
+.helm-new-task:hover { border-color: #5edbb7; background: rgba(38, 148, 122, .17); }
+.helm-new-task kbd { margin-left: auto; color: #667e7a; font-size: 10px; font-weight: 400; }
+.helm-nav-section { margin-top: 22px; }
+.helm-nav-heading { padding: 0 9px; margin: 0 0 8px; color: #5e6d7a; font-size: 10px; letter-spacing: .07em; }
+.helm-nav-section nav { display: grid; gap: 2px; }
+.helm-nav-item { display: flex; position: relative; align-items: center; width: 100%; height: 35px; gap: 12px; padding: 0 11px; border-radius: 6px; color: #8c99a7; font-size: 12px; text-align: left; white-space: nowrap; transition: color .15s, background .15s; }
+.helm-nav-item:hover { background: #1b222d; color: #e5eeec; }
+.helm-nav-item.is-active { background: #20252e; color: #f3fbf8; font-weight: 600; }
+.helm-nav-item.is-active::before { position: absolute; left: 0; top: 5px; bottom: 5px; width: 2px; background: #5bd8b6; border-radius: 2px; content: ''; }
+.helm-nav-item.is-active svg { color: #70dfc0; }
+.helm-nav-current { width: 5px; height: 5px; margin-left: auto; border-radius: 50%; background: #56d9b8; box-shadow: 0 0 8px #56d9b8; }
+.helm-sidebar-footer { flex: none; padding: 10px 11px 0; }
+.helm-current-task { display: block; width: 100%; padding: 13px 11px; margin-bottom: 10px; text-align: left; border: 1px solid var(--app-border); border-radius: 9px; background: #141922; }
+.helm-current-task:hover { border-color: #315d55; }
+.helm-current-task-label { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; font-size: 10px; color: #71818e; }
+.helm-current-task strong { display: flex; align-items: center; gap: 7px; overflow: hidden; white-space: nowrap; font-size: 11px; color: var(--app-text); }
+.helm-status-dot { display: inline-block; width: 7px; height: 7px; flex: none; border-radius: 50%; background: #768493; }
+.helm-status-dot.is-live { background: #57dcb8; box-shadow: 0 0 9px #57dcb8; }
+.helm-progress-track { display: block; overflow: hidden; height: 3px; margin: 12px 0 7px; border-radius: 4px; background: #2b3641; }
+.helm-progress-track span { display: block; height: 100%; background: #5bdab6; transition: width .3s; }
+.helm-current-task small { display: flex; justify-content: space-between; font-size: 10px; color: #7c8b97; }
+.helm-sidebar-controls { border-top: 1px solid var(--app-border); padding: 7px 0; }
+.helm-footer-button { display: flex; align-items: center; width: 100%; height: 32px; gap: 11px; padding: 0 10px; border-radius: 6px; color: #8493a0; font-size: 11px; }
+.helm-footer-button:hover { background: #1b222d; color: var(--app-text); }
+.helm-footer-on { margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: #5bdab6; }
+.helm-workspace { display: flex; align-items: center; min-height: 58px; gap: 10px; margin: 0 -11px; padding: 8px 19px; border-top: 1px solid var(--app-border); }
+.helm-workspace-mark { display: grid; place-items: center; width: 29px; height: 29px; flex: none; border: 1px solid var(--app-border); border-radius: 7px; color: #d2dfda; font-size: 16px; }
+.helm-workspace div { min-width: 0; flex: 1; }
+.helm-workspace strong { display: block; white-space: nowrap; font-size: 11px; color: var(--app-text); }
+.helm-workspace small { display: block; white-space: nowrap; font-size: 10px; color: #697987; }
+.helm-workspace small i { display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: #55d6b4; }
+.helm-workspace > svg { color: #7b8992; }
+.helm-sidebar.is-collapsed .helm-sidebar-brand { justify-content: center; padding: 0; }
+.helm-sidebar.is-collapsed .helm-sidebar-scroll { padding: 12px 5px; }
+.helm-sidebar.is-collapsed .helm-sidebar-label, .helm-sidebar.is-collapsed .helm-new-task kbd { display: none; }
+.helm-sidebar.is-collapsed .helm-new-task, .helm-sidebar.is-collapsed .helm-nav-item, .helm-sidebar.is-collapsed .helm-footer-button { justify-content: center; padding: 0; }
+.helm-sidebar.is-collapsed .helm-sidebar-footer { padding: 5px; }
+.helm-sidebar.is-collapsed .helm-workspace { justify-content: center; margin: 0 -5px; padding: 8px 0; }
+.helm-header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 14px; min-height: 72px; padding: 0 24px; border-bottom: 1px solid var(--app-border); background: #0d1219; }
+.helm-breadcrumb { display: flex; gap: 7px; overflow: hidden; white-space: nowrap; color: #71808d; font-size: 10px; }
+.helm-breadcrumb span:last-child { overflow: hidden; text-overflow: ellipsis; color: #a2b0b9; }
+.helm-header-title { display: flex; align-items: center; gap: 12px; margin-top: 3px; }
+.helm-header-title h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 650; letter-spacing: -.025em; }
+.helm-plan-id { flex: none; padding: 3px 7px; border: 1px solid var(--app-border); border-radius: 3px; color: #748593; font-size: 9px; font-family: monospace; }
+.helm-header-actions { display: flex; flex: none; align-items: center; gap: 10px; }
+.helm-connection, .helm-run-status { display: inline-flex; align-items: center; gap: 6px; color: #9ba6b1; font-size: 10px; white-space: nowrap; }
+.helm-connection.is-online, .helm-run-status.is-live { color: #70deb7; }
+.helm-connection svg:last-child { opacity: .85; }
+.helm-run-status { padding-left: 10px; border-left: 1px solid var(--app-border); }
+.helm-icon-button { display: grid; place-items: center; height: 29px; width: 29px; color: #82939c; border-radius: 6px; }
+.helm-icon-button:hover { color: #e7f8f3; background: #1d2830; }
+.helm-avatar { display: grid; place-items: center; width: 28px; height: 28px; margin-left: 2px; border: 1px solid #25313d; border-radius: 6px; background: #1a202b; color: #d9e5e3; font-size: 11px; }
+.helm-content { background: radial-gradient(ellipse at 50% 0, rgba(24, 69, 64, .09), transparent 43%), #0b0f15; }
+/* Align leftover zinc/hex surfaces with the workbench. Brand color now comes from helm-* utilities. */
+:root:not([data-theme='light']) .helm-app .panel-surface,
+:root:not([data-theme='light']) .helm-app [class~='bg-zinc-900'],
+:root:not([data-theme='light']) .helm-app [class~='bg-zinc-950'],
+:root:not([data-theme='light']) .helm-app [class*='bg-[#111419]'],
+:root:not([data-theme='light']) .helm-app [class*='bg-[#171a20]'] { background-color: #141a23 !important; border-color: #27323f !important; }
+:root:not([data-theme='light']) .helm-app [class~='bg-[#0d0f13]/90'],
+:root:not([data-theme='light']) .helm-app [class~='bg-[#0d0f13]/80'] { background-color: rgba(14, 19, 27, .96) !important; }
+:root:not([data-theme='light']) .helm-app [class~='bg-[#101216]'],
+:root:not([data-theme='light']) .helm-app [class~='bg-[#0b0d11]'] { background-color: #0e131b !important; }
+:root:not([data-theme='light']) .helm-app textarea,
+:root:not([data-theme='light']) .helm-app input,
+:root:not([data-theme='light']) .helm-app select { accent-color: #5bd8b6; }
+:root:not([data-theme='light']) .helm-app textarea:focus,
+:root:not([data-theme='light']) .helm-app input:focus { border-color: rgba(91, 216, 182, .56); }
+.helm-app button { transition-duration: .18s; }
+.helm-app .panel-surface { box-shadow: 0 12px 40px rgba(0, 0, 0, .07); }
+
+.helm-accent { color: var(--app-brand); }
+.helm-link { color: var(--app-brand); }
+.helm-link:hover { color: color-mix(in srgb, var(--app-brand) 78%, white); }
+.helm-chip {
+  border: 1px solid color-mix(in srgb, var(--app-brand) 28%, transparent);
+  background: var(--app-brand-soft);
+  color: var(--app-brand);
+}
+.helm-icon-well {
+  background: var(--app-brand-soft);
+  color: var(--app-brand);
+}
+.helm-btn-primary {
+  background: #14866f;
+  color: #ecf4f2;
+  box-shadow: none;
+}
+.helm-btn-primary:hover:not(:disabled) { background: #1ba183; }
+.helm-btn-primary:disabled {
+  background: rgba(255, 255, 255, .07);
+  color: #65727f;
+  box-shadow: none;
+}
+.helm-field:focus,
+.helm-field:focus-within { border-color: color-mix(in srgb, var(--app-brand) 56%, transparent) !important; }
+.helm-hover-brand:hover {
+  border-color: color-mix(in srgb, var(--app-brand) 35%, transparent);
+  background: var(--app-brand-soft);
+}
+.helm-tab-active { border-color: var(--app-brand); color: var(--app-text); }
+.helm-log-panel { background: #0e131b; }
+.helm-bubble-user { background: #14866f; color: #ecf4f2; }
+:root[data-theme='light'] .helm-btn-primary { background: #12866d; color: #fff; }
+:root[data-theme='light'] .helm-btn-primary:hover:not(:disabled) { background: #0f735e; }
+:root[data-theme='light'] .helm-btn-primary:disabled { background: #d7e4e0; color: #7a8a96; }
+:root[data-theme='light'] .helm-log-panel { background: #fff; }
+:root[data-theme='light'] .helm-bubble-user { background: #12866d; color: #fff; }
+/* Execution summary is data driven, not a static mock-up of the design file. */
+.execution-overview { padding: 26px 30px 4px; }
+.execution-overview-label { display: flex; align-items: center; gap: 7px; color: #6bdcba; font-size: 10px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+.execution-overview-label span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 9px currentColor; }
+.execution-overview h2 { margin: 9px 0 4px; font-size: 23px; font-weight: 700; letter-spacing: -.035em; line-height: 1.35; }
+.execution-overview p { margin: 0; color: #82929e; font-size: 11px; line-height: 1.6; }
+.execution-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 22px; }
+.execution-metric { display: flex; min-width: 0; min-height: 72px; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--app-border); border-radius: 8px; background: #121821; }
+.execution-metric-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border-radius: 7px; background: rgba(78, 211, 170, .11); color: #67dfbc; }
+.execution-metric-icon.is-blue { background: rgba(84, 132, 205, .12); color: #8fb8ef; }
+.execution-metric-icon.is-gold { background: rgba(217, 168, 86, .12); color: #e7b96b; }
+.execution-metric-icon.is-branch { background: rgba(78, 211, 170, .11); color: #67dfbc; }
+:root[data-theme='light'] .execution-metric-icon.is-branch { background: rgba(8, 123, 105, .12); color: #087b69; }
+.execution-metric small { display: block; overflow: hidden; color: #81909a; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.execution-metric strong { display: block; overflow: hidden; margin-top: 4px; color: #ecf4f2; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.execution-metric strong em { margin-left: 4px; color: #7b8b97; font-size: 10px; font-style: normal; font-weight: 400; }
+.execution-dashboard > .border-b { margin: 0 30px; border: 0; padding: 8px 0 0; background: transparent; }
+.execution-dashboard > .min-h-full.px-4 { padding-top: 15px; }
+.execution-dashboard > .min-h-full.px-4 > .mx-auto { max-width: none; }
+/* The design reference keeps the activity dock inside the central canvas. */
+.helm-main + .helm-resize-handle { background: var(--app-border); }
+.helm-app .helm-sidebar ~ * { min-width: 0; }
+@media (max-width: 1200px) { .execution-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .helm-header { padding: 0 17px; } }
+@media (max-width: 900px) { .helm-sidebar-brand { padding: 0 10px; } .helm-nav-item { gap: 8px; padding: 0 7px; font-size: 11px; } .helm-sidebar-scroll { padding: 12px 5px; } .helm-sidebar-footer { padding-left: 5px; padding-right: 5px; } .helm-header-actions { gap: 4px; } .helm-run-status { display: none; } .execution-overview { padding: 20px 16px 3px; } }
+@media (max-width: 600px) { .execution-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; } .execution-metric { padding: 9px 7px; } .execution-metric-icon { display: none; } .helm-header { padding: 0 9px; } .helm-breadcrumb span:nth-child(-n+4), .helm-plan-id, .helm-avatar { display: none; } }
+:root[data-theme='light'] .helm-sidebar, :root[data-theme='light'] .helm-main, :root[data-theme='light'] .helm-header, :root[data-theme='light'] .helm-content { background: var(--app-bg); }
+:root[data-theme='light'] .helm-sidebar-brand small, :root[data-theme='light'] .helm-breadcrumb, :root[data-theme='light'] .helm-nav-heading { color: #637385; }
+:root[data-theme='light'] .helm-nav-item, :root[data-theme='light'] .helm-footer-button { color: #546273; }
+:root[data-theme='light'] .helm-nav-item.is-active, :root[data-theme='light'] .helm-nav-item:hover, :root[data-theme='light'] .helm-footer-button:hover { background: #e6f3ef; color: #174b43; }
+:root[data-theme='light'] .helm-workspace, :root[data-theme='light'] .helm-sidebar-controls { border-color: var(--app-border); }
+:root[data-theme='light'] .helm-current-task, :root[data-theme='light'] .execution-metric { background: #fff; }
+:root[data-theme='light'] .execution-metric strong { color: #22313d; }
+:root[data-theme='light'] .helm-new-task { background: #e4f4ee; border-color: #9ccebf; color: #176552; }
+:root[data-theme='light'] .helm-avatar, :root[data-theme='light'] .helm-workspace-mark { background: #e7efed; color: #334b46; }
+:root[data-theme='light'] .execution-overview-label { color: #09856e; }
+:root[data-theme='light'] .execution-overview p { color: #5e6d7c; }
+.helm-ai-panel { border-left: 0; background: #0e131b !important; }
+.helm-ai-header { background: #10151e; }
+.helm-ai-panel .min-h-0.flex-1.space-y-4 { padding-top: 20px; }
+.helm-ai-panel .min-h-0.flex-1.space-y-4 > div:first-child > div:last-child { background: #171d27; border-color: #28323f; border-radius: 4px 11px 11px 11px; line-height: 1.8; }
+.helm-ai-compose { background: #10151d; }
+.helm-ai-compose > div:last-child { background: #161c25; border-color: #2c3742; border-radius: 8px; }
+.helm-ai-compose input { background: transparent !important; }
+.helm-ai-compose button:last-child:not(:disabled) { background: #43cbaa !important; color: #062118 !important; }
+.helm-ai-compose button:last-child:disabled { background: #224b40 !important; color: #89c6b7 !important; opacity: .75; }
+.helm-app [class~='bg-gradient-to-r'] { --tw-gradient-from: #128a71 !important; --tw-gradient-to: #64d7b4 !important; }
+.helm-app ::selection { background: #2e8b74; color: #fff; }
+
+.helm-workspace small i.is-offline { background: #778491; }
+.helm-mobile-overlay { display: none; }
+.helm-mobile-ai { display: none; }
+@media (max-width: 760px) {
+  .helm-mobile-overlay { display: block; position: fixed; inset: 0; right: min(350px, calc(100vw - 66px)); z-index: 35; background: rgba(0, 0, 0, .5); }
+  .helm-mobile-ai { display: block; position: fixed; z-index: 36; top: 0; right: 0; bottom: 0; width: min(350px, calc(100vw - 66px)); box-shadow: -24px 0 70px rgba(0, 0, 0, .45); }
+}
+:root[data-theme='light'] .helm-ai-panel,
+:root[data-theme='light'] .helm-ai-header,
+:root[data-theme='light'] .helm-ai-compose { background: #fff !important; }
+:root[data-theme='light'] .helm-ai-panel .min-h-0.flex-1.space-y-4 > div:first-child > div:last-child,
+:root[data-theme='light'] .helm-ai-compose > div:last-child { background: #f4f8f7; border-color: #dbe7e2; }
+/* The settings workbench has its own token set; keep it in the same visual family. */
+:root:not([data-theme='light']) .helm-app .model-config {
+  --mc-muted: #95a5af;
+  --mc-surface: #141a23;
+  --mc-input: #0e141c;
+  --mc-soft: #1a242d;
+  --mc-border: #2c3a45;
+  --mc-brand: #77e2c4;
+  --mc-brand-soft: rgba(80, 216, 183, .13);
+  --mc-action: #64dbb8;
+  --mc-on-action: #08251f;
+}
+:root[data-theme='light'] .helm-app .model-config {
+  --mc-brand: #0d826b;
+  --mc-brand-soft: #e1f5ee;
+  --mc-action: #12866d;
+  --mc-on-action: #fff;
+}
+.helm-plan-body { display: flex; flex-direction: column; gap: 20px; }
+.helm-plan-steps, .helm-plan-context { min-width: 0; }
+.execution-dashboard .helm-plan-mini-metrics { display: none; }
+@media (min-width: 1300px) {
+  .execution-dashboard .helm-plan-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 32%); align-items: start; gap: 12px; }
+  .execution-dashboard .helm-plan-steps { grid-column: 1; grid-row: 1; }
+  .execution-dashboard .helm-plan-context { grid-column: 2; grid-row: 1; }
+}
