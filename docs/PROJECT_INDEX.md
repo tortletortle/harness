@@ -124,7 +124,7 @@ workspace crates：`common`（error/traits/types）、`dispatcher`、`db`、`log
 
 - `tests/python/`：单元测试为主——plan 生命周期/状态机/checkpoint/恢复/回滚（test_plan_state_domain、test_checkpoint_recovery、test_pause_resume_retry、test_rollback_branching、test_orphan_recovery…）、工具安全（command_runner/github/http/web_fetcher/package_installer…）、Designer/Executor/审批/API/授权/MCP/skills/notify/cache/usage 各模块
 - `tests/integration/` + markers `integration`/`browser`：默认 CI 排除；离线基线 `pytest -m "not integration and not browser"`（635 passed / 9 skipped）
-- 真实 LLM 验收：`scripts/real_llm_acceptance_a.py`（A 标准五任务，证据 `out/real-llm-acceptance-a.json`）；验收记录 [checkpoint-recovery-acceptance-2026-09-09.md](checkpoint-recovery-acceptance-2026-09-09.md)
+- 真实 LLM 验收：`scripts/real_llm_acceptance_a.py`（A 标准五任务，证据 `out/real-llm-acceptance-a.json`）；历史验收记录见 [archive/checkpoint-recovery-acceptance-2026-09-09.md](archive/checkpoint-recovery-acceptance-2026-09-09.md)
 - 前端：各 `*.test.tsx` + `client.test.ts`；Rust：`tests/rust/` + cargo（CI）
 
 ## 脚本索引（`scripts/`）
@@ -161,8 +161,8 @@ Windows 根目录一键批处理：`启动完整系统.bat`、`一键启动.bat`
 | DEVELOPMENT.md | 开发环境与测试指南 |
 | state-machine-design.md / TOOL_INTERFACE_DESIGN.md | 计划状态机 / 工具契约 |
 | SUPER_SEARCH.md / CODE_CONTEXT.md / SKILLS.md / NOTIFY.md | 两个大工具 + skills + 通知 |
-| AGENT_HARNESS_DESIGN.md / NEW_ARCHITECTURE_DESIGN.md / HARDENING_2026-08-30.md | 设计与加固（历史参考） |
-| plan-cache-fk-bugfix-2026-09-10.md / daily-task-trials-2026-09-09.md / checkpoint-recovery-acceptance-2026-09-09.md | 近期修复与验收记录 |
+| AGENT_HARNESS_DESIGN.md | 主设计稿（当前权威） |
+| archive/ | 日期戳验收/修复报告、旧架构稿、一次性脚本与压测证据 |
 
 ## 关键约束（改代码前须知）
 

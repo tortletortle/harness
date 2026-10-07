@@ -2,8 +2,15 @@
 
 这些文档描述的是**当时**的状态，已被更新的文档取代，仅作历史参考，不要按其中的结论理解现状。
 
+当前权威文档留在 `docs/` 根下（如 `STATUS.md`、`AGENT_HARNESS_DESIGN.md`、`API.md`）。  
+日期戳报告、旧架构稿、一次性修复/审计脚本与压测证据在本目录。
+
 | 文件 | 当时内容 | 归档原因 |
 |------|----------|----------|
+| NEW_ARCHITECTURE_DESIGN.md / GUI_BEAUTIFY_RESEARCH.md | 早期架构与 UI 调研 | 主设计以 AGENT_HARNESS_DESIGN 为准 |
+| *-20260923*.md / HARDENING_2026-08-30.md / checkpoint-* / daily-task-* / plan-cache-fk-* | 单次验收/修复/压测报告 | 结论已合入代码与 STATUS |
+| scripts/repair-20260923 / scripts/audit-20260923 | 一次性运维脚本 | 非日常入口；日常启动见根目录 bat / `scripts/start_api.py` |
+| reports/stress-20260923 | 压测原始 JSON | 证据归档 |
 | TEST_REPORT_2026-08-24.md | 原根目录 README，实为一次测试行动的报告 | 引用的 test_smoke.py 等脚本已不存在；由新的根 README 取代 |
 | TEST_REPORT 配套：QUICK_REFERENCE.md、TROUBLESHOOTING.md | 2026-08-24 测试总结与排障指南 | 围绕已删除的临时测试脚本编写 |
 | TEST_COMPLETION_REPORT.md / TEST_COVERAGE_ANALYSIS.md / TEST_FIXES.md | 早期测试工作记录 | 一次性报告，数据已过时 |

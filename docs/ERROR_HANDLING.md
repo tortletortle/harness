@@ -96,8 +96,8 @@
 python -m pytest tests/python -m "not integration"
 # pytest 中需要真实模型时必须显式 --live-models（可能产生费用）。
 # 本次真实验收工具不属于 pytest，始终调用真实配置的模型：
-python scripts/repair-20260923/verify_live.py ownership
-python scripts/repair-20260923/verify_live.py shutdown
+python docs/archive/scripts/repair-20260923/verify_live.py ownership
+python docs/archive/scripts/repair-20260923/verify_live.py shutdown
 
 # 仅诊断，不修改全局 PATH 或安装软件：
 powershell -ExecutionPolicy Bypass -File scripts/build-rust.ps1 -Doctor

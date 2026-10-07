@@ -1,6 +1,6 @@
 # EAS 2.0 目录结构与运行边界
 
-> 本文描述当前代码分布（2026-09-09）。设计愿景见 NEW_ARCHITECTURE_DESIGN.md。
+> 本文描述当前代码分布。设计愿景见 [AGENT_HARNESS_DESIGN.md](AGENT_HARNESS_DESIGN.md)；旧架构稿在 [archive/NEW_ARCHITECTURE_DESIGN.md](archive/NEW_ARCHITECTURE_DESIGN.md)。
 
 ```text
 harness/

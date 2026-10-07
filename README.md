@@ -8,7 +8,7 @@ AI 任务编排与执行系统：用户提出需求 → Designer（LLM）生成�
 
 - 默认离线后端回归（CI 同款）：`python -m pytest -q -m "not integration and not browser" --ignore=tests/python/test_exec_e2e.py --ignore=tests/python/test_browser_check.py`（本轮验证 635 passed / 9 skipped）
 - 前端测试：`vitest` 36 passed；production build 成功
-- 真实 LLM 任务与隔离 checkpoint 验收：见 [docs/checkpoint-recovery-acceptance-2026-09-09.md](docs/checkpoint-recovery-acceptance-2026-09-09.md)
+- 真实 LLM 任务与隔离 checkpoint 验收：见 [docs/archive/checkpoint-recovery-acceptance-2026-09-09.md](docs/archive/checkpoint-recovery-acceptance-2026-09-09.md)（历史记录）
 - CI：Python 离线回归、frontend test/build、Rust workspace test；真实 LLM 和浏览器测试需单独配置环境
 - Rust：本机已装 cargo 1.98 + VS BuildTools 2022（MSVC v143 + Windows SDK，位于 `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools`）；`cargo test --workspace` 本机复验通过（42 passed / 0 failed）。注意必须在 VS 原生 shell（先 `call Common7\Tools\VsDevCmd.bat`）里跑，否则 Git Bash 的 `/usr/bin/link` 会遮蔽 MSVC `link.exe`
 
@@ -89,7 +89,6 @@ harness/
 | [docs/STRUCTURE.md](docs/STRUCTURE.md) | 目录结构与代码分布 |
 | [docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md) | 错误处理契约（改错误路径前必读） |
 | [docs/state-machine-design.md](docs/state-machine-design.md) | 计划状态机设计 |
-| [docs/checkpoint-recovery-acceptance-2026-09-09.md](docs/checkpoint-recovery-acceptance-2026-09-09.md) | 隔离 checkpoint 恢复验收记录与复现命令 |
-| [docs/NEW_ARCHITECTURE_DESIGN.md](docs/NEW_ARCHITECTURE_DESIGN.md) | 原始架构设计（历史参考） |
+| [docs/AGENT_HARNESS_DESIGN.md](docs/AGENT_HARNESS_DESIGN.md) | 主设计稿（当前权威） |
 
-历史测试报告与早期使用说明在 [docs/archive/](docs/archive/)，描述的是当时状态，不代表现状。
+日期戳验收/修复报告、旧架构稿与一次性脚本已迁入 [docs/archive/](docs/archive/)，描述的是当时状态，不代表现状。
