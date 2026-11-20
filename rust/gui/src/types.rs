@@ -96,6 +96,8 @@ pub struct PlanSummary {
 /// values so one malformed optional field cannot make the review unusable.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Design {
+    #[serde(default)]
+    pub user_approval: bool,
     #[serde(default, deserialize_with = "null_to_default")]
     pub design_id: String,
     #[serde(default, deserialize_with = "null_to_default")]
@@ -162,6 +164,7 @@ pub struct ToolAssessment {
 /// Response variants returned by POST /api/design/{id}/approve.
 #[derive(Debug, Clone)]
 pub enum DesignApprovalResponse {
+    AwaitingPlan { design: Design },
     Approved { plan: PlanDetail },
     Revised { design: Design },
     Rejected { message: String },
@@ -183,6 +186,15 @@ impl<'de> Deserialize<'de> for DesignApprovalResponse {
             return serde_json::from_value(plan.clone())
                 .map(|plan| Self::Approved { plan })
                 .map_err(serde::de::Error::custom);
+        }
+        if object.get("approved").and_then(Value::as_bool) == Some(true) {
+            let design: Design =
+                serde_json::from_value(object.get("design").cloned().unwrap_or(Value::Null))
+                    .map_err(serde::de::Error::custom)?;
+            if design.design_id.is_empty() || !design.user_approval {
+                return Err(serde::de::Error::custom("批准响应缺少已批准的设计书"));
+            }
+            return Ok(Self::AwaitingPlan { design });
         }
         if object.get("revised").and_then(Value::as_bool) == Some(true) {
             let design = object

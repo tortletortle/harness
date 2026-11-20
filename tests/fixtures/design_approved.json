@@ -1,0 +1,9 @@
+{
+  "success": true,
+  "approved": true,
+  "design": {
+    "design_id": "00000000-0000-4000-8000-000000000001",
+    "user_request": "拆分审批回归",
+    "user_approval": true
+  }
+}

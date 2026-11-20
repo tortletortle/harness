@@ -240,7 +240,10 @@ impl GuiState {
                 self.feedback_text.clear();
                 self.mode = GuiMode::Plan;
             }
-            Ok(DesignApprovalResponse::Revised { design }) => {
+            Ok(
+                DesignApprovalResponse::AwaitingPlan { design }
+                | DesignApprovalResponse::Revised { design },
+            ) => {
                 self.design_error = None;
                 self.design_generated(design);
                 self.feedback_text.clear();

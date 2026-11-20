@@ -14,6 +14,13 @@ use tokio::sync::mpsc;
 #[cfg(test)]
 const CHANNEL_CAPACITY: usize = 256;
 
+#[derive(Debug)]
+pub enum ReviewAction {
+    Approve,
+    Revise(String),
+    GeneratePlan,
+}
+
 /// UI → 后台命令
 #[derive(Debug)]
 pub enum Command {
@@ -29,10 +36,9 @@ pub enum Command {
         user_request: String,
         epoch: u64,
     },
-    ApproveDesign {
+    ReviewDesign {
         design_id: String,
-        approved: bool,
-        feedback: Option<String>,
+        action: ReviewAction,
         epoch: u64,
     },
     SelectPlan {
@@ -769,6 +775,10 @@ impl EasApp {
     }
 
     fn select_design(&mut self, design_id: String) {
+        self.design_action_epoch += 1;
+        self.state.design_action_in_flight = false;
+        self.state.current_design = None;
+        self.feedback_open = false;
         self.state.mode = GuiMode::Review;
         self.design_request_epoch = self
             .design_request_epoch
@@ -811,11 +821,13 @@ impl EasApp {
             self.state.design_error = None;
             return;
         }
-        let feedback = if approved {
-            None
+        let action = if approved && design.user_approval {
+            ReviewAction::GeneratePlan
+        } else if approved {
+            ReviewAction::Approve
         } else {
             match self.state.trimmed_feedback() {
-                Some(feedback) => Some(feedback),
+                Some(feedback) => ReviewAction::Revise(feedback),
                 None => {
                     self.state.design_error = Some("请输入非空反馈后提交".to_string());
                     return;
@@ -830,10 +842,9 @@ impl EasApp {
             .checked_add(1)
             .expect("设计审批 epoch 溢出");
         let epoch = self.design_action_epoch;
-        if !self.send(Command::ApproveDesign {
+        if !self.send(Command::ReviewDesign {
             design_id: design.design_id,
-            approved,
-            feedback,
+            action,
             epoch,
         }) {
             self.state
@@ -1307,16 +1318,29 @@ impl EasApp {
                 });
             });
         ui.add_space(8.0);
+        if design.user_approval {
+            ui.label("已批准，待生成执行计划");
+        }
         let in_flight = self.state.design_action_in_flight;
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(!in_flight, theme::primary_button("批准并生成计划"))
+                .add_enabled(
+                    !in_flight,
+                    theme::primary_button(if design.user_approval {
+                        "生成计划"
+                    } else {
+                        "批准设计"
+                    }),
+                )
                 .clicked()
             {
                 self.approve_design(true);
             }
             if ui
-                .add_enabled(!in_flight, theme::danger_outline_button("拒绝并给反馈"))
+                .add_enabled(
+                    !in_flight && !design.user_approval,
+                    theme::danger_outline_button("拒绝并给反馈"),
+                )
                 .clicked()
             {
                 self.approve_design(false);
@@ -3790,6 +3814,86 @@ mod tests {
         let (_events_tx, events_rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (commands, _commands_rx) = mpsc::channel(CHANNEL_CAPACITY);
         EasApp::new(GuiState::default(), events_rx, commands)
+    }
+
+    #[test]
+    fn desktop_approval_and_plan_generation_are_separate_commands() {
+        let (_tx, events) = mpsc::channel(CHANNEL_CAPACITY);
+        let (commands, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let mut app = EasApp::new(GuiState::default(), events, commands);
+        let response: DesignApprovalResponse =
+            serde_json::from_str(include_str!("../../../tests/fixtures/design_approved.json"))
+                .unwrap();
+        let DesignApprovalResponse::AwaitingPlan { mut design } = response.clone() else {
+            panic!("当前后端批准响应应进入待生成状态");
+        };
+        let id = design.design_id.clone();
+        design.user_approval = false;
+        app.state.design_generated(design);
+
+        app.approve_design(true);
+        app.approve_design(true);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Command::ReviewDesign {
+                action: ReviewAction::Approve,
+                ..
+            })
+        ));
+        assert!(rx.try_recv().is_err());
+        app.handle_event(GuiEvent::DesignApprovalResult {
+            design_id: id.clone(),
+            approved: true,
+            result: Ok(response),
+            epoch: app.design_action_epoch,
+        });
+        assert_eq!(app.state.mode, GuiMode::Review);
+        assert!(app.state.current_design.as_ref().unwrap().user_approval);
+        assert!(rx.try_recv().is_err());
+
+        for error in ["[409] 工具未齐", "[502] 生成失败"] {
+            app.approve_design(true);
+            app.approve_design(true);
+            assert!(matches!(
+                rx.try_recv(),
+                Ok(Command::ReviewDesign {
+                    action: ReviewAction::GeneratePlan,
+                    ..
+                })
+            ));
+            assert!(rx.try_recv().is_err());
+            app.handle_event(GuiEvent::DesignApprovalResult {
+                design_id: id.clone(),
+                approved: true,
+                result: Err(error.into()),
+                epoch: app.design_action_epoch,
+            });
+            assert_eq!(app.state.design_error.as_deref(), Some(error));
+            assert!(app.state.current_design.as_ref().unwrap().user_approval);
+        }
+        app.approve_design(true);
+        let epoch = app.design_action_epoch;
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Command::ReviewDesign {
+                action: ReviewAction::GeneratePlan,
+                ..
+            })
+        ));
+        let success = |epoch| GuiEvent::DesignApprovalResult {
+            design_id: id.clone(),
+            approved: true,
+            result: Ok(DesignApprovalResponse::Approved { plan: detail("p1") }),
+            epoch,
+        };
+        app.handle_event(success(epoch - 1));
+        assert_eq!(app.state.mode, GuiMode::Review);
+        app.handle_event(success(epoch));
+        assert_eq!(app.state.mode, GuiMode::Plan);
+        assert_eq!(app.selected_plan_id.as_deref(), Some("p1"));
+        app.select_design("other".into());
+        app.handle_event(success(epoch));
+        assert_eq!(app.state.mode, GuiMode::Review);
     }
 
     #[test]

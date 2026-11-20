@@ -510,6 +510,29 @@ impl ApiClient {
             .map_err(ApiError::from)
     }
 
+    pub async fn generate_plan(&self, design_id: &str) -> Result<PlanDetail, ApiError> {
+        #[derive(serde::Deserialize)]
+        struct GeneratedPlan {
+            success: bool,
+            plan: PlanDetail,
+        }
+        let response = self
+            .post_json_with_timeout(
+                &format!("/api/design/{design_id}/generate-plan"),
+                &(),
+                GENERATION_TIMEOUT,
+            )
+            .await?;
+        let generated: GeneratedPlan = response.json().await?;
+        if !generated.success || generated.plan.plan_id.trim().is_empty() {
+            return Err(ApiError {
+                status: 200,
+                message: "生成响应缺少有效计划".into(),
+            });
+        }
+        Ok(generated.plan)
+    }
+
     pub async fn get_plans(&self, limit: u32) -> Result<Vec<PlanSummary>, ApiError> {
         let resp = self.get(&format!("/api/plans?limit={limit}")).await?;
         #[derive(serde::Deserialize)]
@@ -761,6 +784,47 @@ mod tests {
                 "feedback": "split the API layer"
             })
         );
+    }
+
+    #[tokio::test]
+    async fn generate_plan_posts_to_current_design_and_preserves_http_errors() {
+        use axum::{extract::Path, http::StatusCode, routing::post, Json, Router};
+        let app = Router::new().route(
+            "/api/design/:id/generate-plan",
+            post(|Path(id): Path<String>| async move {
+                let (status, body) = match id.as_str() {
+                    "unready" => (
+                        StatusCode::CONFLICT,
+                        serde_json::json!({"detail": "工具未齐"}),
+                    ),
+                    "failed" => (
+                        StatusCode::BAD_GATEWAY,
+                        serde_json::json!({"detail": "生成失败"}),
+                    ),
+                    "ready" => (
+                        StatusCode::OK,
+                        serde_json::json!({"success": true, "plan": {"plan_id":"p1"}}),
+                    ),
+                    _ => (
+                        StatusCode::OK,
+                        serde_json::json!({"success": true, "plan": {"plan_id":""}}),
+                    ),
+                };
+                (status, Json(body))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let api = ApiClient::new(base, "token".into()).unwrap();
+        for (id, status, detail) in [("unready", 409, "工具未齐"), ("failed", 502, "生成失败")]
+        {
+            let error = api.generate_plan(id).await.unwrap_err();
+            assert_eq!((error.status, error.message.as_str()), (status, detail));
+        }
+        assert!(api.generate_plan("empty").await.is_err());
+        assert_eq!(api.generate_plan("ready").await.unwrap().plan_id, "p1");
+        server.abort();
     }
 
     #[test]
