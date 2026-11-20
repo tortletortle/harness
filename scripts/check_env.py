@@ -79,8 +79,7 @@ def main():
     if env_ok and deps_ok:
         print("✅ 环境配置正确！")
         print("\n下一步:")
-        print("  cd python")
-        print("  python -m uvicorn api.main:app --host 0.0.0.0 --port 9000")
+        print("  python scripts/start_api.py")
     else:
         print("⚠️  请修复上述问题")
         if not deps_ok:

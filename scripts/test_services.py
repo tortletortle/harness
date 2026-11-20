@@ -1,63 +1,53 @@
 #!/usr/bin/env python3
-"""
-测试服务是否正常运行
-"""
+"""检查默认本地地址上的 EAS 服务。"""
 
-import requests
+import argparse
 import json
+from http.client import HTTPException
+from urllib.request import urlopen
+
+
+def _check_health(name, url, identity_field, identity):
+    try:
+        with urlopen(url, timeout=5) as response:
+            if response.status != 200 or response.geturl() != url:
+                raise ValueError("健康端点未直接返回 HTTP 200")
+            body = json.load(response)
+        if not isinstance(body, dict) or body.get(identity_field) != identity:
+            raise ValueError("响应与目标服务不匹配")
+        if body.get("status") != "ok":
+            raise ValueError("服务未报告 ok")
+    except (OSError, HTTPException, ValueError) as error:
+        print(f"❌ {name} 检查失败 ({url}): {error}")
+        return False
+    print(f"✅ {name} 正常 ({url})")
+    return True
+
 
 def test_python_api():
-    """测试Python API"""
-    try:
-        response = requests.get("http://localhost:9000/health", timeout=5)
-        print("✅ Python API (9000) 正常")
-        print(f"   响应: {response.json()}")
-        return True
-    except Exception as e:
-        print(f"❌ Python API (9000) 失败: {e}")
-        return False
+    return _check_health("Python API", "http://127.0.0.1:8000/",
+                         "message", "EAS 2.0 API is running")
 
 
 def test_rust_server():
-    """测试Rust Server"""
-    try:
-        response = requests.get("http://localhost:8090/health", timeout=5)
-        print("✅ Rust Server (8090) 正常")
-        print(f"   响应: {response.json()}")
-        return True
-    except Exception as e:
-        print(f"❌ Rust Server (8090) 失败: {e}")
-        return False
+    return _check_health("Rust Server", "http://127.0.0.1:8090/health",
+                         "service", "eas-rust-server")
 
 
-def main():
-    print("=" * 60)
-    print("EAS 2.0 - 服务测试")
-    print("=" * 60)
-    print()
-    
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--python-only", action="store_true", help="只检查 Python 后端")
+    args = parser.parse_args(argv)
     python_ok = test_python_api()
-    print()
-    rust_ok = test_rust_server()
-    
-    print()
-    print("=" * 60)
-    if python_ok and rust_ok:
-        print("🎉 所有服务运行正常！")
-        print("\n下一步:")
-        print("  - 访问 http://localhost:9000/docs 查看Python API文档")
-        print("  - 测试AI功能")
+    rust_ok = args.python_only or test_rust_server()
+    if not python_ok:
+        print("启动 Python 后端：在仓库根目录运行 python scripts/start_api.py")
     else:
-        print("⚠️  部分服务未运行")
-        if not python_ok:
-            print("\n启动Python服务:")
-            print("  cd python")
-            print("  python -m uvicorn api.main:app --host 0.0.0.0 --port 9000")
-        if not rust_ok:
-            print("\n启动Rust服务:")
-            print("  cargo run --bin eas-server")
-    print("=" * 60)
+        print("Python API 文档：http://127.0.0.1:8000/docs")
+    if not rust_ok:
+        print("启动 Rust 服务：在仓库根目录运行 cargo run --bin eas-server")
+    return 0 if python_ok and rust_ok else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
