@@ -134,7 +134,9 @@ def summarize_attempt_history(anchor, attempts, *, scope="latest_failed_run"):
             matching += 1
         else:
             different += 1
-    if matching >= 2:
+    if reference is None:
+        pattern = "insufficient_evidence"
+    elif matching >= 2:
         pattern = "repeated_signature_observed"
     elif matching == 1:
         pattern = "single_matching_observation"
