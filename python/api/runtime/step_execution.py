@@ -598,17 +598,18 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
         compressed = await _compress_step_context(
             plan_id, step_id, result, branch_version=step_model.branch_version
         )
-        if not state.database.update_step_state_machine(
-            step_id=str(step_id),
-            status=status,
-            outputs=outputs,
-            duration_ms=duration_ms,
-            compressed_context=compressed,
-            state_snapshot=result,
-        ):
-            # 成功结果写不进去（步骤行未命中/被并发删除）必须可见，否则下游交接
-            # 只能读到空 outputs，故障点在别处，极难定位。
-            logger.warning("步骤 {} 成功状态写入未命中数据行（outputs/交接上下文会缺失）", step_id)
+        # tool 可能已经产生副作用；落库未命中属于运行时故障，不进入自动工具重试。
+        _require_write(
+            state.database.update_step_state_machine(
+                step_id=str(step_id),
+                status=status,
+                outputs=outputs,
+                duration_ms=duration_ms,
+                compressed_context=compressed,
+                state_snapshot=result,
+            ),
+            f"步骤 {step_id} 成功结果持久化",
+        )
         event_data = {"duration_ms": duration_ms}
         if acceptance_result is not None:
             event_data.update({
@@ -616,11 +617,13 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
                 "acceptance_evidence": result.get("acceptance_evidence", []),
                 "reward": result.get("reward"),
             })
-        if not state.database.add_step_event(
-            step_id, plan_id, "success", event_data,
-            branch_version=step_model.branch_version,
-        ):
-            logger.warning("step_event success 写入失败: {}", step_id)
+        _require_write(
+            state.database.add_step_event(
+                step_id, plan_id, "success", event_data,
+                branch_version=step_model.branch_version,
+            ),
+            f"步骤 {step_id} success 事件持久化",
+        )
         result["duration_ms"] = duration_ms
         return result
 
