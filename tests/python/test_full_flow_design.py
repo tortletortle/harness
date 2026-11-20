@@ -207,7 +207,9 @@ async def test_plan_prompt_contains_agent_contract():
     assert "allowed_tools" in prompt_text
     # 旧的"只使用 file_creator"一刀切白名单必须已被分级约束替换
     assert "只使用 file_creator，不要执行任何 shell 命令" not in prompt_text
-    assert "不要执行任何 shell 命令" in prompt_text
+    assert "顶层禁用：command_runner" in prompt_text
+    assert "绝不能包含 command_runner 或任何未登记的 shell 类工具" in prompt_text
+    assert '["text_editor", "test_runner"]' in prompt_text
 
 
 @pytest.mark.asyncio
