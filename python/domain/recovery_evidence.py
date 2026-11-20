@@ -119,7 +119,7 @@ def summarize_attempt_history(anchor, attempts, *, scope="latest_failed_run"):
     """
     reference = _signature(summarize_failure(anchor))
     rows = attempts[:MAX_HISTORY_ATTEMPTS]
-    matching = different = unknown = verified_success = 0
+    matching = different = unknown = checked_success = 0
     for row in rows:
         observation = summarize_failure({"state_snapshot": row.get("outputs")})
         signature = _signature(observation)
@@ -127,7 +127,7 @@ def summarize_attempt_history(anchor, attempts, *, scope="latest_failed_run"):
         result = _object(row.get("outputs"))
         if (row.get("status") == "Succeeded" and result.get("success") is True
                 and result.get("check_status") == "passed"):
-            verified_success += 1
+            checked_success += 1
         elif row.get("status") != "Failed" or reference is None or signature is None:
             unknown += 1
         elif signature == reference:
@@ -138,7 +138,7 @@ def summarize_attempt_history(anchor, attempts, *, scope="latest_failed_run"):
         pattern = "repeated_signature_observed"
     elif matching == 1:
         pattern = "single_matching_observation"
-    elif different or verified_success:
+    elif different or checked_success:
         pattern = "no_matching_observation"
     else:
         pattern = "insufficient_evidence"
@@ -147,7 +147,7 @@ def summarize_attempt_history(anchor, attempts, *, scope="latest_failed_run"):
         "recorded_attempts": len(rows),
         "matching_failures": matching,
         "different_failures": different,
-        "verified_successes": verified_success,
+        "reported_checked_successes": checked_success,
         "unclassified": unknown,
         "truncated": len(attempts) > MAX_HISTORY_ATTEMPTS,
         "pattern": pattern,
