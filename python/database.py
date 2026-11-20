@@ -851,7 +851,7 @@ class Database:
         plan = conn.execute("SELECT * FROM plans WHERE plan_id = ?", (plan_id,)).fetchone()
         if plan is None:
             return None
-        return {
+        snapshot = {
             "plan": dict(plan),
             "steps": [dict(row) for row in conn.execute(
                 "SELECT * FROM steps WHERE plan_id = ? ORDER BY step_order, step_id", (plan_id,),
@@ -861,6 +861,33 @@ class Database:
                 "SELECT run_id FROM execution_runs WHERE plan_id = ? ORDER BY run_id", (plan_id,),
             )],
         }
+        from domain.replan import replan_anchor, ReplanValidationError
+        from domain.recovery_evidence import MAX_HISTORY_ATTEMPTS, summarize_attempt_history
+        try:
+            anchor, _ = replan_anchor(snapshot)
+        except ReplanValidationError:
+            return snapshot
+        run = conn.execute(
+            "SELECT run_id, branch_version, status FROM execution_runs "
+            "WHERE plan_id = ? ORDER BY created_at DESC, run_id DESC LIMIT 1",
+            (plan_id,),
+        ).fetchone()
+        attempts = []
+        scope = "no_matching_failed_run"
+        if (run is not None and run["status"] == "Failed"
+                and int(run["branch_version"]) == int(anchor["branch_version"])):
+            scope = "latest_failed_run"
+            # This is the same read transaction as the authoritative anchor.
+            # Project only the current step's most recent attempts. Large output
+            # blobs are treated as missing, not parsed or sent to the planner.
+            attempts = [dict(row) for row in conn.execute(
+                "SELECT status, CASE WHEN length(outputs) <= 131072 THEN outputs END AS outputs "
+                "FROM execution_attempts WHERE run_id = ? AND plan_id = ? AND step_id = ? "
+                "ORDER BY attempt_no DESC, created_at DESC, attempt_id DESC LIMIT ?",
+                (run["run_id"], plan_id, anchor["step_id"], MAX_HISTORY_ATTEMPTS + 1),
+            )]
+        snapshot["failure_history"] = summarize_attempt_history(anchor, attempts, scope=scope)
+        return snapshot
 
     def get_replan_snapshot(self, plan_id: str) -> Optional[Dict[str, Any]]:
         """Read a consistent plan/steps/run snapshot without changing the workspace."""

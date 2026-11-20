@@ -65,3 +65,56 @@ def test_snapshot_and_outputs_are_not_merged():
     assert summary["symptom"] == "execution_failure"
     assert summary["check_status"] is None
     assert summary["retry_eligible"] is None
+
+
+def _failed_result(code=1):
+    return {"success": False, "check_status": "failed",
+            "acceptance_result": {"passed": False, "checks": [
+                {"type": "test_passes", "passed": False, "evidence": {"exit_code": code}}
+            ]}}
+
+
+@pytest.mark.parametrize("codes, pattern, matches, different", [
+    ([], "insufficient_evidence", 0, 0),
+    ([1], "single_matching_observation", 1, 0),
+    ([1, 1], "repeated_signature_observed", 2, 0),
+    ([2, 2], "no_matching_observation", 0, 2),
+    ([1, 2, 1], "repeated_signature_observed", 2, 1),
+])
+def test_recurrence_counts_only_matching_signatures(codes, pattern, matches, different):
+    from domain.recovery_evidence import summarize_attempt_history
+    anchor = {"state_snapshot": _failed_result()}
+    attempts = [{"status": "Failed", "outputs": json.dumps(_failed_result(code))} for code in codes]
+    history = summarize_attempt_history(anchor, attempts)
+    assert history["pattern"] == pattern
+    assert history["matching_failures"] == matches
+    assert history["different_failures"] == different
+    assert history["controlled_conditions"] is False
+    assert history["reproducibility"] == "unknown"
+    assert not history["root_cause_verified"]
+
+
+def test_generic_failure_is_not_a_repeated_signature():
+    from domain.recovery_evidence import summarize_attempt_history
+    result = {"success": False, "error": "same error"}
+    history = summarize_attempt_history({"state_snapshot": result},
+        [{"status": "Failed", "outputs": result}] * 3)
+    assert history["pattern"] == "insufficient_evidence"
+    assert history["matching_failures"] == 0
+    assert history["unclassified"] == 3
+
+
+def test_history_window_and_attempt_status_are_conservative():
+    from domain.recovery_evidence import summarize_attempt_history
+    failed = _failed_result()
+    rows = [
+        {"status": "Succeeded", "outputs": {"success": True, "check_status": "passed"}},
+        {"status": "Succeeded", "outputs": {"success": True, "check_status": "unverified"}},
+        {"status": "Running", "outputs": failed},
+    ] + [{"status": "Failed", "outputs": failed}] * 20
+    history = summarize_attempt_history({"state_snapshot": failed}, rows)
+    assert history["recorded_attempts"] == 16
+    assert history["matching_failures"] == 13
+    assert history["reported_checked_successes"] == 1
+    assert history["unclassified"] == 2
+    assert history["truncated"] is True
