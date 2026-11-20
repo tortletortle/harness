@@ -43,7 +43,10 @@ async def replan_plan(plan_id: str):
                 "description": anchor.get("description", ""),
                 "tool": anchor.get("tool", ""),
                 "inputs": failed_inputs or {},
-                "failure_evidence": summarize_failure(anchor),
+                "failure_evidence": {
+                    **summarize_failure(anchor),
+                    "history": snapshot.get("failure_history"),
+                },
             },
             failure_reason=anchor.get("failure_reason") or "未知原因",
             user_request=str(design.user_request) if design else "",
