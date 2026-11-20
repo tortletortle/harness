@@ -734,3 +734,121 @@ def test_handoff_summary_prefers_model_output_over_wrapper(tmp_path):
     assert "改用参数化查询" in entry["summary"]
     assert "agent_facts" not in entry["summary"]
 
+
+@pytest.mark.parametrize("fault", ["none", "status", "event"])
+def test_step_success_requires_persisted_result_and_audit(tmp_path, monkeypatch, fault):
+    """故障注入：工具成功不能掩盖关键状态或成功事件写入未命中。"""
+    from api.runtime import step_execution
+    from database import DatabaseError
+
+    db = Database(str(tmp_path / "persistence.db"))
+    plan, _, ids = _seed_plan(db, [("验证持久化", [], "review_agent")])
+    step_id = ids["验证持久化"]
+    calls = []
+
+    class StubExecutor:
+        async def execute_step(self, step, grant_id=None, plan_id=None):
+            calls.append(str(step.step_id))
+            return {"success": True, "output": {"ok": True}, "check_status": "passed"}
+
+    monkeypatch.setattr(step_execution, "state", SimpleNamespace(
+        database=db,
+        capability_registry=_registry_with_agent(),
+        tool_registry=None,
+        executor=StubExecutor(),
+        authorization_manager=AuthorizationManager(workspace_root=str(tmp_path)),
+        approval_manager=SimpleNamespace(is_required_for_step=lambda tool_id, kind: False),
+        notifier=None,
+        context_compression={},
+    ))
+    if fault == "status":
+        original = db.update_step_state_machine
+
+        def update(*args, **kwargs):
+            if kwargs.get("status") == StepStatus.SUCCESS.value:
+                return False
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(db, "update_step_state_machine", update)
+    elif fault == "event":
+        original = db.add_step_event
+
+        def add_event(step_id, plan_id, event_type, *args, **kwargs):
+            if event_type == "success":
+                return False
+            return original(step_id, plan_id, event_type, *args, **kwargs)
+
+        monkeypatch.setattr(db, "add_step_event", add_event)
+
+    row = db.get_steps(str(plan.plan_id))[0]
+    if fault == "none":
+        result = asyncio.run(step_execution._execute_step_with_state_machine(plan, row))
+        assert result["success"] is True
+    else:
+        with pytest.raises(DatabaseError):
+            asyncio.run(step_execution._execute_step_with_state_machine(plan, row))
+    assert calls == [step_id]
+    events = db.get_step_events(str(plan.plan_id), step_id)
+    assert any(e["event_type"] == "success" for e in events) == (fault == "none")
+    saved = db.get_steps(str(plan.plan_id))[0]
+    assert (saved["status"] == StepStatus.SUCCESS.value) == (fault != "status")
+
+
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_dispatch_exception_cannot_be_reconciled_as_completed(tmp_path, monkeypatch, batch_size):
+    """串行/并行：即使所有步骤行显示成功，执行异常也不能在收尾时变成 Completed。"""
+    from api.runtime import background
+    from database import DatabaseError
+    from models import RunStatus
+    from tools import project_memory
+
+    db = Database(str(tmp_path / "dispatch.db"))
+    plan, _, ids = _seed_plan(db, [
+        (f"step-{i}", [], "review_agent") for i in range(batch_size)
+    ])
+    failed_id = ids["step-0"]
+    isolated_state = SimpleNamespace(
+        database=db,
+        execution_lock=asyncio.Lock(),
+        execution_reservations={},
+        current_execution=None,
+        current_execution_owner=None,
+        executor_max_concurrency=batch_size,
+        parallel_graphs=batch_size > 1,
+        approval_manager=SimpleNamespace(reject_all_for_plan=lambda *args: None),
+        authorization_manager=SimpleNamespace(revoke_all_for_plan=lambda *args: None),
+        designer=None,
+        llm_client=None,
+    )
+    monkeypatch.setattr(background, "state", isolated_state)
+
+    async def noop(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(background, "broadcast_plan_update", noop)
+    monkeypatch.setattr(background, "broadcast_log", noop)
+    monkeypatch.setattr(project_memory, "save_entry", lambda *args, **kwargs: None)
+    dispatched = []
+
+    def select_batch(*args, **kwargs):
+        return {"steps": db.get_active_steps_snapshot(str(plan.plan_id), 1) if not dispatched else []}
+
+    monkeypatch.setattr(db, "select_next_batch", select_batch)
+
+    async def dispatch(plan_arg, row, *args, **kwargs):
+        step_id = str(row["step_id"])
+        dispatched.append(step_id)
+        assert db.update_step_state_machine(step_id=step_id, status=StepStatus.SUCCESS.value)
+        if step_id == failed_id:
+            raise DatabaseError("injected success-event persistence failure")
+        return "continue", step_id
+
+    monkeypatch.setattr(background, "_execute_step_to_completion", dispatch)
+    asyncio.run(background.execute_plan_background(plan))
+
+    assert set(dispatched) == set(ids.values())
+    assert db.get_plan_status(str(plan.plan_id)) == PlanStatus.FAILED.value
+    assert str(db.get_plan(str(plan.plan_id)).resume_from_step_id) == failed_id
+    run = db.list_execution_runs(str(plan.plan_id), limit=1)[0]
+    assert run["status"] == RunStatus.FAILED.value
+    assert isolated_state.execution_reservations == {}
