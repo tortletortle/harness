@@ -3,7 +3,7 @@
  *
  * 执行计划轮询 Hook：
  * - 计划状态为 Running / Pending（或 isExecuting，刚点击"开始执行"的竞态窗口）时，
- *   每 2s 从后端拉取最新计划并同步到 store，PlanView 由此获得权威的步骤状态。
+ *   每 5s 从后端拉取最新计划并同步到 store，PlanView 由此获得权威的步骤状态。
  * - 进入终态（Completed/Failed/Paused/RolledBack）后停止轮询并复位 isExecuting。
  * - 挂载时调用 GET /api/status，若 current_execution 等于当前计划 ID，
  *   立即开始轮询（页面刷新后重新附着到执行中的计划）。
@@ -25,7 +25,6 @@ export function usePlanPolling(): void {
   const planId = useAppStore((s) => s.currentPlan?.plan_id ?? null);
   const planStatus = useAppStore((s) => s.currentPlan?.status);
   const isExecuting = useAppStore((s) => s.isExecuting);
-  const planEvent = useAppStore((s) => s.planEventTick);
   const initialLoadedRef = useRef<string | null>(null);
   // 事件触发的立即刷新复用主 effect 里的 tick（保持单一状态应用路径）
   const tickRef = useRef<() => void>(() => {});
@@ -34,6 +33,7 @@ export function usePlanPolling(): void {
     if (!planId) return;
 
     let inFlight = false; // 防止请求重叠
+    let refreshPending = false;
     let failing = false; // 失败突发节流标记
     let timer: ReturnType<typeof setInterval> | null = null;
     let cancelled = false;
@@ -50,7 +50,7 @@ export function usePlanPolling(): void {
       inFlight = true;
       try {
         const latest = await apiClient.getPlan(planId);
-        if (cancelled) return;
+        if (cancelled || refreshPending) return;
 
         const store = useAppStore.getState();
         // 请求期间用户可能已切换到其他计划
@@ -80,6 +80,10 @@ export function usePlanPolling(): void {
         }
       } finally {
         inFlight = false;
+        if (refreshPending && !cancelled && useAppStore.getState().currentPlan?.plan_id === planId) {
+          refreshPending = false;
+          void tick();
+        }
       }
     };
 
@@ -90,7 +94,10 @@ export function usePlanPolling(): void {
       }, POLL_INTERVAL_MS);
     };
     // 供 plan_update 事件触发的立即刷新使用
-    tickRef.current = tick;
+    tickRef.current = () => {
+      if (inFlight) refreshPending = true;
+      else void tick();
+    };
 
     const shouldPoll = planStatus === 'Running' || planStatus === 'Pending' || isExecuting;
 
@@ -136,11 +143,19 @@ export function usePlanPolling(): void {
     };
   }, [planId, planStatus, isExecuting]);
 
-  // plan_update 推送到达（后端每个状态转换后广播）→ 去抖后立即全量刷新。
-  // 30s 兜底轮询之外的真实时路径；事件不匹配当前计划时忽略。
+  // 只对当前计划的推送去抖，其他计划的消息不能取消已排定的刷新。
   useEffect(() => {
-    if (!planId || planEvent.planId !== planId) return;
-    const timer = setTimeout(() => tickRef.current(), EVENT_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [planEvent, planId]);
+    if (!planId) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = useAppStore.subscribe((state, previous) => {
+      const event = state.planEventTick;
+      if (event === previous.planEventTick || event.planId !== planId) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => tickRef.current(), EVENT_DEBOUNCE_MS);
+    });
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
+  }, [planId]);
 }
