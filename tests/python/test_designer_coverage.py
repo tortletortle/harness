@@ -504,17 +504,25 @@ async def test_generate_plan_cache_hit_remaps_ids(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_generate_plan_cache_hit_invalid_graph_raises(tmp_path):
-    designer = _make_designer(
-        _ScriptedLLM([json.dumps(_PLAN_WITH_DEPS, ensure_ascii=False)]), tmp_path
-    )
+async def test_generate_plan_cache_hit_invalid_graph_regenerates(tmp_path):
+    response = json.dumps(_PLAN_WITH_DEPS, ensure_ascii=False)
+    designer = _make_designer(_ScriptedLLM([response, response]), tmp_path)
     design = _sample_design()
-    await designer.generate_plan(design)
+    first = await designer.generate_plan(design)
     cached = designer.plan_cache.get(str(design.design_id))
     cached["segments"][0]["steps"][1]["depends_on"] = ["ghost-id"]
     designer.plan_cache.set(str(design.design_id), cached)
-    with pytest.raises(GenerationError, match="图校验失败"):
-        await designer.generate_plan(design)
+
+    regenerated = await designer.generate_plan(design)
+    assert designer.llm_client.calls == 2
+    assert regenerated.plan_id != first.plan_id
+    steps = regenerated.segments[0].steps
+    assert steps[1].depends_on == [str(steps[0].step_id)]
+    saved = designer.plan_cache.get(str(design.design_id))
+    assert saved["segments"][0]["steps"][1]["depends_on"] == [
+        saved["segments"][0]["steps"][0]["step_id"]
+    ]
+
 
 
 # ===== generate_plan：重试分支 =====

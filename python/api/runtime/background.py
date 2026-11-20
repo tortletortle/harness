@@ -318,6 +318,9 @@ async def execute_plan_background(
 
             stop_step_id = None
             current_step_id = str(batch[0]["step_id"])
+            # Dispatch failures, like scheduling failures, must prevent final
+            # reconciliation from converting an execution error to Completed.
+            _scheduling_failed = True
             if len(batch) == 1:
                 outcome, step_id = await _dispatch_one(batch[0])
                 current_step_id = step_id
@@ -332,16 +335,18 @@ async def execute_plan_background(
                         return await _dispatch_one(step_row)
 
                 outcomes = await asyncio.gather(*(_bounded(s) for s in batch), return_exceptions=True)
+                # Drain the batch first, then prioritize exceptions even if a
+                # sibling returned "stop" earlier in the result list.
                 for idx, outcome in enumerate(outcomes):
-                    if isinstance(outcome, Exception):
-                        logger.exception("批内步骤异常: {}", outcome)
-                        stop_step_id = str(batch[idx].get("step_id"))
-                        break
-                    code, step_id = outcome
+                    if isinstance(outcome, BaseException):
+                        current_step_id = str(batch[idx]["step_id"])
+                        raise outcome
+                for code, step_id in outcomes:
                     current_step_id = step_id
                     if code == "stop":
                         stop_step_id = step_id
                         break
+            _scheduling_failed = False
             if stop_step_id:
                 if resume_from_step_id:
                     _require_write(
