@@ -409,3 +409,72 @@ async def test_replan_uses_authoritative_failed_step_evidence(make_env):
     assert evidence["failed_checks"] == [{"index": 0, "type": "test_passes", "exit_code": 1}]
     assert "DO_NOT_COPY_RAW_LOG" not in json.dumps(evidence)
     assert env.db.get_plan_status(env.plan_id) == "Pending"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("latest_branch, expected", [
+    (1, "single_matching_observation"), (2, "insufficient_evidence"),
+])
+async def test_replan_recurrence_is_scoped_to_current_step_and_latest_run(make_env, latest_branch, expected):
+    env = make_env(failed_index=1)
+    failed_id = env.ids[1]
+    result = {"success": False, "check_status": "failed", "acceptance_result": {
+        "passed": False, "checks": [
+            {"type": "test_passes", "passed": False, "evidence": {"exit_code": 1}}
+        ]}}
+    assert env.db.update_step_state_machine(
+        failed_id, "Failed", failure_reason="broken", state_snapshot=result)
+    for branch, step_ids in ((1, [failed_id, failed_id]),
+                             (latest_branch, [failed_id, env.ids[0]])):
+        run = env.db.start_execution_run(env.plan_id, from_statuses=("Failed",), branch_version=branch)
+        assert run
+        for index, step_id in enumerate(step_ids, 1):
+            attempt = env.db.create_execution_attempt(run["run_id"], env.plan_id, step_id, index)
+            assert env.db.finish_execution_attempt(
+                attempt["attempt_id"], "Failed", outputs=result,
+                run_id=run["run_id"], owner_token=run["owner_token"])
+        assert env.db.finish_execution_run(run["run_id"], run["owner_token"], "Failed")
+        assert env.db.update_plan_state_machine(env.plan_id, "Failed", resume_from_step_id=failed_id)
+        # Explicit timestamps avoid depending on clock resolution or UUID ordering.
+        with closing(env.db._get_connection()) as conn, conn:
+            conn.execute("UPDATE execution_runs SET created_at=? WHERE run_id=?",
+                ("2026-01-01T00:00:00" if step_ids[1] == failed_id else "2026-01-02T00:00:00",
+                 run["run_id"]))
+    await env.route(env.plan_id)
+    history = env.designer.generate_repair_steps.await_args.kwargs["failed_step"]["failure_evidence"]["history"]
+    assert history["pattern"] == expected
+    assert history["recorded_attempts"] == (1 if latest_branch == 1 else 0)
+    assert history["matching_failures"] == (1 if latest_branch == 1 else 0)
+    assert history["reproducibility"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_changed_recurrence_evidence_rejects_stale_replan(make_env):
+    env = make_env()
+    failed_id = env.ids[0]
+    result = {"success": False, "check_status": "failed", "acceptance_result": {
+        "passed": False, "checks": [
+            {"type": "test_passes", "passed": False, "evidence": {"exit_code": 1}}
+        ]}}
+    assert env.db.update_step_state_machine(failed_id, "Failed", state_snapshot=result)
+    run = env.db.start_execution_run(env.plan_id, from_statuses=("Failed",))
+    attempt = env.db.create_execution_attempt(run["run_id"], env.plan_id, failed_id, 1)
+    assert env.db.finish_execution_attempt(
+        attempt["attempt_id"], "Failed", outputs=result,
+        run_id=run["run_id"], owner_token=run["owner_token"])
+    assert env.db.finish_execution_run(run["run_id"], run["owner_token"], "Failed")
+    assert env.db.update_plan_state_machine(env.plan_id, "Failed", resume_from_step_id=failed_id)
+
+    async def change_history(**kwargs):
+        # Fault injection: simulate changed evidence while generation is in flight.
+        with closing(env.db._get_connection()) as conn, conn:
+            conn.execute("UPDATE execution_attempts SET outputs=NULL WHERE attempt_id=?",
+                         (attempt["attempt_id"],))
+        return deepcopy(REPAIRS)
+
+    env.designer.generate_repair_steps = change_history
+    with pytest.raises(HTTPException) as exc:
+        await env.route(env.plan_id)
+    assert exc.value.status_code == 409
+    assert env.db.get_plan_status(env.plan_id) == "Failed"
+    env.broadcast.assert_not_awaited()
