@@ -62,7 +62,7 @@
 
 ## 已知的例外（不在本次规范化范围）
 
-- `python/api/main.py`：遗留的旧入口（9000 端口，scripts/dev*.sh|bat 使用），未纳入新约定，逐步淘汰。
+- `python/api/main.py`：遗留的旧入口（9000 端口，旧启动脚本已归档至 `docs/archive/startup/`），未纳入新约定，逐步淘汰。
 - Rust 侧错误体系另行规范。
 
 ## 违规案例存档（引以为戒）

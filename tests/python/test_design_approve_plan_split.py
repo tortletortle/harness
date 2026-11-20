@@ -1,4 +1,6 @@
 """批准与生成计划解耦：approve 不调 generate_plan；generate-plan 要求已批准。"""
+import json
+from pathlib import Path
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -91,6 +93,7 @@ def env(tmp_path, monkeypatch):
 
 
 def test_approve_does_not_generate_plan(env):
+    fixture = json.loads((Path(__file__).parents[1] / "fixtures/design_approved.json").read_text(encoding="utf-8"))
     design_id = _design(env.db)
     r = env.client.post(
         f"/api/design/{design_id}/approve",
@@ -98,8 +101,13 @@ def test_approve_does_not_generate_plan(env):
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["success"] is True
-    assert body["approved"] is True
+    assert body["design"]["design_id"] == design_id
+    fixture["design"]["design_id"] = design_id
+    assert {
+        "success": body["success"],
+        "approved": body["approved"],
+        "design": {key: body["design"][key] for key in fixture["design"]},
+    } == fixture
     assert "plan" not in body or body.get("plan") is None
     assert body["design"]["user_approval"] is True
     env.designer.generate_plan.assert_not_called()

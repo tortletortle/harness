@@ -131,7 +131,7 @@ async def main():
     if results['config'] and results['anthropic']:
         print("\n🚀 配置正确！可以启动服务了")
         print("\n下一步:")
-        print("  1. 启动Python API: cd python && python -m uvicorn api.main:app --port 9000")
+        print("  1. 启动Python API: python scripts/start_api.py")
         print("  2. 启动Rust Server: cargo run --bin eas-server")
         return 0
     else:

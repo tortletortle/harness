@@ -241,20 +241,31 @@ async fn supervisor(
                     }
                 });
             }
-            Command::ApproveDesign {
+            Command::ReviewDesign {
                 design_id,
-                approved,
-                feedback,
+                action,
                 epoch,
             } => {
                 let design_api = api.clone();
                 let design_tx = events_tx.clone();
                 let design_ctx = ctx.clone();
                 tokio::spawn(async move {
-                    let result = design_api
-                        .approve_design(&design_id, approved, feedback.as_deref())
-                        .await
-                        .map_err(|error| error.to_string());
+                    let approved = !matches!(&action, app::ReviewAction::Revise(_));
+                    let result = match action {
+                        app::ReviewAction::Approve => {
+                            design_api.approve_design(&design_id, true, None).await
+                        }
+                        app::ReviewAction::Revise(feedback) => {
+                            design_api
+                                .approve_design(&design_id, false, Some(&feedback))
+                                .await
+                        }
+                        app::ReviewAction::GeneratePlan => design_api
+                            .generate_plan(&design_id)
+                            .await
+                            .map(|plan| types::DesignApprovalResponse::Approved { plan }),
+                    }
+                    .map_err(|error| error.to_string());
                     forward_event(
                         &design_tx,
                         &design_ctx,

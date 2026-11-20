@@ -25,6 +25,8 @@ cd frontend && npm run dev
 >
 > Windows 日常入口：根目录三个 bat，或本页上面的两条命令。
 
+在仓库根目录运行 `python scripts/test_services.py --python-only` 检查 Python 后端。如果也启动了 Rust 伴随服务，运行 `python scripts/test_services.py` 检查两者。任一选定服务检查失败时，脚本退出码为 1。
+
 ## 测试（改代码后必须跑）
 
 ```bash
