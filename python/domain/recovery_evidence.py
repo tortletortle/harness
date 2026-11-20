@@ -92,3 +92,66 @@ def summarize_failure(anchor):
         "reproducibility": "unknown",
         "root_cause_verified": False,
     }
+
+
+# Limit the historical window even if a run has unusually many attempts.
+MAX_HISTORY_ATTEMPTS = 16
+
+
+def _signature(observation):
+    """A coarse symptom signature, never an identity of root causes."""
+    symptom = observation["symptom"]
+    if symptom == "blocked" and observation["blocked_reason"]:
+        return ("blocked", observation["blocked_reason"])
+    if symptom == "acceptance_failure" and not observation["checks_truncated"]:
+        checks = observation["failed_checks"]
+        if checks and all(check["type"] != "unknown" for check in checks):
+            return ("acceptance_failure", json.dumps(checks, sort_keys=True))
+    # Generic execution failure, missing data, and needs_input are insufficient.
+    return None
+
+
+def summarize_attempt_history(anchor, attempts, *, scope="latest_failed_run"):
+    """Count observations of the same step within one run, not controlled trials.
+
+    Caller must scope rows to the anchor and latest failed Run in the same
+    branch. Input is newest-first, with one extra row to detect truncation.
+    """
+    reference = _signature(summarize_failure(anchor))
+    rows = attempts[:MAX_HISTORY_ATTEMPTS]
+    matching = different = unknown = verified_success = 0
+    for row in rows:
+        observation = summarize_failure({"state_snapshot": row.get("outputs")})
+        signature = _signature(observation)
+        # Attempts are bookkeeping records; a Succeeded row alone is not proof.
+        result = _object(row.get("outputs"))
+        if (row.get("status") == "Succeeded" and result.get("success") is True
+                and result.get("check_status") == "passed"):
+            verified_success += 1
+        elif row.get("status") != "Failed" or reference is None or signature is None:
+            unknown += 1
+        elif signature == reference:
+            matching += 1
+        else:
+            different += 1
+    if matching >= 2:
+        pattern = "repeated_signature_observed"
+    elif matching == 1:
+        pattern = "single_matching_observation"
+    elif different or verified_success:
+        pattern = "no_matching_observation"
+    else:
+        pattern = "insufficient_evidence"
+    return {
+        "scope": scope,
+        "recorded_attempts": len(rows),
+        "matching_failures": matching,
+        "different_failures": different,
+        "verified_successes": verified_success,
+        "unclassified": unknown,
+        "truncated": len(attempts) > MAX_HISTORY_ATTEMPTS,
+        "pattern": pattern,
+        "controlled_conditions": False,
+        "reproducibility": "unknown",
+        "root_cause_verified": False,
+    }
