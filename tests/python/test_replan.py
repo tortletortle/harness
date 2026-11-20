@@ -206,3 +206,20 @@ async def test_replan_rejects_non_failed_plan(tmp_path):
     with pytest.raises(HTTPException) as exc_info:
         await server_mod.replan_plan(plan_id)
     assert exc_info.value.status_code == 409
+
+@pytest.mark.asyncio
+async def test_repair_prompt_contains_observations_not_verified_root_cause(tmp_path):
+    designer = _make_designer(REPAIR_JSON, tmp_path)
+    await designer.generate_repair_steps(
+        failed_step={"tool": "file_creator", "inputs": {},
+                     "failure_evidence": {"symptom": "acceptance_failure",
+                                          "reproducibility": "unknown",
+                                          "root_cause_verified": False}},
+        failure_reason="same generic failure",
+    )
+    provider = designer.llm_client.providers["deterministic"]
+    messages = provider.calls[-1]
+    prompt = "\n".join(m.content for m in messages)
+    assert '"symptom": "acceptance_failure"' in prompt
+    assert '"root_cause_verified": false' in prompt
+    assert "不得声称故障已复现" in prompt
