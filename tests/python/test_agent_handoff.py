@@ -254,7 +254,7 @@ def test_plain_tool_step_is_not_injected(tmp_path, monkeypatch):
     monkeypatch.setattr(step_execution, "state", SimpleNamespace(
         database=db,
         capability_registry=_registry_with_agent(),
-        tool_registry=None,
+        tool_registry=SimpleNamespace(tools={"file_creator": object()}),
         executor=_StubExecutor(),
         authorization_manager=AuthorizationManager(workspace_root=str(tmp_path)),
         approval_manager=SimpleNamespace(is_required_for_step=lambda tool_id, kind: False),
@@ -264,7 +264,8 @@ def test_plain_tool_step_is_not_injected(tmp_path, monkeypatch):
         retry_backoff_factor=2,
     ))
     row = next(r for r in db.get_steps(str(plan.plan_id)) if str(r["step_id"]) == ids["下游写文件"])
-    asyncio.run(step_execution._execute_step_with_state_machine(plan, row))
+    result = asyncio.run(step_execution._execute_step_with_state_machine(plan, row))
+    assert result["success"] is True
     assert "upstream_context" not in captured["step"].inputs
 
 
