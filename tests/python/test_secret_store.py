@@ -71,11 +71,19 @@ def test_environment_variable_wins_over_persisted_key(config, monkeypatch):
     assert secret_store.effective_key(config, "alpha") == "from-env"
 
 
-def test_corrupt_store_is_reported_without_echoing_content(config):
+def test_corrupt_store_is_reported_without_echoing_content(config, monkeypatch):
+    # Exercise the Windows parser on every CI platform without invoking DPAPI.
+    monkeypatch.setattr(secret_store, "_is_windows", lambda: True)
     secret_store.keys_path(config).write_text('{"format": 1, "values": "broken"}', encoding="utf-8")
     with pytest.raises(secret_store.SecretStoreError) as exc:
         secret_store.load_api_keys(config)
     assert "broken" not in str(exc.value)
+
+
+def test_non_windows_ignores_windows_encrypted_store(config, monkeypatch):
+    monkeypatch.setattr(secret_store, "_is_windows", lambda: False)
+    secret_store.keys_path(config).write_text("{invalid json", encoding="utf-8")
+    assert secret_store.load_api_keys(config) == {}
 
 
 def test_unreadable_store_never_breaks_the_snapshot(config):
