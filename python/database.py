@@ -869,7 +869,7 @@ class Database:
             return snapshot
         run = conn.execute(
             "SELECT run_id, branch_version, status FROM execution_runs "
-            "WHERE plan_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            "WHERE plan_id = ? ORDER BY created_at DESC, run_id DESC LIMIT 1",
             (plan_id,),
         ).fetchone()
         attempts = []
