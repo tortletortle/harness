@@ -389,3 +389,23 @@ async def test_replan_again_on_cloned_first_step_preserves_parent_dependencies(m
     assert result["new_branch"] == 2  # No predecessor in the active cloned branch.
     assert _drain(env.db, env.plan_id, 2) == ["repair-1", "repair-2", "original-1", "original-2"]
     assert len(_snapshot(env)[1]) == 2
+
+@pytest.mark.asyncio
+async def test_replan_uses_authoritative_failed_step_evidence(make_env):
+    env = make_env(failed_index=1)
+    assert env.db.update_step_state_machine(
+        env.ids[1], "Failed", failure_reason="broken",
+        state_snapshot={"success": False, "check_status": "failed",
+                        "acceptance_result": {"passed": False, "checks": [
+                            {"type": "test_passes", "passed": False,
+                             "evidence": {"exit_code": 1, "stderr_tail": "DO_NOT_COPY_RAW_LOG"}}
+                        ]}},
+    )
+    await env.route(env.plan_id)
+    context = env.designer.generate_repair_steps.await_args.kwargs["failed_step"]
+    evidence = context["failure_evidence"]
+    assert evidence["source"] == "state_snapshot"
+    assert evidence["symptom"] == "acceptance_failure"
+    assert evidence["failed_checks"] == [{"index": 0, "type": "test_passes", "exit_code": 1}]
+    assert "DO_NOT_COPY_RAW_LOG" not in json.dumps(evidence)
+    assert env.db.get_plan_status(env.plan_id) == "Pending"

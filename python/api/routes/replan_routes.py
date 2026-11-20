@@ -9,6 +9,7 @@ from api.auth import require_token
 from api.shared import state, broadcast_plan_update, broadcast_log
 from designer import GenerationError
 from domain.replan import ReplanValidationError, replan_anchor
+from domain.recovery_evidence import summarize_failure
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -42,6 +43,7 @@ async def replan_plan(plan_id: str):
                 "description": anchor.get("description", ""),
                 "tool": anchor.get("tool", ""),
                 "inputs": failed_inputs or {},
+                "failure_evidence": summarize_failure(anchor),
             },
             failure_reason=anchor.get("failure_reason") or "未知原因",
             user_request=str(design.user_request) if design else "",
