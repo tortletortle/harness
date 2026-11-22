@@ -294,3 +294,15 @@ def test_historical_invariant_violation_does_not_override_latest_success():
         for item in result["invariant_violations"]
     )
     assert result["attribution"]["candidate_step_ids"] == ["b"]
+
+
+def test_inactive_history_does_not_consume_active_step_budget():
+    rows = [step("active")]
+    for index in range(300):
+        old = step(f"old-{index}", order=index + 2)
+        old["is_obsolete"] = 1
+        rows.append(old)
+    result = analyze(rows, [attempt("active")])
+    assert result["graph"]["valid"] is True
+    assert result["graph"]["step_count"] == 1
+    assert result["attribution"]["candidate_step_ids"] == ["active"]
