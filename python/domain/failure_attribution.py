@@ -183,10 +183,10 @@ def analyze_failure_attribution(
     active_rows: list[Mapping[str, Any]] = []
     for row in steps:
         if not isinstance(row, Mapping):
-            continue
+            return _invalid_result(plan_id, run_id, branch_version, "invalid_step_row")
         row_plan = row.get("plan_id")
         if row_plan is not None and str(row_plan) != plan_id:
-            continue
+            return _invalid_result(plan_id, run_id, branch_version, "step_plan_mismatch")
         row_branch = _int(row.get("branch_version", 1), 1)
         if row_branch != branch_version or _is_obsolete(row):
             continue
@@ -298,6 +298,7 @@ def analyze_failure_attribution(
 
     violations: list[dict[str, Any]] = []
     violation_nodes: set[str] = set()
+    violation_times: dict[str, float] = {}
     for step_id, rows in grouped.items():
         for item in rows:
             p = item["projection"]
@@ -318,6 +319,9 @@ def analyze_failure_attribution(
                     "attempt_no": item["attempt_no"],
                 })
                 violation_nodes.add(step_id)
+                observed_at = item["finished_ts"] if item["finished_ts"] is not None else item["started_ts"]
+                if observed_at is not None:
+                    violation_times[step_id] = max(violation_times.get(step_id, float("-inf")), observed_at)
 
     # A dependency attempted in this Run must have a successful attempt
     # completed before the dependent attempt starts. No same-Run dependency
@@ -345,12 +349,18 @@ def analyze_failure_attribution(
                         "attempt_no": dependent_attempt["attempt_no"],
                     })
                     violation_nodes.add(dependent_id)
+                    violation_times[dependent_id] = max(
+                        violation_times.get(dependent_id, float("-inf")), started,
+                    )
 
     observations = []
     failure_nodes: set[str] = set()
+    latest_by_step: dict[str, dict[str, Any]] = {}
     for step_id in sorted(step_rows, key=lambda sid: order_key[sid]):
         rows = grouped.get(step_id, [])
         latest = rows[-1] if rows else None
+        if latest is not None:
+            latest_by_step[step_id] = latest
         failed_count = sum(1 for row in rows if row["status_key"] == "failed")
         if latest and latest["status_key"] == "failed":
             failure_nodes.add(step_id)
@@ -368,12 +378,37 @@ def analyze_failure_attribution(
                 list(dict.fromkeys(item["type"] for item in latest["projection"]["failed_checks"]))
                 if latest and latest["status_key"] == "failed" else []
             ),
+            "latest_checks_truncated": bool(latest and latest["projection"]["checks_truncated"]),
+            "latest_output_too_large": bool(latest and latest["projection"]["output_too_large"]),
+            "latest_output_missing_or_invalid": bool(latest and latest["projection"]["output_missing_or_invalid"]),
         })
 
     observed_nodes = failure_nodes | violation_nodes
+
+    def source_observation_time(step_id: str) -> float | None:
+        latest = latest_by_step.get(step_id)
+        if latest and latest["status_key"] == "failed" and latest["finished_ts"] is not None:
+            return latest["finished_ts"]
+        return violation_times.get(step_id)
+
+    def target_observation_time(step_id: str) -> float | None:
+        latest = latest_by_step.get(step_id)
+        if latest and latest["status_key"] == "failed" and latest["started_ts"] is not None:
+            return latest["started_ts"]
+        return violation_times.get(step_id)
+
+    # A graph ancestor suppresses a downstream candidate only when its
+    # observed failure/violation strictly predates the downstream observation.
+    # Missing or equal-resolution timestamps do not establish temporal order.
     candidates = [
         step_id for step_id in observed_nodes
-        if not any(ancestor in observed_nodes for ancestor in ancestors[step_id])
+        if not any(
+            ancestor in observed_nodes
+            and source_observation_time(ancestor) is not None
+            and target_observation_time(step_id) is not None
+            and source_observation_time(ancestor) < target_observation_time(step_id)
+            for ancestor in ancestors[step_id]
+        )
     ]
     candidates.sort(key=lambda sid: order_key[sid])
     if attempts_truncated:
@@ -383,8 +418,14 @@ def analyze_failure_attribution(
     elif len(candidates) == 1:
         attribution_status = "candidate"
         basis = ["earliest_observed_failure_or_invariant_violation"]
-        if any(candidates[0] in ancestors.get(other, set()) for other in observed_nodes if other != candidates[0]):
-            basis.append("upstream_dependency_relation_observed")
+        if any(
+            candidates[0] in ancestors.get(other, set())
+            and source_observation_time(candidates[0]) is not None
+            and target_observation_time(other) is not None
+            and source_observation_time(candidates[0]) < target_observation_time(other)
+            for other in observed_nodes if other != candidates[0]
+        ):
+            basis.append("upstream_dependency_and_time_order_observed")
         else:
             basis.append("single_minimal_observed_node")
     elif len(candidates) > 1:
