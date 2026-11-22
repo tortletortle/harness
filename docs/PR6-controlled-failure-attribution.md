@@ -42,10 +42,10 @@ The output projection allowlists booleans, known check types, bounded exit codes
 3. Inspect the latest attempt per step. A step whose latest attempt succeeded is not treated as a current failed node merely because an earlier retry failed.
 4. Record direct invariant violations from contradictory structured evidence.
 5. For each dependent attempt, if its dependency also has attempts in this Run, require a successful dependency attempt finished before the dependent started. If no dependency attempt exists in this Run, prior-Run success may legitimately satisfy the dependency, so no conclusion is drawn.
-6. Among currently failed steps and invariant-violation steps, return the minimal nodes in the dependency partial order. One minimal node is a candidate; multiple independent minimal nodes are ambiguous.
+6. Among currently failed steps and invariant-violation steps, suppress a downstream candidate only when an observed upstream failure/violation strictly predates the downstream observation. A graph path alone is not enough; missing or equal-resolution timestamps preserve ambiguity.
 7. If the attempt window is truncated, refuse a unique attribution.
 
-A dependency path is correlation and execution-order evidence, not proof that an upstream failure caused a downstream failure. `root_cause_verified` is always false in this prototype.
+A dependency path is correlation, not proof that an upstream failure caused a downstream failure. The analyzer requires strict timestamp precedence before an observed upstream failure can suppress a downstream candidate; missing or equal-resolution timestamps do not establish order. `root_cause_verified` is always false in this prototype.
 
 ## Deterministic experiment matrix
 
@@ -64,6 +64,8 @@ A dependency path is correlation and execution-order evidence, not proof that an
 | E11 | Earlier failure followed by latest successful attempt | Step is not a current failure candidate |
 | E12 | Parent-step alias points to active branch clone | Dependency resolves to active clone |
 | E13 | More than the attempt cap | Insufficient evidence, no unique candidate |
+| E14 | Upstream failure occurs after downstream starts | Do not attribute downstream failure to the later upstream failure |
+| E15 | Missing timestamps on a dependency chain | Preserve ambiguity; do not infer temporal causality |
 
 These are deterministic unit fixtures. They validate the projection and ranking rules, not real runtime failure reproduction, model recovery effectiveness, or causal correctness.
 
@@ -73,7 +75,7 @@ These are deterministic unit fixtures. They validate the projection and ranking 
 - Invalid graph and wrong Run scope fail closed.
 - Foreign Run/plan/branch attempts do not affect attribution.
 - No raw error, path, prompt, log, grant, or artifact content is copied.
-- Ambiguous or truncated evidence never yields a unique candidate.
+- Ambiguous, temporally unordered, or truncated evidence never yields a unique candidate.
 - No database schema, runtime behavior, permissions, retry policy, UI, or PR merge changes.
 
 ## Deferred work
