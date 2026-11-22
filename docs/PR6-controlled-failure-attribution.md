@@ -33,7 +33,7 @@ Attempts without a matching run ID, plan ID, or active-branch step are excluded 
 - attribution: candidate, ambiguous, insufficient evidence, or invalid trace;
 - provenance: excluded attempt counts, truncation, and event-scope limitations.
 
-The output projection allowlists booleans, known check types, bounded exit codes, and known blocked reasons. It does not copy raw error messages, stdout/stderr, paths, prompts, artifact contents, grant IDs, or model-generated prose. Step count, attempt count, serialized output size, and failed-check count are bounded.
+The output projection allowlists booleans, known check types, bounded exit codes, and known blocked reasons. It does not copy raw error messages, stdout/stderr, paths, prompts, artifact contents, grant IDs, or model-generated prose. The input snapshot is capped at 2,048 rows; after obsolete/other-branch filtering, the active trace is capped at 256 steps. Attempts, serialized output size, and failed-check count are also bounded.
 
 ## Attribution rule
 
@@ -67,6 +67,7 @@ A dependency path is correlation, not proof that an upstream failure caused a do
 | E14 | Upstream failure occurs after downstream starts | Do not attribute downstream failure to the later upstream failure |
 | E15 | Missing timestamps on a dependency chain | Preserve ambiguity; do not infer temporal causality |
 | E16 | An earlier attempt has a status/output conflict but the latest attempt succeeds | Report the historical conflict without ranking the recovered step as the current failure candidate |
+| E17 | More than 256 historical rows but only one active-branch step | Apply the analysis step cap after branch/obsolete filtering |
 
 These are deterministic unit fixtures. They validate the projection and ranking rules, not real runtime failure reproduction, model recovery effectiveness, or causal correctness.
 
