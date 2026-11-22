@@ -16,6 +16,7 @@ from domain.work_graph import normalize_dependencies, validate_graph
 
 SCHEMA_VERSION = 1
 MAX_TRACE_STEPS = 256
+MAX_INPUT_STEPS = 2048
 MAX_TRACE_ATTEMPTS = 1000
 MAX_OUTPUT_CHARS = 131072
 MAX_CHECKS = 16
@@ -177,8 +178,8 @@ def analyze_failure_attribution(
         return _invalid_result(plan_id, run_id, branch_version, "invalid_run_scope")
     if str(run.get("status") or "").lower() != "failed":
         return _invalid_result(plan_id, run_id, branch_version, "run_not_failed")
-    if not isinstance(steps, (list, tuple)) or len(steps) > MAX_TRACE_STEPS:
-        return _invalid_result(plan_id, run_id, branch_version, "step_limit_exceeded_or_invalid")
+    if not isinstance(steps, (list, tuple)) or len(steps) > MAX_INPUT_STEPS:
+        return _invalid_result(plan_id, run_id, branch_version, "step_input_limit_exceeded_or_invalid")
 
     active_rows: list[Mapping[str, Any]] = []
     for row in steps:
@@ -191,6 +192,8 @@ def analyze_failure_attribution(
         if row_branch != branch_version or _is_obsolete(row):
             continue
         active_rows.append(row)
+    if len(active_rows) > MAX_TRACE_STEPS:
+        return _invalid_result(plan_id, run_id, branch_version, "active_step_limit_exceeded")
 
     step_rows: dict[str, Mapping[str, Any]] = {}
     order_key: dict[str, tuple[int, str]] = {}
