@@ -318,7 +318,13 @@ def analyze_failure_attribution(
                     "code": code, "step_id": step_id,
                     "attempt_no": item["attempt_no"],
                 })
-                violation_nodes.add(step_id)
+                # Historical violations remain visible, but only a violation
+                # on the latest attempt can influence current-run attribution.
+                if item is rows[-1]:
+                    violation_nodes.add(step_id)
+                    observed_at = item["finished_ts"] if item["finished_ts"] is not None else item["started_ts"]
+                    if observed_at is not None:
+                        violation_times[step_id] = max(violation_times.get(step_id, float("-inf")), observed_at)
                 observed_at = item["finished_ts"] if item["finished_ts"] is not None else item["started_ts"]
                 if observed_at is not None:
                     violation_times[step_id] = max(violation_times.get(step_id, float("-inf")), observed_at)
