@@ -49,7 +49,7 @@ def test_chain_selects_earliest_failed_ancestor_without_claiming_causality():
     assert result["attribution"]["status"] == "candidate"
     assert result["attribution"]["candidate_step_ids"] == ["a"]
     assert result["attribution"]["root_cause_verified"] is False
-    assert "upstream_dependency_relation_observed" in result["attribution"]["basis"]
+    assert "upstream_dependency_and_time_order_observed" in result["attribution"]["basis"]
 
 
 def test_independent_failures_are_ambiguous():
@@ -105,7 +105,7 @@ def test_dependency_must_finish_before_dependent_starts():
     steps = [step("a", order=1), step("b", ["a"], 2)]
     attempts = [
         attempt("a", started_at="2026-01-01T00:00:00Z",
-                finished_at="2026-01-01T00:00:05Z"),
+                finished_at="2026-01-01T00:00:01Z"),
         attempt("b", started_at="2026-01-01T00:00:02Z",
                 finished_at="2026-01-01T00:00:03Z"),
     ]
@@ -254,3 +254,27 @@ def test_oversized_serialized_output_is_not_parsed():
     )
     assert result["observations"][0]["latest_failure_category"] == "unknown"
     assert result["attribution"]["status"] == "candidate"
+
+
+def test_upstream_failure_after_downstream_started_does_not_win_attribution():
+    steps = [step("a", order=1), step("b", ["a"], 2)]
+    attempts = [
+        attempt("a", started_at="2026-01-01T00:00:05Z",
+                finished_at="2026-01-01T00:00:06Z"),
+        attempt("b", started_at="2026-01-01T00:00:02Z",
+                finished_at="2026-01-01T00:00:03Z"),
+    ]
+    result = analyze(steps, attempts)
+    assert result["attribution"]["status"] == "ambiguous"
+    assert result["attribution"]["candidate_step_ids"] == ["a", "b"]
+
+
+def test_missing_timestamps_do_not_create_dependency_causality():
+    steps = [step("a", order=1), step("b", ["a"], 2)]
+    attempts = [
+        attempt("a", started_at=None, finished_at=None),
+        attempt("b", started_at=None, finished_at=None),
+    ]
+    result = analyze(steps, attempts)
+    assert result["attribution"]["status"] == "ambiguous"
+    assert result["attribution"]["candidate_step_ids"] == ["a", "b"]
