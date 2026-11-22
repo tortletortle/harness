@@ -1272,3 +1272,32 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
 - 边界：DPAPI 只保护静态文件，不防进程内已被注入的代码读取密钥；本轮未做密钥轮换、多用户隔离或跨平台密钥库（macOS Keychain / libsecret 未实现），也未改动 Grant、审批与执行路径。
 
 - 并发数据保护复核：验证期间另有 `Desktop preview live fixture only` 计划新增。只读按该计划及设计 ID 分离后，12 张业务表的全部原有行指纹与验证前一致；两个旧验收计划仍为 Failed/branch 1/原检查点，未执行或归档。新记录完整保留，不回滚旧备份；不宣称整库字节/所有行数未变。
+
+
+## 28. Controlled Failure Attribution（PR #6 · 研究原型）
+
+**状态：** 已在独立分支实现纯函数分析器与离线确定性测试；尚未接入运行时、Designer、diagnosis Agent 或自动重规划。该实现不改变执行、授权、重试、数据库 schema 或 UI。
+
+### 28.1 证据边界
+
+- 分析入口必须接收权威 `execution_runs` 行，并以其中 `run_id`、`plan_id`、`branch_version` 界定样本。
+- 每条 `execution_attempts` 必须再次匹配 Run ID、Plan ID，并属于当前活动分支的非废弃步骤；不匹配记录只计数，不进入归因。
+- 当前 `step_events` 表没有 `run_id`，同一计划/分支的事件可能跨多个 Run。PR #6 不把这类事件当作当前 Run 的因果证据。
+- 旧计划若没有显式 `depends_on`，不根据 `step_order` 臆造因果边。
+- 父步骤 ID 仅按调度器现有语义解析到当前活动分支克隆；悬空依赖、歧义别名、循环图均拒绝归因。
+
+### 28.2 Trace IR 与不变量
+
+新增 `python/domain/failure_attribution.py`：
+- 输出有界的 Run/Plan/branch 范围、有效依赖边、逐步骤尝试摘要、结构化不变量违规、归因候选与证据来源。
+- 仅保留布尔状态、白名单验收类型、受限 exit code 和白名单 blocked reason；不复制原始错误文本、日志、路径、提示词、Grant ID 或产物内容。
+- 检查 Attempt 终态与结构化输出矛盾、验收状态与失败检查矛盾，以及同一 Run 中依赖步骤未成功完成前下游步骤已启动的情况。
+- 只看每个步骤的最新 Attempt；较早失败后最新成功的步骤不再被视为当前失败节点。
+- 在失败节点与不变量违规节点中，沿显式 DAG 返回偏序最小节点。唯一节点只是候选；多个互不为祖先的节点返回 ambiguous；证据截断则返回 insufficient_evidence。
+- `root_cause_verified` 始终为 false。依赖关系不等于因果证明。
+
+### 28.3 验证边界
+
+`tests/python/test_failure_attribution.py` 使用离线确定性 fixture 覆盖链式/独立失败、Run 隔离、无 Run ID 事件排除、状态矛盾、验收矛盾、依赖启动时序、旧计划无依赖图、悬空/循环依赖、敏感字段剔除、最新成功 Attempt、分支克隆别名和历史截断。
+
+这些测试证明分析规则对给定结构化输入的确定性行为，不等于真实调度器故障注入、真实模型修复效果或因果准确率。下一步必须增加一致性数据库快照适配器，并在实际执行器上做受控故障注入，再使用带人工标注的留出任务评估 Top-1/Top-3、错误归因率与拒绝率。
