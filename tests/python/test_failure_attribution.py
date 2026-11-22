@@ -1,8 +1,6 @@
 """Deterministic, offline experiments for bounded failure attribution."""
 import json
 
-import pytest
-
 from domain.failure_attribution import analyze_failure_attribution
 
 PLAN_ID = "plan-1"
