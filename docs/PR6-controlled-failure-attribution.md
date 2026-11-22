@@ -40,7 +40,7 @@ The output projection allowlists booleans, known check types, bounded exit codes
 1. Reject invalid Run scope or invalid WorkGraph before ranking.
 2. Keep only attempts whose `run_id`, `plan_id`, and step membership match the authoritative Run and active branch.
 3. Inspect the latest attempt per step. A step whose latest attempt succeeded is not treated as a current failed node merely because an earlier retry failed.
-4. Record direct invariant violations from contradictory structured evidence.
+4. Keep historical invariant violations in the report, but only violations on the latest attempt may influence current-run candidate ranking.
 5. For each dependent attempt, if its dependency also has attempts in this Run, require a successful dependency attempt finished before the dependent started. If no dependency attempt exists in this Run, prior-Run success may legitimately satisfy the dependency, so no conclusion is drawn.
 6. Among currently failed steps and invariant-violation steps, suppress a downstream candidate only when an observed upstream failure/violation strictly predates the downstream observation. A graph path alone is not enough; missing or equal-resolution timestamps preserve ambiguity.
 7. If the attempt window is truncated, refuse a unique attribution.
@@ -66,6 +66,7 @@ A dependency path is correlation, not proof that an upstream failure caused a do
 | E13 | More than the attempt cap | Insufficient evidence, no unique candidate |
 | E14 | Upstream failure occurs after downstream starts | Do not attribute downstream failure to the later upstream failure |
 | E15 | Missing timestamps on a dependency chain | Preserve ambiguity; do not infer temporal causality |
+| E16 | An earlier attempt has a status/output conflict but the latest attempt succeeds | Report the historical conflict without ranking the recovered step as the current failure candidate |
 
 These are deterministic unit fixtures. They validate the projection and ranking rules, not real runtime failure reproduction, model recovery effectiveness, or causal correctness.
 
