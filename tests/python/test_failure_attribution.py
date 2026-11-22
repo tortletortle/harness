@@ -278,3 +278,19 @@ def test_missing_timestamps_do_not_create_dependency_causality():
     result = analyze(steps, attempts)
     assert result["attribution"]["status"] == "ambiguous"
     assert result["attribution"]["candidate_step_ids"] == ["a", "b"]
+
+
+def test_historical_invariant_violation_does_not_override_latest_success():
+    attempts = [
+        attempt("a", "Succeeded", {"success": False}, attempt_no=1),
+        attempt("a", "Succeeded", {"success": True, "check_status": "passed"},
+                attempt_no=2, started_at="2026-01-01T00:00:02Z",
+                finished_at="2026-01-01T00:00:03Z"),
+        attempt("b", "Failed"),
+    ]
+    result = analyze([step("a"), step("b", order=2)], attempts)
+    assert any(
+        item["step_id"] == "a" and item["code"] == "attempt_status_output_conflict"
+        for item in result["invariant_violations"]
+    )
+    assert result["attribution"]["candidate_step_ids"] == ["b"]
