@@ -236,12 +236,12 @@ def test_step_failure_transition_is_fenced_by_current_run_owner(tmp_path):
         run1["run_id"], "owner-1", plan_id, step_id, 1,
         "stale_owner_must_not_mutate",
     )
-    assert db.get_step(step_id)["status"] == "Running"
+    assert next(row for row in db.get_steps(plan_id) if row["step_id"] == step_id)["status"] == "Running"
 
     assert db.fail_step_for_run_owner(
         run2["run_id"], "owner-2", plan_id, step_id, 1,
         "attempt_persistence_failed",
         outputs={"error_code": "attempt_persistence_failed"},
     )
-    assert db.get_step(step_id)["status"] == StepStatus.FAILED.value
-    assert db.get_step(step_id)["failure_reason"] == "attempt_persistence_failed"
+    assert next(row for row in db.get_steps(plan_id) if row["step_id"] == step_id)["status"] == StepStatus.FAILED.value
+    assert next(row for row in db.get_steps(plan_id) if row["step_id"] == step_id)["failure_reason"] == "attempt_persistence_failed"
