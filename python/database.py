@@ -2174,6 +2174,7 @@ class Database:
                     SET status = ?, failure_reason = ?, outputs = ?, executed_at = ?
                     WHERE step_id = ? AND plan_id = ?
                       AND branch_version = ? AND is_obsolete = 0
+                      AND status = ?
                       AND EXISTS (
                           SELECT 1 FROM execution_runs active_run
                           WHERE active_run.run_id = ?
@@ -2195,7 +2196,7 @@ class Database:
                     str(failure_reason or "attempt_persistence_failed")[:500],
                     json.dumps(outputs or {}, ensure_ascii=False, default=str),
                     utcnow_iso(),
-                    str(step_id), str(plan_id), int(branch_version or 1),
+                    str(step_id), str(plan_id), int(branch_version or 1), StepStatus.RUNNING.value,
                     str(run_id), str(plan_id), RunStatus.RUNNING.value, str(owner_token),
                 ))
                 return cursor.rowcount == 1
