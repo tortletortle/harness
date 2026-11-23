@@ -3,7 +3,8 @@ import sqlite3
 import uuid
 from contextlib import closing
 from datetime import datetime, timezone
-from database import Database
+import pytest
+from database import Database, DatabaseError
 from models import (
     Architecture,
     DesignDocument,
@@ -182,3 +183,65 @@ def test_attempt_persists_bounded_recovery_context(tmp_path):
     saved = db.list_execution_attempts(run["run_id"])[0]
     outputs = json.loads(saved["outputs"])
     assert outputs["_recovery_context"] == context
+
+
+def test_attempt_creation_is_fenced_by_latest_run_owner_and_active_step(tmp_path):
+    db = Database(str(tmp_path / "eas.db"))
+    plan_id, step_id = _plan(db)
+    run1 = db.start_execution_run(
+        plan_id, (PlanStatus.PENDING.value,), owner_token="owner-1",
+    )
+
+    with pytest.raises(DatabaseError):
+        db.create_execution_attempt(
+            run1["run_id"], plan_id, step_id, 1, owner_token="wrong-owner",
+        )
+    with pytest.raises(DatabaseError):
+        db.create_execution_attempt(
+            run1["run_id"], plan_id, str(uuid.uuid4()), 1, owner_token="owner-1",
+        )
+
+    first_attempt = db.create_execution_attempt(
+        run1["run_id"], plan_id, step_id, 1, owner_token="owner-1",
+    )
+    assert first_attempt["status"] == AttemptStatus.RUNNING.value
+
+    assert db.update_plan_state_machine(plan_id, PlanStatus.PENDING.value)
+    run2 = db.start_execution_run(
+        plan_id, (PlanStatus.PENDING.value,), owner_token="owner-2",
+    )
+    with pytest.raises(DatabaseError):
+        db.create_execution_attempt(
+            run1["run_id"], plan_id, step_id, 2, owner_token="owner-1",
+        )
+    second_attempt = db.create_execution_attempt(
+        run2["run_id"], plan_id, step_id, 1, owner_token="owner-2",
+    )
+    assert second_attempt["run_id"] == run2["run_id"]
+
+
+def test_step_failure_transition_is_fenced_by_current_run_owner(tmp_path):
+    db = Database(str(tmp_path / "eas.db"))
+    plan_id, step_id = _plan(db)
+    run1 = db.start_execution_run(
+        plan_id, (PlanStatus.PENDING.value,), owner_token="owner-1",
+    )
+    assert db.update_step(step_id, "Running")
+
+    assert db.update_plan_state_machine(plan_id, PlanStatus.PENDING.value)
+    run2 = db.start_execution_run(
+        plan_id, (PlanStatus.PENDING.value,), owner_token="owner-2",
+    )
+    assert not db.fail_step_for_run_owner(
+        run1["run_id"], "owner-1", plan_id, step_id, 1,
+        "stale_owner_must_not_mutate",
+    )
+    assert db.get_step(step_id)["status"] == "Running"
+
+    assert db.fail_step_for_run_owner(
+        run2["run_id"], "owner-2", plan_id, step_id, 1,
+        "attempt_persistence_failed",
+        outputs={"error_code": "attempt_persistence_failed"},
+    )
+    assert db.get_step(step_id)["status"] == StepStatus.FAILED.value
+    assert db.get_step(step_id)["failure_reason"] == "attempt_persistence_failed"
