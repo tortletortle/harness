@@ -2163,6 +2163,45 @@ class Database:
             logger.exception("创建执行 Attempt 失败: {}", e)
             raise DatabaseError(f"创建执行 Attempt 失败: {e}") from e
 
+    def start_step_for_run_owner(self, run_id: str, owner_token: str, plan_id: str,
+                                 step_id: str, branch_version: int) -> bool:
+        """Move an eligible Step to Running only under the latest active Run owner."""
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.execute("""
+                    UPDATE steps
+                    SET status = ?, executed_at = ?
+                    WHERE step_id = ? AND plan_id = ?
+                      AND branch_version = ? AND is_obsolete = 0
+                      AND status IN (?, ?, ?, ?)
+                      AND EXISTS (
+                          SELECT 1 FROM execution_runs active_run
+                          WHERE active_run.run_id = ?
+                            AND active_run.plan_id = ?
+                            AND active_run.status = ?
+                            AND active_run.owner_token = ?
+                            AND NOT EXISTS (
+                                SELECT 1 FROM execution_runs newer
+                                WHERE newer.plan_id = active_run.plan_id
+                                  AND (
+                                      newer.created_at > active_run.created_at
+                                      OR (newer.created_at = active_run.created_at
+                                          AND newer.run_id > active_run.run_id)
+                                  )
+                            )
+                      )
+                """, (
+                    StepStatus.RUNNING.value, utcnow_iso(),
+                    str(step_id), str(plan_id), int(branch_version or 1),
+                    StepStatus.PENDING.value, StepStatus.RETRY.value,
+                    StepStatus.FAILED.value, StepStatus.RUNNING.value,
+                    str(run_id), str(plan_id), RunStatus.RUNNING.value, str(owner_token),
+                ))
+                return cursor.rowcount == 1
+        except Exception as e:
+            logger.exception("按 Run owner 启动步骤失败: {}", e)
+            raise DatabaseError(f"按 Run owner 启动步骤失败: {e}") from e
+
     def fail_step_for_run_owner(self, run_id: str, owner_token: str, plan_id: str,
                                 step_id: str, branch_version: int,
                                 failure_reason: str, outputs: Dict[str, Any] = None) -> bool:
