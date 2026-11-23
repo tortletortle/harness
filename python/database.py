@@ -81,9 +81,9 @@ class Database:
                     heartbeat_at TEXT,
                     owner_token TEXT NOT NULL,
                     failure_reason TEXT,
+                    created_at TEXT NOT NULL,
                     graph_snapshot_json TEXT,
                     graph_snapshot_hash TEXT,
-                    created_at TEXT NOT NULL,
                     FOREIGN KEY (plan_id) REFERENCES plans(plan_id)
                 )
             """)
