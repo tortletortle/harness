@@ -22,6 +22,7 @@ Raw file contents, file paths, environment variables, credentials, and command o
 - At most 32 MiB total hashed bytes.
 - Git metadata commands have bounded timeouts and output size.
 - Deleted tracked files are represented by a fixed deletion marker.
+- Symlinks, paths that resolve outside the worktree, missing/unreadable files, or any exceeded bound mark the fingerprint incomplete; symlink targets are never followed.
 - If the workspace is not a Git repository, a file cannot be read safely, or any bound is exceeded, the fingerprint is marked incomplete. Incomplete fingerprints never count as matching preconditions.
 
 Fingerprint collection is best-effort and must never prevent task execution. Attempt persistence remains fenced by the existing Run owner token.
