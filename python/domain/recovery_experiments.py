@@ -34,13 +34,13 @@ def _source_policy(tool_spec: Any) -> dict:
         return {
             "side_effect": "unknown",
             "idempotent": None,
-            "sandbox_replay_candidate": False,
+            "future_sandbox_candidate": False,
             "replay_authorized": False,
         }
     return {
         "side_effect": side_effect,
         "idempotent": idempotent,
-        "sandbox_replay_candidate": side_effect == "none" and idempotent,
+        "future_sandbox_candidate": side_effect == "none" and idempotent,
         "replay_authorized": False,
     }
 
