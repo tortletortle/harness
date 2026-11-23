@@ -96,7 +96,7 @@ def build_diagnostic_protocol(failure_evidence: Any, source_tool_spec: Any = Non
             "inspect_saved_block_decision",
             "核对已持久化的拦截原因、重试策略与人工审批记录，不重新调用被拦截工具。",
             "persisted_policy_decision",
-            ["plan_id", "step_id", "branch_version", "failed_run_id"],
+            ["plan_id", "step_id", "branch_version", "latest_failed_run_scope"],
             ["structured_block_reason", "saved_retry_policy"],
             ["字段一致：保留策略拦截结论", "字段冲突或缺失：标记证据不一致并停止自动恢复"],
         )
@@ -130,7 +130,7 @@ def build_diagnostic_protocol(failure_evidence: Any, source_tool_spec: Any = Non
             "inspect_saved_attempt_metadata",
             "对齐同一 Run 内的 Attempt 状态、退出码和已保存错误类别；不重放工具。",
             "attempt_outcome_metadata",
-            ["run_id", "step_id", "attempt_no", "branch_version"],
+            ["latest_failed_run_scope", "step_id", "attempt_no", "branch_version"],
             ["bounded_attempt_history", "structured_failure_code"],
             ["错误类别一致：形成待检验假设", "错误类别不同：按不同故障分别分析",
              "结构化记录不足：停止并补充观测"],
