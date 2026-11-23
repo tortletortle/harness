@@ -768,16 +768,13 @@ async def _execute_step_to_completion(
     debug_log(f"Step {step_id}: {step.get('description', '')[:30]}...")
     await broadcast_log(f"执行步骤 {step_id}: {step.get('description', '')[:50]}...", "info")
 
-    if not state.database.update_step(step_id=step_id, status="Running", executed_at=datetime.now()):
-        msg = f"步骤 {step_id} 状态写入失败（DB 中无此步骤），中止执行"
-        debug_log(f"ABORT: {msg}")
-        await broadcast_log(f"[ERROR] {msg}", "error")
-        _require_write(
-            state.database.update_plan_state_machine(str(plan.plan_id), "Failed"),
-            f"计划 {plan.plan_id} 状态 → Failed（步骤 {step_id} 未命中）",
+    if not state.database.start_step_for_run_owner(
+        run_id, owner_token, str(plan.plan_id), step_id, branch_version,
+    ):
+        # A stale worker must not write plan/step state after losing Run ownership.
+        raise AttemptPersistenceError(
+            "Step start was rejected by the current Run owner or active branch"
         )
-        await broadcast_plan_update(str(plan.plan_id))
-        return "stop", step_id
 
     await broadcast_plan_update(str(plan.plan_id))
 
