@@ -245,3 +245,29 @@ def test_step_failure_transition_is_fenced_by_current_run_owner(tmp_path):
     )
     assert next(row for row in db.get_steps(plan_id) if row["step_id"] == step_id)["status"] == StepStatus.FAILED.value
     assert next(row for row in db.get_steps(plan_id) if row["step_id"] == step_id)["failure_reason"] == "attempt_persistence_failed"
+
+
+def test_step_start_is_fenced_by_latest_run_owner(tmp_path):
+    db = Database(str(tmp_path / "eas.db"))
+    plan_id, step_id = _plan(db)
+    run1 = db.start_execution_run(
+        plan_id, (PlanStatus.PENDING.value,), owner_token="owner-1",
+    )
+    assert db.start_step_for_run_owner(
+        run1["run_id"], "owner-1", plan_id, step_id, 1,
+    )
+    assert next(row for row in db.get_steps(plan_id) if row["step_id"] == step_id)["status"] == StepStatus.RUNNING.value
+
+    assert db.update_plan_state_machine(plan_id, PlanStatus.PENDING.value)
+    assert db.update_step(step_id, StepStatus.PENDING.value)
+    run2 = db.start_execution_run(
+        plan_id, (PlanStatus.PENDING.value,), owner_token="owner-2",
+    )
+    assert not db.start_step_for_run_owner(
+        run1["run_id"], "owner-1", plan_id, step_id, 1,
+    )
+    assert next(row for row in db.get_steps(plan_id) if row["step_id"] == step_id)["status"] == StepStatus.PENDING.value
+    assert db.start_step_for_run_owner(
+        run2["run_id"], "owner-2", plan_id, step_id, 1,
+    )
+    assert next(row for row in db.get_steps(plan_id) if row["step_id"] == step_id)["status"] == StepStatus.RUNNING.value
