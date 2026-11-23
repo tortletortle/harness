@@ -163,7 +163,7 @@ async def test_attempt_create_failure_prevents_tool_invocation(monkeypatch):
 
     assert calls == []
     assert db.failed_steps
-    assert db.failed_steps[0][1]["failure_reason"] == "attempt_create_failed_before_tool_execution"
+    assert db.failed_steps[0][0][5] == "attempt_create_failed_before_tool_execution"
 
 
 @pytest.mark.asyncio
@@ -214,4 +214,4 @@ async def test_attempt_terminal_write_failure_stops_after_one_tool_call(monkeypa
     assert len(calls) == 1
     assert db.finish_statuses == [AttemptStatus.SUCCEEDED.value, AttemptStatus.INTERRUPTED.value]
     assert db.failed_steps
-    assert db.failed_steps[0][1]["failure_reason"] == "attempt_terminal_write_failed_after_tool_execution"
+    assert db.failed_steps[0][0][5] == "attempt_terminal_write_failed_after_tool_execution"
