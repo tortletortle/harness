@@ -63,6 +63,10 @@ def build_diagnostic_protocol(failure_evidence: Any, source_tool_spec: Any = Non
         if isinstance(item, dict) and item.get("type") in _ALLOWED_CHECKS
     })
     policy = _source_policy(source_tool_spec)
+    fingerprint_consistency = history.get("precondition_fingerprint_consistency")
+    if fingerprint_consistency not in {"same", "varied", "insufficient"}:
+        fingerprint_consistency = "insufficient"
+    matching_failures_same_precondition = history.get("matching_failures_same_precondition") is True
 
     hypotheses = []
     experiments = []
@@ -156,6 +160,11 @@ def build_diagnostic_protocol(failure_evidence: Any, source_tool_spec: Any = Non
             ["证据补齐：重新生成诊断协议", "仍缺失：维持 unknown 并停止自动恢复"],
         )
 
+    if fingerprint_consistency == "varied":
+        hypothesis("execution_context_varied_between_attempts", "medium", "precondition_fingerprints_differ")
+    elif fingerprint_consistency == "same" and matching_failures_same_precondition:
+        hypothesis("matching_failure_under_same_observed_fingerprint", "medium", "same_observed_precondition_not_a_controlled_trial")
+
     if pattern == "repeated_signature_observed":
         hypothesis("stable_failure_signature", "medium", "same_run_recurrence_only")
     elif pattern == "no_matching_observation":
@@ -168,6 +177,8 @@ def build_diagnostic_protocol(failure_evidence: Any, source_tool_spec: Any = Non
         "automatic_retry_authorized": False,
         "source_tool_policy": policy,
         "history_interpretation": pattern,
+        "attempt_context_consistency": fingerprint_consistency,
+        "matching_failures_same_precondition": matching_failures_same_precondition,
         "history_is_controlled_experiment": False,
         "hypotheses": hypotheses[:4],
         "experiments": experiments[:3],
