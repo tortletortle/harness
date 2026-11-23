@@ -35,38 +35,40 @@ def _digest_file(root: Path, relative: str, budget: list[int], *, allow_missing:
         return None
     target = root.joinpath(*pure.parts)
     try:
+        # Never follow a final symlink. Resolve parent components and ensure the
+        # actual file remains inside the selected worktree before reading bytes.
+        if target.is_symlink():
+            return None
         try:
-            info = target.lstat()
+            resolved = target.resolve(strict=True)
         except FileNotFoundError:
             return hashlib.sha256(b"deleted").hexdigest() if allow_missing else None
-        if target.is_symlink():
-            payload = os.readlink(target).encode("utf-8", "surrogateescape")
-        elif target.is_file():
-            if info.st_size > _MAX_FILE_BYTES or budget[0] + info.st_size > _MAX_TOTAL_BYTES:
-                return None
-            hasher = hashlib.sha256()
-            with target.open("rb") as stream:
-                while True:
-                    chunk = stream.read(64 * 1024)
-                    if not chunk:
-                        break
-                    budget[0] += len(chunk)
-                    if budget[0] > _MAX_TOTAL_BYTES:
-                        return None
-                    hasher.update(chunk)
-            after = target.lstat()
-            if (info.st_size, info.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-                return None
-            return hashlib.sha256(
-                b"file\0" + str(stat.S_IMODE(info.st_mode)).encode("ascii")
-                + b"\0" + hasher.digest()
-            ).hexdigest()
-        else:
+        if not resolved.is_relative_to(root):
             return None
-        return hashlib.sha256(payload).hexdigest()
-    except (OSError, ValueError):
+        info = resolved.stat()
+        if not resolved.is_file():
+            return None
+        if info.st_size > _MAX_FILE_BYTES or budget[0] + info.st_size > _MAX_TOTAL_BYTES:
+            return None
+        hasher = hashlib.sha256()
+        with resolved.open("rb") as stream:
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    break
+                budget[0] += len(chunk)
+                if budget[0] > _MAX_TOTAL_BYTES:
+                    return None
+                hasher.update(chunk)
+        after = resolved.stat()
+        if (info.st_size, info.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            return None
+        return hashlib.sha256(
+            b"file\\0" + str(stat.S_IMODE(info.st_mode)).encode("ascii")
+            + b"\\0" + hasher.digest()
+        ).hexdigest()
+    except (OSError, ValueError, RuntimeError):
         return None
-
 
 def _git(root: Path, *args: str) -> Optional[bytes]:
     try:
