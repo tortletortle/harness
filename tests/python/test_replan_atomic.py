@@ -478,3 +478,36 @@ async def test_changed_recurrence_evidence_rejects_stale_replan(make_env):
     assert exc.value.status_code == 409
     assert env.db.get_plan_status(env.plan_id) == "Failed"
     env.broadcast.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_plan_is_read_only_and_does_not_call_designer(make_env):
+    from api.routes import replan_routes
+
+    env = make_env(failed_index=1)
+    before = _snapshot(env)
+    result = await replan_routes.get_diagnostic_plan(env.plan_id)
+
+    assert result["success"] is True
+    assert result["step_id"] == env.ids[1]
+    protocol = result["diagnostic_protocol"]
+    assert protocol["mode"] == "design_only"
+    assert protocol["execution_authorized"] is False
+    assert protocol["automatic_retry_authorized"] is False
+    assert protocol["root_cause_verified"] is False
+    assert _snapshot(env) == before
+    env.designer.generate_repair_steps.assert_not_awaited()
+    env.broadcast.assert_not_awaited()
+    env.log.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_plan_rejects_nonfailed_plan(make_env):
+    from api.routes import replan_routes
+
+    env = make_env()
+    assert env.db.update_plan_state_machine(env.plan_id, "Completed")
+    with pytest.raises(HTTPException) as exc:
+        await replan_routes.get_diagnostic_plan(env.plan_id)
+    assert exc.value.status_code == 409
+    env.designer.generate_repair_steps.assert_not_awaited()
