@@ -85,6 +85,8 @@ async def test_actual_runtime_loop_respects_policy(monkeypatch,tool,mode,expecte
     class DB:
         def __init__(self):self.events=[];self.finished=[];self.states=[]
         def update_step(self,*a,**k):return True
+        def start_step_for_run_owner(self, *args, **kwargs):
+            return True
         def update_step_state_machine(self,*a,**k):self.states.append(k);return True
         def update_plan_state_machine(self,*a,**k):return True
         def add_step_event(self,*a,**k):self.events.append(a);return True
@@ -130,6 +132,8 @@ async def test_attempt_create_failure_prevents_tool_invocation(monkeypatch):
         def __init__(self):
             self.failed_steps = []
         def update_step(self, *args, **kwargs):
+            return True
+        def start_step_for_run_owner(self, *args, **kwargs):
             return True
         def create_execution_attempt(self, *args, **kwargs):
             raise RuntimeError("synthetic database outage")
@@ -177,6 +181,8 @@ async def test_attempt_terminal_write_failure_stops_after_one_tool_call(monkeypa
             self.finish_statuses = []
             self.failed_steps = []
         def update_step(self, *args, **kwargs):
+            return True
+        def start_step_for_run_owner(self, *args, **kwargs):
             return True
         def create_execution_attempt(self, *args, **kwargs):
             return {"attempt_id": str(uuid4())}
