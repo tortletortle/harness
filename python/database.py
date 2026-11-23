@@ -2028,7 +2028,7 @@ class Database:
 
     @staticmethod
     def _build_run_graph_snapshot(conn, plan_id: str, branch_version: int, captured_at: str,
-                                  max_steps: int = 2048):
+                                  max_steps: int = 256):
         """Freeze the active WorkGraph shape for this Run without copying user inputs."""
         rows = conn.execute("""
             SELECT step_id, step_order, tool, depends_on, parent_step_id,
@@ -2253,10 +2253,14 @@ class Database:
             attempt_finish = self._snapshot_timestamp(item.get("finished_at"))
             if attempt_start is None or (start_ts is not None and attempt_start < start_ts):
                 timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_start_outside_run"})
+            if attempt_finish is not None and attempt_start is not None and attempt_finish < attempt_start:
+                timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_finish_before_start"})
+            if finish_ts is not None and attempt_start is not None and attempt_start > finish_ts:
+                timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_start_after_run"})
             if finish_ts is not None and attempt_finish is not None and attempt_finish > finish_ts:
                 timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_finish_after_run"})
-            if finish_ts is not None and item.get("status") == AttemptStatus.RUNNING.value:
-                timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_left_running_after_run"})
+            if finish_ts is not None and item.get("finished_at") is None:
+                timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_unfinished_at_run_end"})
 
         graph_complete = bool(graph and graph.get("complete") and graph.get("valid"))
         attempts_complete = not attempts_truncated
