@@ -1272,3 +1272,14 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
 - 边界：DPAPI 只保护静态文件，不防进程内已被注入的代码读取密钥；本轮未做密钥轮换、多用户隔离或跨平台密钥库（macOS Keychain / libsecret 未实现），也未改动 Grant、审批与执行路径。
 
 - 并发数据保护复核：验证期间另有 `Desktop preview live fixture only` 计划新增。只读按该计划及设计 ID 分离后，12 张业务表的全部原有行指纹与验证前一致；两个旧验收计划仍为 Failed/branch 1/原检查点，未执行或归档。新记录完整保留，不回滚旧备份；不宣称整库字节/所有行数未变。
+
+
+#### 2026-11-23：Fail-Closed Attempt Persistence（PR #10 研究实现）
+
+- Attempt 创建改为单条 `INSERT ... SELECT`，原子校验 Run 仍为最新 Running owner、plan_id 匹配、owner_token（运行时必传）匹配，以及 Step 属于目标 plan/branch 且未废弃。
+- 运行时不再容忍 Attempt 创建失败后继续调用工具；创建失败会阻断本次工具调用，并尝试通过 Run owner fence 将当前 Running Step 收敛为 Failed。
+- Attempt 终态写入现在检查布尔结果。写入异常或未命中时，只尝试一次将 Attempt 标记为 Interrupted；无论 fallback 是否成功，都抛出 `AttemptPersistenceError` 并停止调度，不把未持久化结果当作成功。
+- 终态写入失败发生在工具调用之后时，Step 使用 `attempt_terminal_write_failed_after_tool_execution` 与 `execution_outcome=unknown` 标记；禁止自动重放，因为外部副作用可能已经发生且无法通过 SQLite 回滚。
+- 新增 `fail_step_for_run_owner`，仅允许最新活动 Run 的 owner 将仍为 Running 的当前分支 Step 标记 Failed，防止过期执行者覆盖新 Run 的步骤状态。
+- 测试覆盖错误 owner、缺失步骤、旧 Run、owner-fenced Step 状态写入、Attempt 创建失败时零工具调用，以及终态写入失败时最多一次工具调用和 Interrupted fallback。
+- 该机制不使 SQLite 与外部工具副作用形成原子事务；若主终态写和 Interrupted fallback 均失败，Attempt 可能保持 Running，等待 orphan recovery。此时仍会停止调度并尝试安全收敛 Step。

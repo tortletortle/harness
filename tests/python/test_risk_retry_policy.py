@@ -85,6 +85,8 @@ async def test_actual_runtime_loop_respects_policy(monkeypatch,tool,mode,expecte
     class DB:
         def __init__(self):self.events=[];self.finished=[];self.states=[]
         def update_step(self,*a,**k):return True
+        def start_step_for_run_owner(self, *args, **kwargs):
+            return True
         def update_step_state_machine(self,*a,**k):self.states.append(k);return True
         def update_plan_state_machine(self,*a,**k):return True
         def add_step_event(self,*a,**k):self.events.append(a);return True
@@ -119,3 +121,103 @@ async def test_actual_runtime_loop_respects_policy(monkeypatch,tool,mode,expecte
         assert not db.finished[0]['retryable'] and any(x[2]=='retry_suppressed' for x in db.events)
         assert db.states[-1]['outputs']['manual_retry_required']
     else:assert sum(x[2]=='retry' for x in db.events)==2
+
+
+@pytest.mark.asyncio
+async def test_attempt_create_failure_prevents_tool_invocation(monkeypatch):
+    import api.server as server
+    import api.runtime.step_execution as runtime
+
+    class DB:
+        def __init__(self):
+            self.failed_steps = []
+        def update_step(self, *args, **kwargs):
+            return True
+        def start_step_for_run_owner(self, *args, **kwargs):
+            return True
+        def create_execution_attempt(self, *args, **kwargs):
+            raise RuntimeError("synthetic database outage")
+        def fail_step_for_run_owner(self, *args, **kwargs):
+            self.failed_steps.append((args, kwargs))
+            return True
+
+    db = DB()
+    monkeypatch.setattr(runtime.state, "database", db)
+    async def noop(*args, **kwargs):
+        return None
+    async def fingerprint():
+        return {"version": 1, "complete": False, "error_code": "test"}
+    monkeypatch.setattr(runtime, "broadcast_log", noop)
+    monkeypatch.setattr(runtime, "broadcast_plan_update", noop)
+    monkeypatch.setattr(runtime, "_capture_attempt_fingerprint", fingerprint)
+    calls = []
+    async def execute(*args, **kwargs):
+        calls.append(True)
+        return {"success": True, "check_status": "passed"}
+    monkeypatch.setattr(server, "_execute_step_with_state_machine", execute)
+
+    step_id = str(uuid4())
+    with pytest.raises(runtime.AttemptPersistenceError):
+        await runtime._execute_step_to_completion(
+            NS(plan_id=uuid4()),
+            {"step_id": step_id, "tool": "greeting", "description": "fixture",
+             "inputs": {}, "status": "Pending"},
+            str(uuid4()), "owner", 1, False, set(), lambda *args: None,
+        )
+
+    assert calls == []
+    assert db.failed_steps
+    assert db.failed_steps[0][0][5] == "attempt_create_failed_before_tool_execution"
+
+
+@pytest.mark.asyncio
+async def test_attempt_terminal_write_failure_stops_after_one_tool_call(monkeypatch):
+    import api.server as server
+    import api.runtime.step_execution as runtime
+    from models import AttemptStatus
+
+    class DB:
+        def __init__(self):
+            self.finish_statuses = []
+            self.failed_steps = []
+        def update_step(self, *args, **kwargs):
+            return True
+        def start_step_for_run_owner(self, *args, **kwargs):
+            return True
+        def create_execution_attempt(self, *args, **kwargs):
+            return {"attempt_id": str(uuid4())}
+        def finish_execution_attempt(self, attempt_id, status, **kwargs):
+            self.finish_statuses.append(status)
+            return status == AttemptStatus.INTERRUPTED.value
+        def fail_step_for_run_owner(self, *args, **kwargs):
+            self.failed_steps.append((args, kwargs))
+            return True
+
+    db = DB()
+    monkeypatch.setattr(runtime.state, "database", db)
+    async def noop(*args, **kwargs):
+        return None
+    async def fingerprint():
+        return {"version": 1, "complete": False, "error_code": "test"}
+    monkeypatch.setattr(runtime, "broadcast_log", noop)
+    monkeypatch.setattr(runtime, "broadcast_plan_update", noop)
+    monkeypatch.setattr(runtime, "_capture_attempt_fingerprint", fingerprint)
+    calls = []
+    async def execute(*args, **kwargs):
+        calls.append(True)
+        return {"success": True, "check_status": "passed"}
+    monkeypatch.setattr(server, "_execute_step_with_state_machine", execute)
+
+    step_id = str(uuid4())
+    with pytest.raises(runtime.AttemptPersistenceError):
+        await runtime._execute_step_to_completion(
+            NS(plan_id=uuid4()),
+            {"step_id": step_id, "tool": "greeting", "description": "fixture",
+             "inputs": {}, "status": "Pending"},
+            str(uuid4()), "owner", 1, False, set(), lambda *args: None,
+        )
+
+    assert len(calls) == 1
+    assert db.finish_statuses == [AttemptStatus.SUCCEEDED.value, AttemptStatus.INTERRUPTED.value]
+    assert db.failed_steps
+    assert db.failed_steps[0][0][5] == "attempt_terminal_write_failed_after_tool_execution"

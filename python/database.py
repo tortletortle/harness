@@ -2107,22 +2107,141 @@ class Database:
             raise DatabaseError(f"执行 Run 心跳失败: {e}") from e
 
     def create_execution_attempt(self, run_id: str, plan_id: str, step_id: str,
-                                 attempt_no: int) -> Dict[str, Any]:
+                                 attempt_no: int, *, owner_token: str = None,
+                                 branch_version: int = 1) -> Dict[str, Any]:
+        """Create an Attempt only while its Run is the latest active owner.
+
+        The INSERT ... SELECT performs the Run/owner/step checks atomically with
+        insertion. owner_token remains optional for legacy callers; runtime callers
+        must pass it so stale workers cannot create new evidence rows.
+        """
         attempt_id = str(uuid.uuid4())
         now = utcnow_iso()
+        token = str(owner_token) if owner_token is not None else None
         try:
             with closing(self._get_connection()) as conn, conn:
-                conn.execute("""INSERT INTO execution_attempts
+                cursor = conn.execute("""INSERT INTO execution_attempts
                     (attempt_id, run_id, plan_id, step_id, attempt_no, status, started_at, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    SELECT ?, ?, ?, ?, ?, ?, ?, ?
+                    WHERE EXISTS (
+                        SELECT 1 FROM execution_runs active_run
+                        WHERE active_run.run_id = ?
+                          AND active_run.plan_id = ?
+                          AND active_run.status = ?
+                          AND (? IS NULL OR active_run.owner_token = ?)
+                          AND NOT EXISTS (
+                              SELECT 1 FROM execution_runs newer
+                              WHERE newer.plan_id = active_run.plan_id
+                                AND (
+                                    newer.created_at > active_run.created_at
+                                    OR (newer.created_at = active_run.created_at
+                                        AND newer.run_id > active_run.run_id)
+                                )
+                          )
+                    )
+                    AND EXISTS (
+                        SELECT 1 FROM steps active_step
+                        WHERE active_step.step_id = ?
+                          AND active_step.plan_id = ?
+                          AND active_step.branch_version = ?
+                          AND active_step.is_obsolete = 0
+                    )""",
                     (attempt_id, str(run_id), str(plan_id), str(step_id), int(attempt_no),
-                     AttemptStatus.RUNNING.value, now, now))
+                     AttemptStatus.RUNNING.value, now, now,
+                     str(run_id), str(plan_id), RunStatus.RUNNING.value, token, token,
+                     str(step_id), str(plan_id), int(branch_version or 1)))
+                if cursor.rowcount != 1:
+                    raise DatabaseError(
+                        "拒绝创建 Attempt：Run 已失效、owner 不匹配，或步骤不属于当前活动分支"
+                    )
                 return {"attempt_id": attempt_id, "run_id": str(run_id), "plan_id": str(plan_id),
-                        "step_id": str(step_id), "attempt_no": int(attempt_no), "status": AttemptStatus.RUNNING.value,
-                        "started_at": now}
+                        "step_id": str(step_id), "attempt_no": int(attempt_no),
+                        "status": AttemptStatus.RUNNING.value, "started_at": now}
+        except DatabaseError:
+            raise
         except Exception as e:
             logger.exception("创建执行 Attempt 失败: {}", e)
             raise DatabaseError(f"创建执行 Attempt 失败: {e}") from e
+
+    def start_step_for_run_owner(self, run_id: str, owner_token: str, plan_id: str,
+                                 step_id: str, branch_version: int) -> bool:
+        """Move an eligible Step to Running only under the latest active Run owner."""
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.execute("""
+                    UPDATE steps
+                    SET status = ?, executed_at = ?
+                    WHERE step_id = ? AND plan_id = ?
+                      AND branch_version = ? AND is_obsolete = 0
+                      AND status IN (?, ?, ?, ?)
+                      AND EXISTS (
+                          SELECT 1 FROM execution_runs active_run
+                          WHERE active_run.run_id = ?
+                            AND active_run.plan_id = ?
+                            AND active_run.status = ?
+                            AND active_run.owner_token = ?
+                            AND NOT EXISTS (
+                                SELECT 1 FROM execution_runs newer
+                                WHERE newer.plan_id = active_run.plan_id
+                                  AND (
+                                      newer.created_at > active_run.created_at
+                                      OR (newer.created_at = active_run.created_at
+                                          AND newer.run_id > active_run.run_id)
+                                  )
+                            )
+                      )
+                """, (
+                    StepStatus.RUNNING.value, utcnow_iso(),
+                    str(step_id), str(plan_id), int(branch_version or 1),
+                    StepStatus.PENDING.value, StepStatus.RETRY.value,
+                    StepStatus.FAILED.value, StepStatus.RUNNING.value,
+                    str(run_id), str(plan_id), RunStatus.RUNNING.value, str(owner_token),
+                ))
+                return cursor.rowcount == 1
+        except Exception as e:
+            logger.exception("按 Run owner 启动步骤失败: {}", e)
+            raise DatabaseError(f"按 Run owner 启动步骤失败: {e}") from e
+
+    def fail_step_for_run_owner(self, run_id: str, owner_token: str, plan_id: str,
+                                step_id: str, branch_version: int,
+                                failure_reason: str, outputs: Dict[str, Any] = None) -> bool:
+        """Fail a step only while the supplied Run remains the latest active owner."""
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.execute("""
+                    UPDATE steps
+                    SET status = ?, failure_reason = ?, outputs = ?, executed_at = ?
+                    WHERE step_id = ? AND plan_id = ?
+                      AND branch_version = ? AND is_obsolete = 0
+                      AND status = ?
+                      AND EXISTS (
+                          SELECT 1 FROM execution_runs active_run
+                          WHERE active_run.run_id = ?
+                            AND active_run.plan_id = ?
+                            AND active_run.status = ?
+                            AND active_run.owner_token = ?
+                            AND NOT EXISTS (
+                                SELECT 1 FROM execution_runs newer
+                                WHERE newer.plan_id = active_run.plan_id
+                                  AND (
+                                      newer.created_at > active_run.created_at
+                                      OR (newer.created_at = active_run.created_at
+                                          AND newer.run_id > active_run.run_id)
+                                  )
+                            )
+                      )
+                """, (
+                    StepStatus.FAILED.value,
+                    str(failure_reason or "attempt_persistence_failed")[:500],
+                    json.dumps(outputs or {}, ensure_ascii=False, default=str),
+                    utcnow_iso(),
+                    str(step_id), str(plan_id), int(branch_version or 1), StepStatus.RUNNING.value,
+                    str(run_id), str(plan_id), RunStatus.RUNNING.value, str(owner_token),
+                ))
+                return cursor.rowcount == 1
+        except Exception as e:
+            logger.exception("按 Run owner 收敛失败步骤失败: {}", e)
+            raise DatabaseError(f"按 Run owner 收敛失败步骤失败: {e}") from e
 
     def finish_execution_attempt(self, attempt_id: str, status: str, *, retryable: bool = None,
                                  failure_reason: str = None, outputs: Dict[str, Any] = None,

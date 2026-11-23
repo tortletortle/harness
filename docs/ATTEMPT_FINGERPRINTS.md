@@ -25,7 +25,7 @@ Raw file contents, file paths, environment variables, credentials, and command o
 - Symlinks, paths that resolve outside the worktree, missing/unreadable files, or any exceeded bound mark the fingerprint incomplete; symlink targets are never followed.
 - If the workspace is not a Git repository, a file cannot be read safely, or any bound is exceeded, the fingerprint is marked incomplete. Incomplete fingerprints never count as matching preconditions.
 
-Fingerprint collection is best-effort and must never prevent task execution. Attempt persistence remains fenced by the existing Run owner token.
+Fingerprint collection is best-effort and must never prevent task execution. Attempt persistence is a separate hard requirement: Attempt creation and terminal transitions are fenced by the latest active Run owner. If creation fails, the tool is not invoked. If the terminal result cannot be persisted, the runtime makes one conservative attempt to mark the Attempt Interrupted, marks the still-owned Running step Failed, and stops the scheduler. This does not roll back external side effects that may already have occurred.
 
 ## Interpretation
 
