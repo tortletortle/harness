@@ -48,7 +48,7 @@ Every experiment has `execution_mode=proposal_only`, `execution_authorized=false
 ## Current limitations
 
 - The protocol is deterministic rule-based planning, not a learned causal model.
-- The runtime does not yet capture immutable workspace snapshot IDs, source revision fingerprints, dependency lock hashes, or a complete environment fingerprint for every Attempt.
+- Attempts now capture bounded before/after workspace, source-revision, dependency-manifest, and runtime fingerprints. These are observations, not restorable snapshots; full environment variables, external services, containers, clocks, and network dependencies are not captured.
 - No experiment runner is implemented. The endpoint is a read-only design surface.
 - Recurrence counts remain scoped to one step and the latest failed Run; recurrence is not a controlled reproduction.
 - The repair planner receives the protocol but must still produce ordinary validated repair steps; it cannot execute the protocol.
