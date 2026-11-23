@@ -10,10 +10,57 @@ from api.shared import state, broadcast_plan_update, broadcast_log
 from designer import GenerationError
 from domain.replan import ReplanValidationError, replan_anchor
 from domain.recovery_evidence import summarize_failure
+from domain.recovery_experiments import build_diagnostic_protocol
 from logging_config import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter()
+
+
+
+def _failure_context(anchor, snapshot):
+    evidence = {
+        **summarize_failure(anchor),
+        "history": snapshot.get("failure_history"),
+    }
+    tool_id = str(anchor.get("tool") or "").split(":")[0].strip()
+    capability_registry = getattr(state, "capability_registry", None)
+    capability = None
+    if capability_registry is not None and tool_id:
+        try:
+            capability = capability_registry.get(tool_id)
+        except Exception:
+            capability = None
+    try:
+        tool_spec = capability.spec() if capability is not None else None
+    except Exception:
+        tool_spec = None
+    return evidence, build_diagnostic_protocol(evidence, tool_spec)
+
+
+@router.get("/api/plan/{plan_id}/diagnostic-plan", dependencies=[Depends(require_token)])
+async def get_diagnostic_plan(plan_id: str):
+    """Return a deterministic, read-only diagnostic protocol for a failed step."""
+    try:
+        snapshot = state.database.get_replan_snapshot(plan_id)
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="执行计划不存在")
+        anchor, _ = replan_anchor(snapshot)
+        evidence, protocol = _failure_context(anchor, snapshot)
+        return {
+            "success": True,
+            "plan_id": str(plan_id),
+            "step_id": str(anchor["step_id"]),
+            "failure_evidence": evidence,
+            "diagnostic_protocol": protocol,
+        }
+    except HTTPException:
+        raise
+    except ReplanValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:
+        logger.exception("读取诊断方案失败: {}", exc)
+        raise HTTPException(status_code=500, detail="读取诊断方案失败") from exc
 
 
 @router.post("/api/plan/{plan_id}/replan", dependencies=[Depends(require_token)])
@@ -30,6 +77,7 @@ async def replan_plan(plan_id: str):
         if snapshot is None:
             raise HTTPException(status_code=404, detail="执行计划不存在")
         anchor, _ = replan_anchor(snapshot)
+        failure_evidence, diagnostic_protocol = _failure_context(anchor, snapshot)
         design = database.get_design(str(snapshot["plan"]["design_id"]))
         failed_inputs = anchor.get("inputs")
         if isinstance(failed_inputs, str):
@@ -44,8 +92,8 @@ async def replan_plan(plan_id: str):
                 "tool": anchor.get("tool", ""),
                 "inputs": failed_inputs or {},
                 "failure_evidence": {
-                    **summarize_failure(anchor),
-                    "history": snapshot.get("failure_history"),
+                    **failure_evidence,
+                    "diagnostic_protocol": diagnostic_protocol,
                 },
             },
             failure_reason=anchor.get("failure_reason") or "未知原因",
