@@ -108,3 +108,34 @@ def test_protocol_does_not_copy_untrusted_evidence_strings():
     serialized = str(protocol)
     assert marker not in serialized
     _experiments(protocol)
+
+
+def test_same_observed_fingerprint_adds_hypothesis_without_claiming_causality():
+    protocol = build_diagnostic_protocol({
+        "symptom": "acceptance_failure",
+        "history": {
+            "pattern": "repeated_signature_observed",
+            "precondition_fingerprint_consistency": "same",
+            "matching_failures_same_precondition": True,
+        },
+    })
+    ids = [item["id"] for item in protocol["hypotheses"]]
+    assert "matching_failure_under_same_observed_fingerprint" in ids
+    assert protocol["attempt_context_consistency"] == "same"
+    assert protocol["root_cause_verified"] is False
+    assert protocol["reproducibility"] == "unknown"
+
+
+def test_varied_fingerprints_add_environment_variation_hypothesis():
+    protocol = build_diagnostic_protocol({
+        "symptom": "execution_failure",
+        "history": {
+            "pattern": "repeated_signature_observed",
+            "precondition_fingerprint_consistency": "varied",
+        },
+    })
+    ids = [item["id"] for item in protocol["hypotheses"]]
+    assert "execution_context_varied_between_attempts" in ids
+    assert protocol["attempt_context_consistency"] == "varied"
+    assert protocol["history_is_controlled_experiment"] is False
+    assert protocol["root_cause_verified"] is False

@@ -119,12 +119,35 @@ def summarize_attempt_history(anchor, attempts, *, scope="latest_failed_run"):
     """
     reference = _signature(summarize_failure(anchor))
     rows = attempts[:MAX_HISTORY_ATTEMPTS]
-    matching = different = unknown = checked_success = 0
+    matching = different = unknown = checked_success = matching_fingerprinted = 0
+    complete_fingerprints = set()
+    matching_fingerprints = set()
+    fingerprinted_attempts = incomplete_fingerprints = workspace_changed = 0
     for row in rows:
         observation = summarize_failure({"state_snapshot": row.get("outputs")})
         signature = _signature(observation)
         # Attempts are bookkeeping records; a Succeeded row alone is not proof.
         result = _object(row.get("outputs"))
+        recovery_context = _object(result.get("_recovery_context"))
+        before = _object(recovery_context.get("workspace_before"))
+        after = _object(recovery_context.get("workspace_after"))
+        fingerprint = before.get("workspace_sha256")
+        fingerprint_complete = (
+            before.get("complete") is True
+            and isinstance(fingerprint, str)
+            and len(fingerprint) == 64
+        )
+        if fingerprint_complete:
+            fingerprinted_attempts += 1
+            complete_fingerprints.add(fingerprint)
+        else:
+            incomplete_fingerprints += 1
+        if (before.get("complete") is True and after.get("complete") is True
+                and isinstance(before.get("workspace_sha256"), str)
+                and isinstance(after.get("workspace_sha256"), str)
+                and before["workspace_sha256"] != after["workspace_sha256"]):
+            workspace_changed += 1
+
         if (row.get("status") == "Succeeded" and result.get("success") is True
                 and result.get("check_status") == "passed"):
             checked_success += 1
@@ -132,6 +155,9 @@ def summarize_attempt_history(anchor, attempts, *, scope="latest_failed_run"):
             unknown += 1
         elif signature == reference:
             matching += 1
+            if fingerprint_complete:
+                matching_fingerprinted += 1
+                matching_fingerprints.add(fingerprint)
         else:
             different += 1
     if reference is None:
@@ -151,6 +177,17 @@ def summarize_attempt_history(anchor, attempts, *, scope="latest_failed_run"):
         "different_failures": different,
         "reported_checked_successes": checked_success,
         "unclassified": unknown,
+        "fingerprinted_attempts": fingerprinted_attempts,
+        "incomplete_fingerprint_attempts": incomplete_fingerprints,
+        "precondition_fingerprint_consistency": (
+            "same" if len(complete_fingerprints) == 1 and fingerprinted_attempts >= 2 and incomplete_fingerprints == 0
+            else "varied" if len(complete_fingerprints) > 1
+            else "insufficient"
+        ),
+        "matching_failures_same_precondition": (
+            matching_fingerprinted >= 2 and matching_fingerprinted == matching and len(matching_fingerprints) == 1
+        ),
+        "workspace_changed_attempts": workspace_changed,
         "truncated": len(attempts) > MAX_HISTORY_ATTEMPTS,
         "pattern": pattern,
         "controlled_conditions": False,

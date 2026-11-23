@@ -161,3 +161,24 @@ def test_run_endpoints_strip_owner_token(tmp_path, monkeypatch):
     assert all("owner_token" not in item for item in runs)
     assert "owner_token" not in one
     assert all("owner_token" not in item for item in attempts)
+
+
+def test_attempt_persists_bounded_recovery_context(tmp_path):
+    import json
+
+    db = Database(str(tmp_path / "eas.db"))
+    plan_id, step_id = _plan(db)
+    run = db.start_execution_run(plan_id, (PlanStatus.PENDING.value,), owner_token="owner")
+    attempt = db.create_execution_attempt(run["run_id"], plan_id, step_id, 1)
+    context = {
+        "workspace_before": {"version": 1, "complete": True, "workspace_sha256": "a" * 64},
+        "workspace_after": {"version": 1, "complete": True, "workspace_sha256": "b" * 64},
+    }
+    assert db.finish_execution_attempt(
+        attempt["attempt_id"], AttemptStatus.FAILED.value,
+        outputs={"success": False, "check_status": "failed", "_recovery_context": context},
+        run_id=run["run_id"], owner_token="owner",
+    )
+    saved = db.list_execution_attempts(run["run_id"])[0]
+    outputs = json.loads(saved["outputs"])
+    assert outputs["_recovery_context"] == context
