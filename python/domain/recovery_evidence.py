@@ -180,12 +180,12 @@ def summarize_attempt_history(anchor, attempts, *, scope="latest_failed_run"):
         "fingerprinted_attempts": fingerprinted_attempts,
         "incomplete_fingerprint_attempts": incomplete_fingerprints,
         "precondition_fingerprint_consistency": (
-            "same" if len(complete_fingerprints) == 1 and fingerprinted_attempts >= 2
+            "same" if len(complete_fingerprints) == 1 and fingerprinted_attempts >= 2 and incomplete_fingerprints == 0
             else "varied" if len(complete_fingerprints) > 1
             else "insufficient"
         ),
         "matching_failures_same_precondition": (
-            matching_fingerprinted >= 2 and len(matching_fingerprints) == 1
+            matching_fingerprinted >= 2 and matching_fingerprinted == matching and len(matching_fingerprints) == 1
         ),
         "workspace_changed_attempts": workspace_changed,
         "truncated": len(attempts) > MAX_HISTORY_ATTEMPTS,
