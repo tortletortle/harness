@@ -178,3 +178,16 @@ def test_workspace_mutation_during_attempt_is_reported():
              "outputs": _fingerprinted_failure("a" * 64, after_hash="b" * 64)}]
     history = summarize_attempt_history(anchor, rows)
     assert history["workspace_changed_attempts"] == 1
+
+
+def test_partial_fingerprint_coverage_is_not_reported_as_same_preconditions():
+    from domain.recovery_evidence import summarize_attempt_history
+    anchor = {"state_snapshot": _failed_result()}
+    rows = [
+        {"status": "Failed", "outputs": _fingerprinted_failure("a" * 64)},
+        {"status": "Failed", "outputs": _fingerprinted_failure("a" * 64)},
+        {"status": "Failed", "outputs": _fingerprinted_failure(None, complete=False)},
+    ]
+    history = summarize_attempt_history(anchor, rows)
+    assert history["precondition_fingerprint_consistency"] == "insufficient"
+    assert history["matching_failures_same_precondition"] is False
