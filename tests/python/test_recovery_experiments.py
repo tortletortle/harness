@@ -137,5 +137,5 @@ def test_varied_fingerprints_add_environment_variation_hypothesis():
     ids = [item["id"] for item in protocol["hypotheses"]]
     assert "execution_context_varied_between_attempts" in ids
     assert protocol["attempt_context_consistency"] == "varied"
-    assert protocol["controlled_conditions"] if "controlled_conditions" in protocol else True
+    assert protocol["history_is_controlled_experiment"] is False
     assert protocol["root_cause_verified"] is False
