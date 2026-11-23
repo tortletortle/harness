@@ -214,7 +214,13 @@ async def test_repair_prompt_contains_observations_not_verified_root_cause(tmp_p
         failed_step={"tool": "file_creator", "inputs": {},
                      "failure_evidence": {"symptom": "acceptance_failure",
                                           "reproducibility": "unknown",
-                                          "root_cause_verified": False}},
+                                          "root_cause_verified": False,
+                                          "diagnostic_protocol": {
+                                              "mode": "design_only",
+                                              "execution_authorized": False,
+                                              "experiments": [{"id": "repeat_acceptance_on_frozen_snapshot",
+                                                               "may_invoke_tools": False}],
+                                          }}},
         failure_reason="same generic failure",
     )
     provider = designer.llm_client.providers["deterministic"]
@@ -223,3 +229,6 @@ async def test_repair_prompt_contains_observations_not_verified_root_cause(tmp_p
     assert '"symptom": "acceptance_failure"' in prompt
     assert '"root_cause_verified": false' in prompt
     assert "不得声称故障已复现" in prompt
+    assert '"mode": "design_only"' in prompt
+    assert '"execution_authorized": false' in prompt
+    assert "绝不调用探针、重放工具" in prompt
