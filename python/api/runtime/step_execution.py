@@ -36,6 +36,7 @@ from authorization import agent_step_grant_params
 from retry_policy import automatic_retry_policy, annotate_retry_failure
 from executor.acceptance_feedback import build_acceptance_feedback as _build_acceptance_feedback
 from domain.work_graph import normalize_dependencies
+from domain.workspace_fingerprint import capture_workspace_fingerprint
 from models import AttemptStatus, PlanStatus, Step, StepStatus
 
 from logging_config import get_logger
@@ -652,6 +653,15 @@ async def _execute_step_with_state_machine(plan, step: Dict[str, Any]) -> Dict[s
     return result
 
 
+
+
+async def _capture_attempt_fingerprint() -> Dict[str, Any]:
+    """Best-effort, bounded workspace observation; never blocks task execution."""
+    try:
+        return await asyncio.to_thread(capture_workspace_fingerprint)
+    except Exception:
+        return {"version": 1, "complete": False, "error_code": "capture_failed"}
+
 async def _execute_step_to_completion(
     plan,
     step,
@@ -721,11 +731,13 @@ async def _execute_step_to_completion(
     while True:
         logger.info(f"STEP_LOOP_CALL step_id={step_id} attempt={attempt}")
         # 每次工具调用落一条 Attempt 记录；重试/反馈轮生成新一轮 Attempt。
+        attempt_fingerprint_before = None
         try:
             _attempt = state.database.create_execution_attempt(
                 run_id, str(plan.plan_id), step_id, attempt + 1,
             )
             attempt_id = str(_attempt["attempt_id"])
+            attempt_fingerprint_before = await _capture_attempt_fingerprint()
         except Exception as attempt_exc:
             # Attempt 记录写入失败不阻断执行主体（观察性分层），仅记日志。
             attempt_id = None
@@ -739,9 +751,14 @@ async def _execute_step_to_completion(
             logger.info(f"STEP_LOOP_EXCEPTION step_id={step_id} attempt={attempt} exc={e}")
             if attempt_id:
                 try:
+                    attempt_fingerprint_after = await _capture_attempt_fingerprint()
                     state.database.finish_execution_attempt(
                         attempt_id, AttemptStatus.FAILED.value,
                         failure_reason=str(e)[:2000],
+                        outputs={"_recovery_context": {
+                            "workspace_before": attempt_fingerprint_before,
+                            "workspace_after": attempt_fingerprint_after,
+                        }},
                         run_id=run_id, owner_token=owner_token,
                     )
                 except Exception as attempt_close_exc:
@@ -757,12 +774,18 @@ async def _execute_step_to_completion(
             await broadcast_log(f"[RETRY_SUPPRESSED] 步骤 {step_id} 不自动重试；请核对可能已发生的操作后再明确发起执行", "warning")
         if attempt_id:
             try:
+                attempt_fingerprint_after = await _capture_attempt_fingerprint()
+                attempt_outputs = dict(result)
+                attempt_outputs["_recovery_context"] = {
+                    "workspace_before": attempt_fingerprint_before,
+                    "workspace_after": attempt_fingerprint_after,
+                }
                 state.database.finish_execution_attempt(
                     attempt_id,
                     AttemptStatus.SUCCEEDED.value if result.get("success") else AttemptStatus.FAILED.value,
                     retryable=result.get("retryable"),
                     failure_reason=result.get("error") if not result.get("success") else None,
-                    outputs=result,
+                    outputs=attempt_outputs,
                     duration_ms=result.get("duration_ms"),
                     run_id=run_id, owner_token=owner_token,
                 )
