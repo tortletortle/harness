@@ -52,7 +52,7 @@ The JSON is canonicalized with sorted keys and compact separators, then SHA-256 
 6. Counts legacy plan/branch-scoped `step_events` and `audit_logs`, but does not return their raw payloads or attribute them to this Run.
 7. Omits audit instructions/inputs, event payloads, artifact URIs/metadata, and session error text.
 
-The returned top-level `run`, `steps`, `attempts`, and `events` fields are shaped for the PR #6 local analyzer. Raw Attempt `outputs` may contain sensitive text and must remain local; call the PR #6 allowlist projection before any model-facing use.
+The returned top-level `run`, `steps`, `attempts`, and `events` fields are shaped for the PR #6 local analyzer. Attempt output strings above 128 KiB are omitted in SQL and flagged by Attempt ID; this also blocks `core_analysis_ready`. Smaller raw Attempt `outputs` may still contain sensitive text and must remain local; call the PR #6 allowlist projection before any model-facing use.
 
 ## Completeness semantics
 
@@ -60,6 +60,7 @@ This PR intentionally distinguishes:
 
 - `core_analysis_ready`: the frozen graph is valid, the bounded Attempt window is not truncated, timestamps are consistent, and the Run is terminal Failed.
 - `analysis_ready`: **false in this PR**. The execution loop still treats Attempt creation as best-effort, so a read snapshot cannot prove that no Attempt insert was lost.
+- Oversized Attempt output: any `outputs` string above 128 KiB is omitted before materialization and blocks `core_analysis_ready`.
 - `full_trace_ready`: **false in this PR**. Events and audits are still unscoped; artifact and session Attempt lineage is unavailable.
 
 The snapshot is therefore suitable for controlled offline structural analysis, not yet for autonomous recovery or production root-cause claims.
@@ -67,7 +68,7 @@ The snapshot is therefore suitable for controlled offline structural analysis, n
 ## Deterministic acceptance tests
 
 `tests/python/test_failure_attribution_snapshot.py` covers:
-- canonical graph capture and hash;
+- canonical graph capture and hash (the hash detects accidental mismatch; it is not an authenticity signature);
 - graph immutability after live plan mutation;
 - terminal Run and Attempt lifecycle checks;
 - `LIMIT + 1` truncation detection;
