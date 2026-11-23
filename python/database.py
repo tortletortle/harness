@@ -2311,7 +2311,6 @@ class Database:
                 "artifact_attempt_lineage_available": False,
                 "session_attempt_lineage_available": False,
                 "analysis_ready": analysis_ready,
-                "analysis_ready": analysis_ready,
                 "analysis_ready_reason": "attempt_persistence_is_still_fail_open_and_auxiliary_events_audits_are_unscoped",
             },
             "provenance": {
