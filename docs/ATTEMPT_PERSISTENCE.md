@@ -23,6 +23,8 @@ This breaks the premise of failure attribution and can make an unrecorded side e
 
 The runtime always passes `owner_token` and `branch_version`. Optional owner tokens remain supported for legacy/test callers, but those callers still cannot create rows against a non-latest or non-running Run.
 
+Before Attempt creation, `Database.start_step_for_run_owner` atomically moves an eligible Step to Running only when the Run is still the latest owner and the Step is active on the requested branch. The runtime no longer uses an unfenced Step status write at this boundary.
+
 ### Terminal state
 
 The existing `finish_execution_attempt` remains the authoritative terminal write and keeps its SQL-level owner fence. The runtime now checks its boolean result rather than treating `False` as success.
@@ -31,11 +33,11 @@ If the requested terminal write raises or returns false, the runtime makes one c
 
 ### Step state
 
-`Database.fail_step_for_run_owner` marks the still-Running active-branch Step as Failed only when the same Run is still the latest active owner. This avoids stale workers changing a newer Run's step state.
+`Database.fail_step_for_run_owner` marks the still-Running active-branch Step as Failed only when the same Run is still the latest active owner. This avoids stale workers changing a newer Run's step state. Both the start and failure transitions are conditional SQL writes, not check-then-set sequences.
 
 ## Runtime contract
 
-1. Set the Step to Running.
+1. Atomically set the Step to Running under the current Run owner.
 2. Durably create an Attempt under the current Run owner.
 3. If Attempt creation fails, do not invoke the tool; attempt an owner-fenced Step failure transition and abort the Run.
 4. Capture the best-effort before fingerprint.
@@ -62,7 +64,7 @@ New deterministic tests cover:
 - wrong owner token rejection at Attempt creation;
 - missing/wrong-plan Step rejection;
 - stale Run rejection after a newer Run is created;
-- owner-fenced Step failure transition;
+- owner-fenced Step start and failure transitions;
 - tool invocation count remains zero when Attempt creation fails;
 - tool invocation count remains one when Attempt terminal persistence fails;
 - fallback `Interrupted` persistence does not convert the operation into success.
