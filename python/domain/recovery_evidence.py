@@ -119,7 +119,7 @@ def summarize_attempt_history(anchor, attempts, *, scope="latest_failed_run"):
     """
     reference = _signature(summarize_failure(anchor))
     rows = attempts[:MAX_HISTORY_ATTEMPTS]
-    matching = different = unknown = checked_success = 0
+    matching = different = unknown = checked_success = matching_fingerprinted = 0
     complete_fingerprints = set()
     matching_fingerprints = set()
     fingerprinted_attempts = incomplete_fingerprints = workspace_changed = 0
@@ -156,6 +156,7 @@ def summarize_attempt_history(anchor, attempts, *, scope="latest_failed_run"):
         elif signature == reference:
             matching += 1
             if fingerprint_complete:
+                matching_fingerprinted += 1
                 matching_fingerprints.add(fingerprint)
         else:
             different += 1
