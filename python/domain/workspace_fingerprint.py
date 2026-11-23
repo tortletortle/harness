@@ -58,8 +58,8 @@ def _digest_file(root: Path, relative: str, budget: list[int], *, allow_missing:
             if (info.st_size, info.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                 return None
             return hashlib.sha256(
-                b\"file\\0\" + str(stat.S_IMODE(info.st_mode)).encode(\"ascii\")
-                + b\"\\0\" + hasher.digest()
+                b"file\0" + str(stat.S_IMODE(info.st_mode)).encode("ascii")
+                + b"\0" + hasher.digest()
             ).hexdigest()
         else:
             return None
@@ -129,9 +129,9 @@ def capture_workspace_fingerprint(workspace_root=None) -> dict:
                 return {"version": 1, "complete": False, "error_code": "dependency_manifest_unreadable"}
             dependency_entries.append((relative, digest))
 
-        head_after = _git(root, \"rev-parse\", \"--verify\", \"HEAD\")
+        head_after = _git(root, "rev-parse", "--verify", "HEAD")
         if head_after != head_raw:
-            return {\"version\": 1, \"complete\": False, \"error_code\": \"git_head_changed_during_capture\"}
+            return {"version": 1, "complete": False, "error_code": "git_head_changed_during_capture"}
 
         runtime = {
             "implementation": sys.implementation.name,
