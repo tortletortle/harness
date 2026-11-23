@@ -2245,6 +2245,12 @@ class Database:
         start_ts = self._snapshot_timestamp(run.get("started_at"))
         finish_ts = self._snapshot_timestamp(run.get("finished_at"))
         timestamp_violations = []
+        if start_ts is None:
+            timestamp_violations.append({"code": "run_start_timestamp_invalid"})
+        if run.get("finished_at") is not None and finish_ts is None:
+            timestamp_violations.append({"code": "run_finish_timestamp_invalid"})
+        if start_ts is not None and finish_ts is not None and finish_ts < start_ts:
+            timestamp_violations.append({"code": "run_finish_before_start"})
         active_attempts = []
         for item in attempts:
             if item.get("status") == AttemptStatus.RUNNING.value:
@@ -2253,6 +2259,8 @@ class Database:
             attempt_finish = self._snapshot_timestamp(item.get("finished_at"))
             if attempt_start is None or (start_ts is not None and attempt_start < start_ts):
                 timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_start_outside_run"})
+            if item.get("finished_at") is not None and attempt_finish is None:
+                timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_finish_timestamp_invalid"})
             if attempt_finish is not None and attempt_start is not None and attempt_finish < attempt_start:
                 timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_finish_before_start"})
             if finish_ts is not None and attempt_start is not None and attempt_start > finish_ts:
@@ -2311,7 +2319,7 @@ class Database:
                 "artifact_attempt_lineage_available": False,
                 "session_attempt_lineage_available": False,
                 "analysis_ready": analysis_ready,
-                "analysis_ready_reason": "attempt_persistence_is_still_fail_open_and_auxiliary_events_audits_are_unscoped",
+                "analysis_ready_reason": "attempt_persistence_is_not_proven_and_auxiliary_lineage_is_incomplete",
             },
             "provenance": {
                 "sqlite_read_transaction": True,
