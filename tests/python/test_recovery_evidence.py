@@ -118,3 +118,63 @@ def test_history_window_and_attempt_status_are_conservative():
     assert history["reported_checked_successes"] == 1
     assert history["unclassified"] == 2
     assert history["truncated"] is True
+
+
+def _fingerprinted_failure(workspace_hash, after_hash=None, complete=True):
+    result = _failed_result()
+    before = {"version": 1, "complete": complete,
+              "workspace_sha256": workspace_hash if complete else None}
+    after = {"version": 1, "complete": complete,
+             "workspace_sha256": (after_hash or workspace_hash) if complete else None}
+    result["_recovery_context"] = {
+        "workspace_before": before,
+        "workspace_after": after,
+    }
+    return result
+
+
+def test_matching_failures_with_same_workspace_fingerprint_are_only_observational():
+    from domain.recovery_evidence import summarize_attempt_history
+    anchor = {"state_snapshot": _failed_result()}
+    rows = [{"status": "Failed", "outputs": _fingerprinted_failure("a" * 64)} for _ in range(2)]
+    history = summarize_attempt_history(anchor, rows)
+    assert history["pattern"] == "repeated_signature_observed"
+    assert history["precondition_fingerprint_consistency"] == "same"
+    assert history["matching_failures_same_precondition"] is True
+    assert history["controlled_conditions"] is False
+    assert history["reproducibility"] == "unknown"
+
+
+def test_same_failure_signature_with_different_fingerprints_is_not_same_precondition():
+    from domain.recovery_evidence import summarize_attempt_history
+    anchor = {"state_snapshot": _failed_result()}
+    rows = [
+        {"status": "Failed", "outputs": _fingerprinted_failure("a" * 64)},
+        {"status": "Failed", "outputs": _fingerprinted_failure("b" * 64)},
+    ]
+    history = summarize_attempt_history(anchor, rows)
+    assert history["pattern"] == "repeated_signature_observed"
+    assert history["precondition_fingerprint_consistency"] == "varied"
+    assert history["matching_failures_same_precondition"] is False
+
+
+def test_incomplete_fingerprint_never_counts_as_same_precondition():
+    from domain.recovery_evidence import summarize_attempt_history
+    anchor = {"state_snapshot": _failed_result()}
+    rows = [
+        {"status": "Failed", "outputs": _fingerprinted_failure("a" * 64)},
+        {"status": "Failed", "outputs": _fingerprinted_failure(None, complete=False)},
+    ]
+    history = summarize_attempt_history(anchor, rows)
+    assert history["precondition_fingerprint_consistency"] == "insufficient"
+    assert history["matching_failures_same_precondition"] is False
+    assert history["incomplete_fingerprint_attempts"] == 1
+
+
+def test_workspace_mutation_during_attempt_is_reported():
+    from domain.recovery_evidence import summarize_attempt_history
+    anchor = {"state_snapshot": _failed_result()}
+    rows = [{"status": "Failed",
+             "outputs": _fingerprinted_failure("a" * 64, after_hash="b" * 64)}]
+    history = summarize_attempt_history(anchor, rows)
+    assert history["workspace_changed_attempts"] == 1
