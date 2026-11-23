@@ -114,8 +114,10 @@ def test_failed_run_snapshot_is_analysis_ready_only_with_terminal_attempts(tmp_p
     )
 
     snapshot = db.get_failure_attribution_snapshot(run["run_id"])
-    assert snapshot["completeness"]["analysis_ready"] is True
-    assert snapshot["completeness"]["attempts_complete_window"] is True
+    assert snapshot["completeness"]["core_analysis_ready"] is True
+    assert snapshot["completeness"]["analysis_ready"] is False
+    assert snapshot["completeness"]["attempts_window_complete"] is True
+    assert snapshot["completeness"]["attempt_recording_completeness"] == "not_proven_fail_open_writer"
     assert snapshot["completeness"]["lifecycle_consistent"] is True
     assert snapshot["attempts"][0]["attempt_id"] == attempt["attempt_id"]
 
