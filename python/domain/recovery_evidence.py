@@ -185,9 +185,7 @@ def summarize_attempt_history(anchor, attempts, *, scope="latest_failed_run"):
             else "insufficient"
         ),
         "matching_failures_same_precondition": (
-            len(matching_fingerprints) == 1 and len(matching_fingerprints) >= 1
-            and matching >= 2 and len(matching_fingerprints) == 1
-            and fingerprinted_attempts >= 2
+            matching_fingerprinted >= 2 and len(matching_fingerprints) == 1
         ),
         "workspace_changed_attempts": workspace_changed,
         "truncated": len(attempts) > MAX_HISTORY_ATTEMPTS,
