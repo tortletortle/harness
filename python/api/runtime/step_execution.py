@@ -44,6 +44,10 @@ from logging_config import get_logger
 logger = get_logger(__name__)
 
 
+class AttemptPersistenceError(RuntimeError):
+    """Execution stopped because its durable Attempt evidence could not be guaranteed."""
+
+
 def step_tool_id(raw_tool: Any) -> str:
     """计划步骤 tool 字段 → 主工具 id（去掉 instruction 后缀）。"""
     return str(raw_tool or "").split(":")[0].strip()
@@ -662,6 +666,66 @@ async def _capture_attempt_fingerprint() -> Dict[str, Any]:
     except Exception:
         return {"version": 1, "complete": False, "error_code": "capture_failed"}
 
+
+def _mark_attempt_persistence_failure(run_id, owner_token, plan_id, step_id,
+                                      branch_version, error_code, execution_outcome):
+    """Best-effort owner-fenced step failure; never overwrite a newer Run."""
+    try:
+        marked = state.database.fail_step_for_run_owner(
+            run_id, owner_token, str(plan_id), str(step_id), branch_version,
+            error_code,
+            outputs={
+                "error_code": error_code,
+                "execution_outcome": execution_outcome,
+                "automatic_retry_authorized": False,
+            },
+        )
+        if not marked:
+            logger.warning("Attempt persistence failure could not update step under current Run owner: {}", step_id)
+    except Exception as exc:
+        logger.warning("Attempt persistence failure step transition failed: {}", type(exc).__name__)
+
+
+def _finish_attempt_or_raise(attempt_id, status, *, run_id, owner_token,
+                             failure_reason=None, outputs=None, retryable=None,
+                             duration_ms=None):
+    """Require a durable terminal Attempt before the scheduler can continue."""
+    first_error = None
+    try:
+        if state.database.finish_execution_attempt(
+            attempt_id, status,
+            retryable=retryable,
+            failure_reason=failure_reason,
+            outputs=outputs,
+            duration_ms=duration_ms,
+            run_id=run_id,
+            owner_token=owner_token,
+        ):
+            return
+    except Exception as exc:
+        first_error = exc
+
+    # A transient terminal-write failure gets one conservative fallback. If it
+    # succeeds, the Attempt is explicitly Interrupted, never silently accepted.
+    try:
+        recovered = state.database.finish_execution_attempt(
+            attempt_id, AttemptStatus.INTERRUPTED.value,
+            failure_reason="attempt_terminal_write_failed",
+            run_id=run_id,
+            owner_token=owner_token,
+        )
+        if recovered:
+            logger.warning("Attempt terminal result could not be persisted; Attempt marked Interrupted: {}", attempt_id)
+    except Exception as fallback_error:
+        if first_error is None:
+            first_error = fallback_error
+        logger.warning("Attempt fallback interruption write failed: {}", type(fallback_error).__name__)
+
+    error = AttemptPersistenceError("Attempt terminal state was not durably recorded; execution halted")
+    if first_error is not None:
+        raise error from first_error
+    raise error
+
 async def _execute_step_to_completion(
     plan,
     step,
@@ -735,13 +799,21 @@ async def _execute_step_to_completion(
         try:
             _attempt = state.database.create_execution_attempt(
                 run_id, str(plan.plan_id), step_id, attempt + 1,
+                owner_token=owner_token, branch_version=branch_version,
             )
+            if not isinstance(_attempt, dict) or not _attempt.get("attempt_id"):
+                raise RuntimeError("database returned no durable Attempt ID")
             attempt_id = str(_attempt["attempt_id"])
             attempt_fingerprint_before = await _capture_attempt_fingerprint()
         except Exception as attempt_exc:
-            # Attempt 记录写入失败不阻断执行主体（观察性分层），仅记日志。
             attempt_id = None
-            logger.warning(f"create_execution_attempt 失败（忽略）: {attempt_exc}")
+            _mark_attempt_persistence_failure(
+                run_id, owner_token, plan.plan_id, step_id, branch_version,
+                "attempt_create_failed_before_tool_execution", "not_started",
+            )
+            raise AttemptPersistenceError(
+                "Attempt creation failed; tool execution was not started"
+            ) from attempt_exc
         try:
             # 通过 api.server 间接访问：测试通过 monkeypatch.setattr(server_mod, "_execute_step_with_state_machine", ...)
             # 影响此处解析，保持旧 server.py 单文件时 monkeypatch 路径兼容（零测试改动）。
@@ -752,7 +824,7 @@ async def _execute_step_to_completion(
             if attempt_id:
                 try:
                     attempt_fingerprint_after = await _capture_attempt_fingerprint()
-                    state.database.finish_execution_attempt(
+                    _finish_attempt_or_raise(
                         attempt_id, AttemptStatus.FAILED.value,
                         failure_reason=str(e)[:2000],
                         outputs={"_recovery_context": {
@@ -761,9 +833,18 @@ async def _execute_step_to_completion(
                         }},
                         run_id=run_id, owner_token=owner_token,
                     )
-                except Exception as attempt_close_exc:
-                    logger.warning(f"finish_execution_attempt 失败（忽略）: {attempt_close_exc}")
+                except AttemptPersistenceError:
+                    _mark_attempt_persistence_failure(
+                        run_id, owner_token, plan.plan_id, step_id, branch_version,
+                        "attempt_terminal_write_failed_after_tool_exception", "unknown",
+                    )
+                    attempt_id = None
+                    raise
                 attempt_id = None
+                _mark_attempt_persistence_failure(
+                    run_id, owner_token, plan.plan_id, step_id, branch_version,
+                    "tool_execution_exception", "unknown",
+                )
             raise
         result = annotate_retry_failure(result, retry_policy)
         if not result.get("success") and not result.get("needs_input") and not retry_policy["eligible"]:
@@ -773,14 +854,14 @@ async def _execute_step_to_completion(
             )
             await broadcast_log(f"[RETRY_SUPPRESSED] 步骤 {step_id} 不自动重试；请核对可能已发生的操作后再明确发起执行", "warning")
         if attempt_id:
+            attempt_fingerprint_after = await _capture_attempt_fingerprint()
+            attempt_outputs = dict(result)
+            attempt_outputs["_recovery_context"] = {
+                "workspace_before": attempt_fingerprint_before,
+                "workspace_after": attempt_fingerprint_after,
+            }
             try:
-                attempt_fingerprint_after = await _capture_attempt_fingerprint()
-                attempt_outputs = dict(result)
-                attempt_outputs["_recovery_context"] = {
-                    "workspace_before": attempt_fingerprint_before,
-                    "workspace_after": attempt_fingerprint_after,
-                }
-                state.database.finish_execution_attempt(
+                _finish_attempt_or_raise(
                     attempt_id,
                     AttemptStatus.SUCCEEDED.value if result.get("success") else AttemptStatus.FAILED.value,
                     retryable=result.get("retryable"),
@@ -789,8 +870,13 @@ async def _execute_step_to_completion(
                     duration_ms=result.get("duration_ms"),
                     run_id=run_id, owner_token=owner_token,
                 )
-            except Exception as attempt_close_exc:
-                logger.warning(f"finish_execution_attempt 失败（忽略）: {attempt_close_exc}")
+            except AttemptPersistenceError:
+                _mark_attempt_persistence_failure(
+                    run_id, owner_token, plan.plan_id, step_id, branch_version,
+                    "attempt_terminal_write_failed_after_tool_execution", "unknown",
+                )
+                attempt_id = None
+                raise
             attempt_id = None
         logger.info(f"STEP_LOOP_RESULT step_id={step_id} attempt={attempt} success={result.get('success')} check={result.get('check_status')} blocked={result.get('blocked')}")
         debug_log(
