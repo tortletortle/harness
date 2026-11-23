@@ -2166,7 +2166,12 @@ class Database:
 
             attempt_rows = conn.execute("""
                 SELECT attempt_id, run_id, plan_id, step_id, attempt_no, status,
-                       started_at, finished_at, duration_ms, retryable, outputs, created_at
+                       started_at, finished_at, duration_ms, retryable,
+                       CASE WHEN outputs IS NOT NULL AND length(outputs) <= 131072
+                            THEN outputs ELSE NULL END AS outputs,
+                       CASE WHEN outputs IS NOT NULL AND length(outputs) > 131072
+                            THEN 1 ELSE 0 END AS outputs_oversized,
+                       created_at
                 FROM execution_attempts
                 WHERE run_id = ?
                 ORDER BY attempt_no ASC, started_at ASC, attempt_id ASC
@@ -2174,6 +2179,9 @@ class Database:
             """, (str(run_id), attempt_limit + 1)).fetchall()
             attempts_truncated = len(attempt_rows) > attempt_limit
             attempts = [dict(row) for row in attempt_rows]
+            oversized_attempt_outputs = [
+                item["attempt_id"] for item in attempts if item.get("outputs_oversized")
+            ]
 
             artifacts_rows = conn.execute("""
                 SELECT artifact_id, plan_id, run_id, step_id, kind,
@@ -2276,6 +2284,7 @@ class Database:
         terminal_run = run.get("finished_at") is not None
         core_analysis_ready = (
             graph_complete and attempts_window_complete and lifecycle_consistent
+            and not oversized_attempt_outputs
             and terminal_run and run.get("status") == RunStatus.FAILED.value
         )
         # The current execution loop still treats Attempt persistence as best-effort.
@@ -2309,6 +2318,7 @@ class Database:
                 "core_analysis_ready": core_analysis_ready,
                 "full_trace_ready": False,
                 "active_attempt_ids": active_attempts,
+                "oversized_attempt_output_ids": oversized_attempt_outputs,
                 "timestamp_violations": timestamp_violations,
                 "lifecycle_consistent": lifecycle_consistent,
                 "artifacts_truncated": artifacts_truncated,
