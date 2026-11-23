@@ -37,7 +37,7 @@ def _digest_file(root: Path, relative: str, budget: list[int], *, allow_missing:
         try:
             info = target.lstat()
         except FileNotFoundError:
-            return hashlib.sha256(b\"deleted\").hexdigest() if allow_missing else None
+            return hashlib.sha256(b"deleted").hexdigest() if allow_missing else None
         if target.is_symlink():
             payload = os.readlink(target).encode("utf-8", "surrogateescape")
         elif target.is_file():
@@ -110,7 +110,7 @@ def capture_workspace_fingerprint(workspace_root=None) -> dict:
         changed_entries = []
         for label, paths in (("tracked", tracked), ("untracked", untracked)):
             for relative in paths:
-                digest = _digest_file(root, relative, budget, allow_missing=(label == \"tracked\"))
+                digest = _digest_file(root, relative, budget, allow_missing=(label == "tracked"))
                 if digest is None:
                     return {"version": 1, "complete": False, "error_code": "changed_file_unreadable"}
                 path_hash = hashlib.sha256(relative.encode("utf-8", "surrogateescape")).hexdigest()
