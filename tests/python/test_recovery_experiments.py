@@ -11,6 +11,8 @@ def _experiments(protocol):
     assert all(item["execution_mode"] == "proposal_only"
                and item["execution_authorized"] is False
                and item["may_invoke_tools"] is False
+               and item["readiness"] == "design_only_no_runner"
+               and "experiment_runner_not_implemented" in item["execution_blockers"]
                for item in protocol["experiments"])
     return protocol["experiments"]
 
@@ -77,6 +79,7 @@ def test_unknown_tool_metadata_fails_closed():
     )
     assert protocol["source_tool_policy"] == {
         "side_effect": "unknown", "idempotent": None, "sandbox_replay_candidate": False,
+        "replay_authorized": False,
     }
 
 
@@ -90,6 +93,7 @@ def test_only_explicit_read_only_idempotent_capability_is_replay_candidate():
         {"side_effect": "reversible", "idempotent": True},
     )
     assert safe["source_tool_policy"]["sandbox_replay_candidate"] is True
+    assert safe["source_tool_policy"]["replay_authorized"] is False
     assert unsafe["source_tool_policy"]["sandbox_replay_candidate"] is False
 
 
