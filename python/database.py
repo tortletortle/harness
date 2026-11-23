@@ -6,9 +6,10 @@
 import sqlite3
 import json
 import uuid
+import hashlib
 from contextlib import closing
 from typing import Optional, List, Dict, Any, Mapping
-from datetime import datetime
+from datetime import datetime, timezone
 from utils.utcnow import utcnow_iso
 
 from pathlib import Path
@@ -81,6 +82,8 @@ class Database:
                     owner_token TEXT NOT NULL,
                     failure_reason TEXT,
                     created_at TEXT NOT NULL,
+                    graph_snapshot_json TEXT,
+                    graph_snapshot_hash TEXT,
                     FOREIGN KEY (plan_id) REFERENCES plans(plan_id)
                 )
             """)
@@ -2023,6 +2026,318 @@ class Database:
             logger.exception("克隆步骤失败: {}", e)
             raise DatabaseError(f"克隆步骤失败: {e}") from e
 
+    @staticmethod
+    def _build_run_graph_snapshot(conn, plan_id: str, branch_version: int, captured_at: str,
+                                  max_steps: int = 256):
+        """Freeze the active WorkGraph shape for this Run without copying user inputs."""
+        rows = conn.execute("""
+            SELECT step_id, step_order, tool, depends_on, parent_step_id,
+                   branch_version, is_obsolete
+            FROM steps
+            WHERE plan_id = ? AND branch_version = ? AND is_obsolete = 0
+            ORDER BY step_order ASC, step_id ASC
+            LIMIT ?
+        """, (str(plan_id), int(branch_version), int(max_steps) + 1)).fetchall()
+        truncated = len(rows) > max_steps
+        rows = rows[:max_steps]
+        steps = []
+        errors = []
+        aliases = {}
+        ambiguous_aliases = set()
+        for row in rows:
+            step_id = str(row["step_id"])
+            parent = str(row["parent_step_id"]) if row["parent_step_id"] else None
+            if parent:
+                if parent in aliases and aliases[parent] != step_id:
+                    ambiguous_aliases.add(parent)
+                aliases[parent] = step_id
+            try:
+                dependencies = normalize_dependencies(row["depends_on"])
+            except (TypeError, ValueError):
+                dependencies = []
+                errors.append("invalid_dependency_shape")
+            steps.append({
+                "step_id": step_id,
+                "plan_id": str(plan_id),
+                "branch_version": int(row["branch_version"] or 1),
+                "step_order": int(row["step_order"] or 0),
+                "tool": str(row["tool"] or "")[:120],
+                "depends_on": dependencies,
+                "parent_step_id": parent,
+                "is_obsolete": False,
+            })
+        if ambiguous_aliases:
+            errors.append("ambiguous_parent_step_alias")
+        resolved = []
+        for item in steps:
+            deps = [aliases.get(dep, dep) for dep in item["depends_on"]]
+            resolved.append({"step_id": item["step_id"], "depends_on": deps})
+        if not steps:
+            errors.append("no_active_steps")
+        if not truncated and not errors:
+            graph_check = validate_graph(resolved)
+            if not graph_check.valid:
+                errors.append("invalid_dependency_graph")
+        valid = bool(steps) and not truncated and not errors
+        payload = {
+            "schema_version": 1,
+            "plan_id": str(plan_id),
+            "branch_version": int(branch_version),
+            "captured_at": str(captured_at),
+            "complete": not truncated,
+            "valid": valid,
+            "step_count": len(steps),
+            "steps": steps,
+            "errors": sorted(set(errors)),
+        }
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        digest = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return canonical, digest, payload
+
+    @staticmethod
+    def _snapshot_timestamp(value):
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+        except (ValueError, OverflowError, OSError):
+            return None
+
+    def get_failure_attribution_snapshot(
+        self, run_id: str, *, attempt_limit: int = 1000,
+        artifact_limit: int = 1000, session_limit: int = 500,
+        turn_limit: int = 2000,
+    ) -> Optional[Dict[str, Any]]:
+        """Read one bounded, read-only SQLite snapshot for offline failure analysis.
+
+        Raw attempt outputs are returned only as local analyzer input. Event payloads,
+        audit inputs/instructions, artifact URIs/metadata, and session errors are
+        intentionally excluded. Legacy plan-scoped events/audits are counted but
+        never attributed to this Run.
+        """
+        attempt_limit = max(1, min(int(attempt_limit or 1000), 1000))
+        artifact_limit = max(1, min(int(artifact_limit or 1000), 2000))
+        session_limit = max(1, min(int(session_limit or 500), 500))
+        turn_limit = max(1, min(int(turn_limit or 2000), 2000))
+        conn = None
+        try:
+            conn = self._get_connection()
+            conn.execute("BEGIN")
+            run_row = conn.execute(
+                "SELECT run_id, plan_id, status, trigger, branch_version, started_at, "
+                "finished_at, created_at, graph_snapshot_json, graph_snapshot_hash "
+                "FROM execution_runs WHERE run_id = ?",
+                (str(run_id),),
+            ).fetchone()
+            if run_row is None:
+                conn.rollback()
+                return None
+            run = dict(run_row)
+            plan_id = str(run["plan_id"])
+            branch_version = int(run["branch_version"] or 1)
+
+            graph = None
+            graph_status = "missing_legacy_snapshot"
+            raw_graph = run.pop("graph_snapshot_json", None)
+            expected_hash = run.pop("graph_snapshot_hash", None)
+            if isinstance(raw_graph, str) and len(raw_graph) <= 2_000_000:
+                actual_hash = "sha256:" + hashlib.sha256(raw_graph.encode("utf-8")).hexdigest()
+                if expected_hash and actual_hash == expected_hash:
+                    try:
+                        candidate = json.loads(raw_graph)
+                        if (isinstance(candidate, dict)
+                                and candidate.get("schema_version") == 1
+                                and candidate.get("plan_id") == plan_id
+                                and candidate.get("branch_version") == branch_version
+                                and isinstance(candidate.get("steps"), list)):
+                            graph = candidate
+                            graph_status = "valid" if candidate.get("valid") else "invalid"
+                        else:
+                            graph_status = "invalid_shape"
+                    except (ValueError, TypeError, RecursionError):
+                        graph_status = "invalid_json"
+                else:
+                    graph_status = "hash_mismatch"
+            elif isinstance(raw_graph, str):
+                graph_status = "oversized"
+
+            attempt_rows = conn.execute("""
+                SELECT attempt_id, run_id, plan_id, step_id, attempt_no, status,
+                       started_at, finished_at, duration_ms, retryable,
+                       CASE WHEN outputs IS NOT NULL AND length(outputs) <= 131072
+                            THEN outputs ELSE NULL END AS outputs,
+                       CASE WHEN outputs IS NOT NULL AND length(outputs) > 131072
+                            THEN 1 ELSE 0 END AS outputs_oversized,
+                       created_at
+                FROM execution_attempts
+                WHERE run_id = ?
+                ORDER BY attempt_no ASC, started_at ASC, attempt_id ASC
+                LIMIT ?
+            """, (str(run_id), attempt_limit + 1)).fetchall()
+            attempts_truncated = len(attempt_rows) > attempt_limit
+            attempts = [dict(row) for row in attempt_rows]
+            oversized_attempt_outputs = [
+                item["attempt_id"] for item in attempts if item.get("outputs_oversized")
+            ]
+
+            artifacts_rows = conn.execute("""
+                SELECT artifact_id, plan_id, run_id, step_id, kind,
+                       content_hash, size_bytes, created_at
+                FROM artifacts WHERE run_id = ?
+                ORDER BY created_at ASC, artifact_id ASC
+                LIMIT ?
+            """, (str(run_id), artifact_limit + 1)).fetchall()
+            artifacts_truncated = len(artifacts_rows) > artifact_limit
+            artifacts = [dict(row) for row in artifacts_rows[:artifact_limit]]
+
+            session_rows = conn.execute("""
+                SELECT session_id, plan_id, run_id, step_id, agent_tool, status,
+                       turns_used, model_calls, tool_calls, input_tokens,
+                       output_tokens, started_at, finished_at
+                FROM agent_sessions WHERE run_id = ?
+                ORDER BY started_at ASC, session_id ASC
+                LIMIT ?
+            """, (str(run_id), session_limit + 1)).fetchall()
+            sessions_truncated = len(session_rows) > session_limit
+            sessions = [dict(row) for row in session_rows[:session_limit]]
+            session_ids = [row["session_id"] for row in sessions]
+            turns = []
+            turns_truncated = False
+            if session_ids:
+                placeholders = ",".join("?" for _ in session_ids)
+                turn_rows = conn.execute(f"""
+                    SELECT turn_row_id, session_id, turn_no, outcome,
+                           input_tokens, output_tokens, duration_ms, created_at
+                    FROM agent_turns WHERE session_id IN ({placeholders})
+                    ORDER BY session_id ASC, turn_no ASC, turn_row_id ASC
+                    LIMIT ?
+                """, (*session_ids, turn_limit + 1)).fetchall()
+                turns_truncated = len(turn_rows) > turn_limit
+                turns = [dict(row) for row in turn_rows[:turn_limit]]
+
+            # These legacy tables have no Run key. Count their rows for transparency,
+            # but do not attach them to this Run by plan/branch/time heuristics.
+            unscoped_event_count = conn.execute(
+                "SELECT COUNT(*) FROM step_events WHERE plan_id = ? AND branch_version = ?",
+                (plan_id, branch_version),
+            ).fetchone()[0]
+            unscoped_audit_count = conn.execute(
+                "SELECT COUNT(*) FROM audit_logs WHERE plan_id = ?",
+                (plan_id,),
+            ).fetchone()[0]
+            unscoped_artifact_count = conn.execute(
+                "SELECT COUNT(*) FROM artifacts WHERE plan_id = ? AND run_id IS NULL",
+                (plan_id,),
+            ).fetchone()[0]
+            unscoped_session_count = conn.execute(
+                "SELECT COUNT(*) FROM agent_sessions WHERE plan_id = ? AND run_id IS NULL",
+                (plan_id,),
+            ).fetchone()[0]
+
+            conn.commit()
+        except Exception as exc:
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            logger.exception("读取故障归因快照失败: {}", exc)
+            raise DatabaseError(f"读取故障归因快照失败: {exc}") from exc
+        finally:
+            if conn is not None:
+                conn.close()
+
+        start_ts = self._snapshot_timestamp(run.get("started_at"))
+        finish_ts = self._snapshot_timestamp(run.get("finished_at"))
+        timestamp_violations = []
+        if start_ts is None:
+            timestamp_violations.append({"code": "run_start_timestamp_invalid"})
+        if run.get("finished_at") is not None and finish_ts is None:
+            timestamp_violations.append({"code": "run_finish_timestamp_invalid"})
+        if start_ts is not None and finish_ts is not None and finish_ts < start_ts:
+            timestamp_violations.append({"code": "run_finish_before_start"})
+        active_attempts = []
+        for item in attempts:
+            if item.get("status") == AttemptStatus.RUNNING.value:
+                active_attempts.append(item["attempt_id"])
+            attempt_start = self._snapshot_timestamp(item.get("started_at"))
+            attempt_finish = self._snapshot_timestamp(item.get("finished_at"))
+            if attempt_start is None or (start_ts is not None and attempt_start < start_ts):
+                timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_start_outside_run"})
+            if item.get("finished_at") is not None and attempt_finish is None:
+                timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_finish_timestamp_invalid"})
+            if attempt_finish is not None and attempt_start is not None and attempt_finish < attempt_start:
+                timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_finish_before_start"})
+            if finish_ts is not None and attempt_start is not None and attempt_start > finish_ts:
+                timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_start_after_run"})
+            if finish_ts is not None and attempt_finish is not None and attempt_finish > finish_ts:
+                timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_finish_after_run"})
+            if finish_ts is not None and item.get("finished_at") is None:
+                timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_unfinished_at_run_end"})
+
+        graph_complete = bool(graph and graph.get("complete") and graph.get("valid"))
+        attempts_window_complete = not attempts_truncated
+        lifecycle_consistent = not timestamp_violations
+        terminal_run = run.get("finished_at") is not None
+        core_analysis_ready = (
+            graph_complete and attempts_window_complete and lifecycle_consistent
+            and not oversized_attempt_outputs
+            and terminal_run and run.get("status") == RunStatus.FAILED.value
+        )
+        # The current execution loop still treats Attempt persistence as best-effort.
+        # A bounded query cannot prove that no Attempt insert was ever lost.
+        attempt_recording_completeness = "not_proven_fail_open_writer"
+        analysis_ready = False  # production readiness requires the writer contract to be hardened
+        steps = graph.get("steps", []) if graph else []
+        return {
+            "schema_version": 1,
+            "run": run,
+            "steps": steps,
+            "attempts": attempts,
+            "events": [],
+            "auxiliary": {
+                "artifacts": artifacts,
+                "agent_sessions": sessions,
+                "agent_turns": turns,
+                "unscoped_legacy": {
+                    "step_events_count_not_used": int(unscoped_event_count),
+                    "audit_logs_count_not_used": int(unscoped_audit_count),
+                    "artifacts_without_run_count_not_used": int(unscoped_artifact_count),
+                    "sessions_without_run_count_not_used": int(unscoped_session_count),
+                },
+            },
+            "completeness": {
+                "graph_snapshot": graph_status,
+                "graph_complete": graph_complete,
+                "attempts_truncated": attempts_truncated,
+                "attempts_window_complete": attempts_window_complete,
+                "attempt_recording_completeness": attempt_recording_completeness,
+                "core_analysis_ready": core_analysis_ready,
+                "full_trace_ready": False,
+                "active_attempt_ids": active_attempts,
+                "oversized_attempt_output_ids": oversized_attempt_outputs,
+                "timestamp_violations": timestamp_violations,
+                "lifecycle_consistent": lifecycle_consistent,
+                "artifacts_truncated": artifacts_truncated,
+                "sessions_truncated": sessions_truncated,
+                "turns_truncated": turns_truncated,
+                "events_run_scoped": False,
+                "audit_logs_run_scoped": False,
+                "artifact_attempt_lineage_available": False,
+                "session_attempt_lineage_available": False,
+                "analysis_ready": analysis_ready,
+                "analysis_ready_reason": "attempt_persistence_is_not_proven_and_auxiliary_lineage_is_incomplete",
+            },
+            "provenance": {
+                "sqlite_read_transaction": True,
+                "raw_attempt_outputs_are_local_only": True,
+                "unscoped_events_or_audits_used": False,
+            },
+        }
+
     def start_execution_run(
         self,
         plan_id: str,
@@ -2049,15 +2364,20 @@ class Database:
                 )
                 if cursor.rowcount != 1:
                     return None
+                snapshot_json, snapshot_hash, _snapshot = self._build_run_graph_snapshot(
+                    conn, str(plan_id), int(branch_version or 1), now,
+                )
                 cursor.execute("""INSERT INTO execution_runs
                     (run_id, plan_id, status, trigger, branch_version, started_at,
-                     heartbeat_at, owner_token, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     heartbeat_at, owner_token, graph_snapshot_json, graph_snapshot_hash, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (run_id, str(plan_id), RunStatus.RUNNING.value, str(trigger),
-                     int(branch_version or 1), now, now, str(owner_token or run_id), now))
+                     int(branch_version or 1), now, now, str(owner_token or run_id),
+                     snapshot_json, snapshot_hash, now))
                 return {"run_id": run_id, "plan_id": str(plan_id), "owner_token": str(owner_token or run_id),
                         "status": RunStatus.RUNNING.value, "branch_version": int(branch_version or 1),
-                        "started_at": now}
+                        "started_at": now, "graph_snapshot_hash": snapshot_hash,
+                        "graph_snapshot_complete": bool(_snapshot.get("complete") and _snapshot.get("valid"))}
         except Exception as e:
             logger.exception("启动执行 Run 失败: {}", e)
             raise DatabaseError(f"启动执行 Run 失败: {e}") from e

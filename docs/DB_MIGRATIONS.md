@@ -5,7 +5,10 @@
 
 ## 现状
 
-- 框架：Alembic 1.13.1（此前已在 requirements 中，本次启用）
+- 当前迁移链：`0001_baseline` → `0002_run_graph_snapshot`。
+- `0002_run_graph_snapshot` 为 `execution_runs` 增加不可变 WorkGraph 快照 JSON 与 SHA-256 指纹；旧 Run 保持 NULL，不根据当前计划状态回填历史图。
+- 新 Run 在认领事务中冻结活动分支的步骤 ID、顺序、工具标识、依赖和父步骤别名；单次快照最多 256 步，超过上限会明确标记不完整。
+- 框架：Alembic 1.13.1（此前已在 requirements 中启用）
 - 配置：`alembic.ini`（**必须保持纯 ASCII**——alembic 用系统 locale 读取，
   zh-CN Windows 下是 GBK，含 UTF-8 中文会 UnicodeDecodeError）
 - 脚本目录：`python/migrations/`（env.py + versions/）
@@ -41,14 +44,12 @@ python -m alembic revision -m "描述"   # 生成空迁移骨架（手写 DDL）
 
 ## 既有部署如何接入
 
-已有 `data/eas.db`（表已由运行时创建）的机器执行一次：
+已有 `data/eas.db`（表已由运行时创建）的机器：
+- 如果尚未登记 Alembic 版本，先备份数据库，再执行 `python -m alembic stamp 0001_baseline`。
+- 已登记 `0001_baseline` 的机器执行 `python -m alembic upgrade head`，应用后续迁移。
 
-```bash
-python -m alembic stamp 0001_baseline
-```
-
-只写入 `alembic_version` 登记表，不动任何业务数据。本机已于 2026-09-19
-完成 stamp（备份 `out/eas.db.bak-20260919`）。
+`stamp` 只写入 `alembic_version`，不执行 DDL；`upgrade head` 才会应用 `0002_run_graph_snapshot`。本机此前已于 2026-09-19
+完成 baseline stamp（备份 `out/eas.db.bak-20260919`）。
 
 ## 第二阶段（后续可选）
 
@@ -56,3 +57,13 @@ python -m alembic stamp 0001_baseline
 - `_initialize_tables` 退化为"版本不匹配时拒绝启动"的守卫
 - CI 增加 verify_migrations.py 步骤
 
+
+
+## PR #7：Run-scoped Evidence Snapshot
+
+- `execution_runs.graph_snapshot_json` 保存 Run 启动时的活动 WorkGraph 结构；`graph_snapshot_hash` 用 SHA-256 校验快照完整性。
+- 新 Run 的图快照与 Run 创建处于同一 SQLite 写事务，后续重规划、克隆或步骤修改不会改变历史 Run 的图定义。
+- `Database.get_failure_attribution_snapshot(run_id)` 在一个只读事务中读取 Run、快照图、Attempts、Run 级 Artifacts 和 Agent Sessions/Turns。
+- `step_events` 与 `audit_logs` 当前仍没有 Run 外键。PR #7 只统计其计划/分支级未关联记录，不根据时间或 step_id 猜测所属 Run，也不把它们送入归因。
+- 快照对所有集合使用有界读取与 `LIMIT + 1` 截断检测；原始 Attempt outputs 仅供本地结构化分析器使用，不得直接发送给模型。
+- 旧 Run 没有图快照时返回 `missing_legacy_snapshot`，不从可变的当前 steps 表伪造历史图。

@@ -1301,3 +1301,34 @@ pytest 说了算，弥补 content_contains / file_exists / exit_code 只能做�
 `tests/python/test_failure_attribution.py` 使用离线确定性 fixture 覆盖链式/独立失败、Run 隔离、无 Run ID 事件排除、状态矛盾、验收矛盾、依赖启动时序、旧计划无依赖图、悬空/循环依赖、敏感字段剔除、最新成功 Attempt、分支克隆别名、历史截断，以及上游失败晚于下游启动/缺失时间戳时拒绝因果推断，以及历史违规后最新 Attempt 成功时不把该步骤列为当前失败候选；过期分支历史不消耗活动轨迹节点上限。
 
 这些测试证明分析规则对给定结构化输入的确定性行为，不等于真实调度器故障注入、真实模型修复效果或因果准确率。下一步必须增加一致性数据库快照适配器，并在实际执行器上做受控故障注入，再使用带人工标注的留出任务评估 Top-1/Top-3、错误归因率与拒绝率。
+
+
+## 29. Run-scoped Evidence Snapshot（PR #7 · 研究实现）
+
+**状态：** 已新增 Alembic 迁移 `0002_run_graph_snapshot`、Run 启动时不可变 WorkGraph 快照、SHA-256 校验及有界 SQLite 只读快照读取器。当前不接入 LLM 诊断、自动重试或恢复动作。
+
+### 29.1 不可变执行图
+
+`execution_runs` 新增 nullable `graph_snapshot_json` 与 `graph_snapshot_hash`。在 `start_execution_run` 的同一写事务中，冻结活动分支的步骤 ID、顺序、工具标识、depends_on 和 parent_step_id。快照不包含 prompts、inputs、验收说明文本、输出、路径或模型文本。
+
+图快照最多 256 步，与 PR #6 的分析器上限一致。空图、依赖缺失、循环、父步骤别名歧义或超限均标记 invalid/incomplete。旧 Run 保持 NULL；不从当前 steps 表猜测历史图。
+
+### 29.2 一致性快照读取
+
+`Database.get_failure_attribution_snapshot(run_id)` 使用单连接只读事务读取 Run、哈希验证后的冻结图、Run-scoped Attempts、Run-scoped Artifacts、Agent Sessions 与关联 Turns。每组集合均使用有界 `LIMIT + 1` 以检测截断，并检查 Attempt 时间边界及 Run 结束时未收尾的 Attempt。
+
+当前 `step_events`、`audit_logs` 没有 Run ID；读取器只统计计划/分支级未关联行数，不返回原始 payload，也不按时间邻近关系把它们分配给某个 Run。Artifacts 与 Agent Sessions 虽已有 run_id，但还没有 attempt_id 血缘。
+
+### 29.3 就绪状态必须保守
+
+- `core_analysis_ready` 表示冻结图有效、Attempt 查询窗口未截断、时间生命周期一致且 Run 已 Failed；可用于离线结构化分析。
+- `analysis_ready` 当前固定为 false：执行循环仍允许 Attempt 创建失败后继续执行，因此无法证明所有执行都被完整记录。
+- `full_trace_ready` 当前固定为 false：事件/审计尚未 Run-scoped，Artifact/Session 尚未关联具体 Attempt。
+
+快照中的 Attempt outputs 仍可能包含敏感文本，只允许本地 PR #6 allowlist 分析器读取；不得直接发送给模型。
+
+### 29.4 验收与后续
+
+`tests/python/test_failure_attribution_snapshot.py` 覆盖快照不可变性、hash、Run 生命周期、LIMIT+1、旧事件/审计隔离和旧 Run 缺失快照拒绝。CI 同时执行 `scripts/verify_migrations.py`，要求 Alembic 与运行时 schema 的 `SCHEMA_IDENTICAL`。
+
+PR #8 再增加 step_events/audit_logs 的 Run/Attempt 关联、Artifact 生产者与消费者 Attempt 血缘，并将 Attempt 持久化失败改为 fail-closed；在此之前不启用自动诊断或恢复。
