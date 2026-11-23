@@ -175,3 +175,71 @@ def test_legacy_run_without_graph_snapshot_fails_closed(tmp_path):
 def test_snapshot_missing_run_returns_none(tmp_path):
     db = Database(str(tmp_path / "snapshot.db"))
     assert db.get_failure_attribution_snapshot("not-a-run") is None
+
+
+def test_graph_hash_mismatch_fails_closed(tmp_path):
+    db = Database(str(tmp_path / "snapshot.db"))
+    plan_id, _, _ = _plan(db)
+    run = _start(db, plan_id)
+    with sqlite3.connect(db.db_path) as conn:
+        conn.execute(
+            "UPDATE execution_runs SET graph_snapshot_json = '{}' WHERE run_id = ?",
+            (run["run_id"],),
+        )
+
+    snapshot = db.get_failure_attribution_snapshot(run["run_id"])
+    assert snapshot["completeness"]["graph_snapshot"] == "hash_mismatch"
+    assert snapshot["steps"] == []
+    assert snapshot["completeness"]["core_analysis_ready"] is False
+
+
+def test_attempt_outside_run_time_window_blocks_core_readiness(tmp_path):
+    db = Database(str(tmp_path / "snapshot.db"))
+    plan_id, first_id, _ = _plan(db)
+    run = _start(db, plan_id)
+    attempt = db.create_execution_attempt(run["run_id"], plan_id, first_id, 1)
+    with sqlite3.connect(db.db_path) as conn:
+        conn.execute(
+            "UPDATE execution_attempts SET started_at = ? WHERE attempt_id = ?",
+            ("2000-01-01T00:00:00+00:00", attempt["attempt_id"]),
+        )
+    assert db.finish_execution_attempt(
+        attempt["attempt_id"], AttemptStatus.FAILED.value,
+        outputs={"success": False}, run_id=run["run_id"],
+        owner_token=run["owner_token"],
+    )
+    assert db.finish_execution_run(
+        run["run_id"], run["owner_token"], RunStatus.FAILED.value,
+    )
+
+    snapshot = db.get_failure_attribution_snapshot(run["run_id"])
+    assert snapshot["completeness"]["lifecycle_consistent"] is False
+    assert any(
+        item["code"] == "attempt_start_outside_run"
+        for item in snapshot["completeness"]["timestamp_violations"]
+    )
+    assert snapshot["completeness"]["core_analysis_ready"] is False
+
+
+def test_snapshot_never_mixes_attempts_from_two_runs_of_same_plan(tmp_path):
+    db = Database(str(tmp_path / "snapshot.db"))
+    plan_id, first_id, _ = _plan(db)
+    run1 = _start(db, plan_id)
+    attempt1 = db.create_execution_attempt(run1["run_id"], plan_id, first_id, 1)
+    assert db.finish_execution_attempt(
+        attempt1["attempt_id"], AttemptStatus.FAILED.value,
+        outputs={"success": False}, run_id=run1["run_id"],
+        owner_token=run1["owner_token"],
+    )
+    assert db.finish_execution_run(
+        run1["run_id"], run1["owner_token"], RunStatus.FAILED.value,
+    )
+    assert db.update_plan_state_machine(plan_id, PlanStatus.PENDING.value)
+
+    run2 = _start(db, plan_id)
+    attempt2 = db.create_execution_attempt(run2["run_id"], plan_id, first_id, 1)
+    snapshot1 = db.get_failure_attribution_snapshot(run1["run_id"])
+    snapshot2 = db.get_failure_attribution_snapshot(run2["run_id"])
+
+    assert [row["attempt_id"] for row in snapshot1["attempts"]] == [attempt1["attempt_id"]]
+    assert [row["attempt_id"] for row in snapshot2["attempts"]] == [attempt2["attempt_id"]]
