@@ -81,3 +81,18 @@ def test_oversized_changed_file_marks_fingerprint_incomplete(tmp_path):
     result = capture_workspace_fingerprint(root)
     assert result["complete"] is False
     assert result["error_code"] == "changed_file_unreadable"
+
+
+def test_symlink_outside_workspace_is_never_followed(tmp_path):
+    root = _repo(tmp_path)
+    outside = tmp_path / "secret.txt"
+    outside.write_text("must not be read", encoding="utf-8")
+    try:
+        (root / "external-link").symlink_to(outside)
+    except (OSError, NotImplementedError):
+        import pytest
+        pytest.skip("symlink creation is unavailable on this platform")
+    result = capture_workspace_fingerprint(root)
+    assert result["complete"] is False
+    assert result["error_code"] == "changed_file_unreadable"
+    assert "must not be read" not in str(result)
