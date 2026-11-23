@@ -25,7 +25,7 @@ def test_blocked_failure_never_proposes_replay():
     )
     experiments = _experiments(protocol)
     assert [item["id"] for item in experiments] == ["inspect_saved_block_decision"]
-    assert protocol["source_tool_policy"]["sandbox_replay_candidate"] is False
+    assert protocol["source_tool_policy"]["future_sandbox_candidate"] is False
     assert "authorization_or_policy_boundary" in [h["id"] for h in protocol["hypotheses"]]
 
 
@@ -78,7 +78,7 @@ def test_unknown_tool_metadata_fails_closed():
         {"side_effect": "surprise", "idempotent": True},
     )
     assert protocol["source_tool_policy"] == {
-        "side_effect": "unknown", "idempotent": None, "sandbox_replay_candidate": False,
+        "side_effect": "unknown", "idempotent": None, "future_sandbox_candidate": False,
         "replay_authorized": False,
     }
 
@@ -92,9 +92,9 @@ def test_only_explicit_read_only_idempotent_capability_is_replay_candidate():
         {"symptom": "execution_failure"},
         {"side_effect": "reversible", "idempotent": True},
     )
-    assert safe["source_tool_policy"]["sandbox_replay_candidate"] is True
+    assert safe["source_tool_policy"]["future_sandbox_candidate"] is True
     assert safe["source_tool_policy"]["replay_authorized"] is False
-    assert unsafe["source_tool_policy"]["sandbox_replay_candidate"] is False
+    assert unsafe["source_tool_policy"]["future_sandbox_candidate"] is False
 
 
 def test_protocol_does_not_copy_untrusted_evidence_strings():
