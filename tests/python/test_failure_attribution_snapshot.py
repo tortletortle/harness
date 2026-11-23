@@ -243,3 +243,26 @@ def test_snapshot_never_mixes_attempts_from_two_runs_of_same_plan(tmp_path):
 
     assert [row["attempt_id"] for row in snapshot1["attempts"]] == [attempt1["attempt_id"]]
     assert [row["attempt_id"] for row in snapshot2["attempts"]] == [attempt2["attempt_id"]]
+
+
+def test_oversized_attempt_output_is_omitted_and_blocks_core_readiness(tmp_path):
+    db = Database(str(tmp_path / "snapshot.db"))
+    plan_id, first_id, _ = _plan(db)
+    run = _start(db, plan_id)
+    attempt = db.create_execution_attempt(run["run_id"], plan_id, first_id, 1)
+    assert db.finish_execution_attempt(
+        attempt["attempt_id"], AttemptStatus.FAILED.value,
+        outputs={"large": "x" * 140000},
+        run_id=run["run_id"], owner_token=run["owner_token"],
+    )
+    assert db.finish_execution_run(
+        run["run_id"], run["owner_token"], RunStatus.FAILED.value,
+    )
+
+    snapshot = db.get_failure_attribution_snapshot(run["run_id"])
+    stored = snapshot["attempts"][0]
+    assert stored["outputs"] is None
+    assert stored["outputs_oversized"] == 1
+    assert snapshot["completeness"]["oversized_attempt_output_ids"] == [attempt["attempt_id"]]
+    assert snapshot["completeness"]["core_analysis_ready"] is False
+    assert "x" * 1000 not in str(snapshot)
