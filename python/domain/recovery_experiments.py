@@ -35,11 +35,13 @@ def _source_policy(tool_spec: Any) -> dict:
             "side_effect": "unknown",
             "idempotent": None,
             "sandbox_replay_candidate": False,
+            "replay_authorized": False,
         }
     return {
         "side_effect": side_effect,
         "idempotent": idempotent,
         "sandbox_replay_candidate": side_effect == "none" and idempotent,
+        "replay_authorized": False,
     }
 
 
@@ -82,6 +84,8 @@ def build_diagnostic_protocol(failure_evidence: Any, source_tool_spec: Any = Non
             "required_prerequisites": prerequisites,
             "possible_observations": outcomes,
             "execution_mode": "proposal_only",
+            "readiness": "design_only_no_runner",
+            "execution_blockers": ["experiment_runner_not_implemented", *prerequisites],
             "execution_authorized": False,
             "may_invoke_tools": False,
         })
@@ -115,7 +119,7 @@ def build_diagnostic_protocol(failure_evidence: Any, source_tool_spec: Any = Non
                 "acceptance_invocation",
                 ["source_revision", "acceptance_spec_hash", "tool_input_hash",
                  "dependency_lock_hash", "environment_fingerprint", "workspace_snapshot_id"],
-                ["immutable_workspace_snapshot", "disposable_isolated_worktree",
+                ["immutable_workspace_snapshot", "fresh_disposable_worktree_per_trial", "disposable_isolated_worktree",
                  "bounded_test_template", "explicit_human_approval"],
                 ["两次结果相同：仅说明该快照下结果稳定", "结果不一致：提示非确定性或环境漂移",
                  "环境或快照不一致：实验无效，不作根因结论"],
