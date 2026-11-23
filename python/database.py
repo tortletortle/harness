@@ -2263,13 +2263,17 @@ class Database:
                 timestamp_violations.append({"attempt_id": item["attempt_id"], "code": "attempt_unfinished_at_run_end"})
 
         graph_complete = bool(graph and graph.get("complete") and graph.get("valid"))
-        attempts_complete = not attempts_truncated
+        attempts_window_complete = not attempts_truncated
         lifecycle_consistent = not timestamp_violations
         terminal_run = run.get("finished_at") is not None
-        analysis_ready = (
-            graph_complete and attempts_complete and lifecycle_consistent
+        core_analysis_ready = (
+            graph_complete and attempts_window_complete and lifecycle_consistent
             and terminal_run and run.get("status") == RunStatus.FAILED.value
         )
+        # The current execution loop still treats Attempt persistence as best-effort.
+        # A bounded query cannot prove that no Attempt insert was ever lost.
+        attempt_recording_completeness = "not_proven_fail_open_writer"
+        analysis_ready = False  # production readiness requires the writer contract to be hardened
         steps = graph.get("steps", []) if graph else []
         return {
             "schema_version": 1,
@@ -2292,7 +2296,10 @@ class Database:
                 "graph_snapshot": graph_status,
                 "graph_complete": graph_complete,
                 "attempts_truncated": attempts_truncated,
-                "attempts_complete_window": attempts_complete,
+                "attempts_window_complete": attempts_window_complete,
+                "attempt_recording_completeness": attempt_recording_completeness,
+                "core_analysis_ready": core_analysis_ready,
+                "full_trace_ready": False,
                 "active_attempt_ids": active_attempts,
                 "timestamp_violations": timestamp_violations,
                 "lifecycle_consistent": lifecycle_consistent,
@@ -2304,7 +2311,8 @@ class Database:
                 "artifact_attempt_lineage_available": False,
                 "session_attempt_lineage_available": False,
                 "analysis_ready": analysis_ready,
-                "analysis_ready_reason": None if analysis_ready else "one_or_more_evidence_sources_incomplete",
+                "analysis_ready": analysis_ready,
+                "analysis_ready_reason": "attempt_persistence_is_still_fail_open_and_auxiliary_events_audits_are_unscoped",
             },
             "provenance": {
                 "sqlite_read_transaction": True,
