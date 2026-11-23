@@ -2163,6 +2163,46 @@ class Database:
             logger.exception("创建执行 Attempt 失败: {}", e)
             raise DatabaseError(f"创建执行 Attempt 失败: {e}") from e
 
+    def fail_step_for_run_owner(self, run_id: str, owner_token: str, plan_id: str,
+                                step_id: str, branch_version: int,
+                                failure_reason: str, outputs: Dict[str, Any] = None) -> bool:
+        """Fail a step only while the supplied Run remains the latest active owner."""
+        try:
+            with closing(self._get_connection()) as conn, conn:
+                cursor = conn.execute("""
+                    UPDATE steps
+                    SET status = ?, failure_reason = ?, outputs = ?, executed_at = ?
+                    WHERE step_id = ? AND plan_id = ?
+                      AND branch_version = ? AND is_obsolete = 0
+                      AND EXISTS (
+                          SELECT 1 FROM execution_runs active_run
+                          WHERE active_run.run_id = ?
+                            AND active_run.plan_id = ?
+                            AND active_run.status = ?
+                            AND active_run.owner_token = ?
+                            AND NOT EXISTS (
+                                SELECT 1 FROM execution_runs newer
+                                WHERE newer.plan_id = active_run.plan_id
+                                  AND (
+                                      newer.created_at > active_run.created_at
+                                      OR (newer.created_at = active_run.created_at
+                                          AND newer.run_id > active_run.run_id)
+                                  )
+                            )
+                      )
+                """, (
+                    StepStatus.FAILED.value,
+                    str(failure_reason or "attempt_persistence_failed")[:500],
+                    json.dumps(outputs or {}, ensure_ascii=False, default=str),
+                    utcnow_iso(),
+                    str(step_id), str(plan_id), int(branch_version or 1),
+                    str(run_id), str(plan_id), RunStatus.RUNNING.value, str(owner_token),
+                ))
+                return cursor.rowcount == 1
+        except Exception as e:
+            logger.exception("按 Run owner 收敛失败步骤失败: {}", e)
+            raise DatabaseError(f"按 Run owner 收敛失败步骤失败: {e}") from e
+
     def finish_execution_attempt(self, attempt_id: str, status: str, *, retryable: bool = None,
                                  failure_reason: str = None, outputs: Dict[str, Any] = None,
                                  duration_ms: int = None, run_id: str = None,
